@@ -9,15 +9,20 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "mongoose": "^9.0.1",
     "next": "16.0.10",
     "react": "19.2.1",
-    "react-dom": "19.2.1"
+    "react-dom": "19.2.1",
+    "uuid": "^13.0.0",
+    "xml2js": "^0.6.2"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@types/uuid": "^11.0.0",
+    "@types/xml2js": "^0.4.14",
     "babel-plugin-react-compiler": "1.0.0",
     "eslint": "^9",
     "eslint-config-next": "16.0.10",

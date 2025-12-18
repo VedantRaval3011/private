@@ -1,26 +1,302 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* Color Palette - Deep Purple & Teal Theme */
+  --primary-50: #f5f3ff;
+  --primary-100: #ede9fe;
+  --primary-200: #ddd6fe;
+  --primary-300: #c4b5fd;
+  --primary-400: #a78bfa;
+  --primary-500: #8b5cf6;
+  --primary-600: #7c3aed;
+  --primary-700: #6d28d9;
+  --primary-800: #5b21b6;
+  --primary-900: #4c1d95;
+  
+  --accent-50: #f0fdfa;
+  --accent-100: #ccfbf1;
+  --accent-200: #99f6e4;
+  --accent-300: #5eead4;
+  --accent-400: #2dd4bf;
+  --accent-500: #14b8a6;
+  --accent-600: #0d9488;
+  --accent-700: #0f766e;
+  --accent-800: #115e59;
+  --accent-900: #134e4a;
+  
+  /* Semantic Colors */
+  --success: #10b981;
+  --warning: #f59e0b;
+  --error: #ef4444;
+  --info: #3b82f6;
+  
+  /* Base Colors */
+  --background: #fafafa;
+  --foreground: #18181b;
+  --card: #ffffff;
+  --card-foreground: #18181b;
+  --muted: #f4f4f5;
+  --muted-foreground: #71717a;
+  --border: #e4e4e7;
+  --input: #e4e4e7;
+  
+  /* Gradients */
+  --gradient-primary: linear-gradient(135deg, var(--primary-600) 0%, var(--primary-800) 100%);
+  --gradient-accent: linear-gradient(135deg, var(--accent-500) 0%, var(--accent-700) 100%);
+  --gradient-hero: linear-gradient(135deg, var(--primary-700) 0%, var(--accent-600) 100%);
+  --gradient-card: linear-gradient(135deg, rgba(139, 92, 246, 0.05) 0%, rgba(20, 184, 166, 0.05) 100%);
+  
+  /* Shadows */
+  --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+  --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+  --shadow-xl: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1);
+  --shadow-glow: 0 0 30px rgba(139, 92, 246, 0.3);
+  
+  /* Border Radius */
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+  --radius-2xl: 1.5rem;
+  --radius-full: 9999px;
+  
+  /* Transitions */
+  --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-base: 200ms cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-slow: 300ms cubic-bezier(0.4, 0, 0.2, 1);
 }
+
+/* Dark mode disabled - forcing white theme */
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-primary: var(--primary-600);
+  --color-accent: var(--accent-500);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+* {
+  box-sizing: border-box;
+  padding: 0;
+  margin: 0;
+}
+
+html {
+  scroll-behavior: smooth;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans, 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif);
+  line-height: 1.6;
+  min-height: 100vh;
+}
+
+/* ============================================
+   Typography
+   ============================================ */
+
+h1, h2, h3, h4, h5, h6 {
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: -0.025em;
+}
+
+h1 { font-size: 2.25rem; }
+h2 { font-size: 1.875rem; }
+h3 { font-size: 1.5rem; }
+h4 { font-size: 1.25rem; }
+h5 { font-size: 1.125rem; }
+h6 { font-size: 1rem; }
+
+/* ============================================
+   Animations
+   ============================================ */
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slideInRight {
+  from {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+@keyframes bounce {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-10px); }
+}
+
+@keyframes glow {
+  0%, 100% { box-shadow: 0 0 20px rgba(139, 92, 246, 0.3); }
+  50% { box-shadow: 0 0 40px rgba(139, 92, 246, 0.6); }
+}
+
+.animate-fadeIn { animation: fadeIn 0.3s ease-out; }
+.animate-fadeInUp { animation: fadeInUp 0.4s ease-out; }
+.animate-slideInRight { animation: slideInRight 0.3s ease-out; }
+.animate-pulse { animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+.animate-spin { animation: spin 1s linear infinite; }
+.animate-bounce { animation: bounce 1s ease-in-out infinite; }
+.animate-glow { animation: glow 2s ease-in-out infinite; }
+
+/* Staggered animations for lists */
+.stagger-1 { animation-delay: 0.1s; }
+.stagger-2 { animation-delay: 0.2s; }
+.stagger-3 { animation-delay: 0.3s; }
+.stagger-4 { animation-delay: 0.4s; }
+.stagger-5 { animation-delay: 0.5s; }
+
+/* ============================================
+   Scrollbar Styles - Always Visible & Sticky
+   ============================================ */
+
+/* Force scrollbar to always be visible */
+html {
+  overflow-y: scroll;
+  scrollbar-gutter: stable;
+}
+
+body {
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* Webkit browsers (Chrome, Safari, Edge) */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--muted);
+  border-radius: var(--radius-full);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--primary-500);
+  border-radius: var(--radius-full);
+  border: 2px solid var(--muted);
+  min-height: 40px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--primary-600);
+}
+
+::-webkit-scrollbar-thumb:active {
+  background: var(--primary-700);
+}
+
+/* Firefox */
+* {
+  scrollbar-width: auto;
+  scrollbar-color: var(--primary-500) var(--muted);
+}
+
+/* Table Scroll Container - Sticky horizontal scrollbar */
+.table-scroll-container {
+  overflow-x: auto !important;
+  overflow-y: auto !important;
+  position: relative;
+}
+
+.table-scroll-container::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+
+.table-scroll-container::-webkit-scrollbar-track {
+  background: var(--muted);
+  border-radius: 6px;
+}
+
+.table-scroll-container::-webkit-scrollbar-thumb {
+  background: linear-gradient(135deg, var(--primary-500), var(--primary-600));
+  border-radius: 6px;
+  border: 2px solid var(--muted);
+}
+
+.table-scroll-container::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(135deg, var(--primary-600), var(--primary-700));
+}
+
+.table-scroll-container::-webkit-scrollbar-corner {
+  background: var(--muted);
+}
+
+/* ============================================
+   Glass Morphism Effects
+   ============================================ */
+
+.glass {
+  background: rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.glass-dark {
+  background: rgba(0, 0, 0, 0.2);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* ============================================
+   Selection
+   ============================================ */
+
+::selection {
+  background: var(--primary-200);
+  color: var(--primary-900);
+}
+
+@media (prefers-color-scheme: dark) {
+  ::selection {
+    background: var(--primary-800);
+    color: var(--primary-100);
+  }
 }
