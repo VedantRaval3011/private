@@ -4,6 +4,7 @@
  * Formula Master XML Parser - Main Page
  * Upload, parse, and view formula master data
  * Supports both Batch Registry and Formula Master XML files
+ * Supports multiple batch file uploads
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
@@ -26,6 +27,14 @@ import { parseBatchRegistryXml, parseFormulaXml } from '@/lib/xmlParser';
 type View = 'upload' | 'list' | 'detail' | 'batch-detail' | 'combined-view';
 type UploadType = 'batch' | 'formula' | null;
 
+// Interface for tracking file upload status
+interface SelectedFile {
+  file: File;
+  status: 'pending' | 'parsing' | 'success' | 'error';
+  message?: string;
+  data?: BatchRegistryData;
+}
+
 export default function Home() {
   // State
   const [view, setView] = useState<View>('upload');
@@ -36,8 +45,9 @@ export default function Home() {
   const [batches, setBatches] = useState<BatchRegistryRecord[]>([]);
   const [selectedFormula, setSelectedFormula] = useState<FormulaRecord | null>(null);
   const [selectedBatch, setSelectedBatch] = useState<BatchRegistryRecord | null>(null);
-  const [batchData, setBatchData] = useState<BatchRegistryData | null>(null);
-  const [batchFile, setBatchFile] = useState<File | null>(null);
+  // Multiple batch files support
+  const [batchFiles, setBatchFiles] = useState<SelectedFile[]>([]);
+  const [combinedBatchData, setCombinedBatchData] = useState<BatchRegistryData | null>(null);
   const [formulaData, setFormulaData] = useState<FormulaMasterData | null>(null);
   const [formulaFile, setFormulaFile] = useState<File | null>(null);
   const [batchError, setBatchError] = useState<string | null>(null);
@@ -106,34 +116,102 @@ export default function Home() {
 
   // Check if both uploads are complete, navigate to combined view
   useEffect(() => {
-    if (batchData && formulaData) {
+    const hasSuccessfulBatches = batchFiles.some(f => f.status === 'success');
+    if (hasSuccessfulBatches && formulaData) {
       setView('combined-view');
     }
-  }, [batchData, formulaData]);
+  }, [batchFiles, formulaData]);
 
-  // Handle batch file upload - parse locally, don't navigate
-  const handleBatchFileSelect = async (file: File) => {
-    setIsUploading(true);
-    setUploadType('batch');
+  // Combine batch data from all successful files
+  useEffect(() => {
+    const successfulFiles = batchFiles.filter(f => f.status === 'success' && f.data);
+    if (successfulFiles.length === 0) {
+      setCombinedBatchData(null);
+      return;
+    }
+
+    // Merge all batch data
+    const combined: BatchRegistryData = {
+      companyName: successfulFiles[0].data!.companyName,
+      companyAddress: successfulFiles[0].data!.companyAddress,
+      batches: [],
+      totalBatches: 0,
+      exportCount: 0,
+      importCount: 0,
+    };
+
+    successfulFiles.forEach(file => {
+      if (file.data) {
+        combined.batches.push(...file.data.batches);
+        combined.totalBatches += file.data.totalBatches;
+        combined.exportCount += file.data.exportCount;
+        combined.importCount += file.data.importCount;
+      }
+    });
+
+    setCombinedBatchData(combined);
+  }, [batchFiles]);
+
+  // Handle multiple batch file upload
+  const handleBatchFilesSelect = async (files: File[]) => {
     setBatchError(null);
 
-    try {
-      const text = await file.text();
-      const result = await parseBatchRegistryXml(text);
+    // Add new files with pending status
+    const newFiles: SelectedFile[] = files.map(file => ({
+      file,
+      status: 'pending' as const,
+    }));
 
-      if (result.success && result.data) {
-        setBatchData(result.data);
-        setBatchFile(file);
-        // Don't navigate - wait for both files
-      } else {
-        setBatchError(result.errors.join(', ') || 'Failed to parse batch XML');
+    setBatchFiles(prev => [...prev, ...newFiles]);
+
+    // Process each file
+    const startIndex = batchFiles.length;
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const fileIndex = startIndex + i;
+
+      // Update status to parsing
+      setBatchFiles(prev => prev.map((f, idx) =>
+        idx === fileIndex ? { ...f, status: 'parsing' as const } : f
+      ));
+
+      try {
+        const text = await file.text();
+        const result = await parseBatchRegistryXml(text);
+
+        if (result.success && result.data) {
+          setBatchFiles(prev => prev.map((f, idx) =>
+            idx === fileIndex ? {
+              ...f,
+              status: 'success' as const,
+              message: `${result.data!.totalBatches} batches found`,
+              data: result.data
+            } : f
+          ));
+        } else {
+          setBatchFiles(prev => prev.map((f, idx) =>
+            idx === fileIndex ? {
+              ...f,
+              status: 'error' as const,
+              message: result.errors.join(', ') || 'Parse failed'
+            } : f
+          ));
+        }
+      } catch (error) {
+        setBatchFiles(prev => prev.map((f, idx) =>
+          idx === fileIndex ? {
+            ...f,
+            status: 'error' as const,
+            message: error instanceof Error ? error.message : 'Unknown error'
+          } : f
+        ));
       }
-    } catch (error) {
-      setBatchError(error instanceof Error ? error.message : 'Unknown error parsing batch file');
-    } finally {
-      setIsUploading(false);
-      setUploadType(null);
     }
+  };
+
+  // Handle removing a batch file
+  const handleRemoveBatchFile = (index: number) => {
+    setBatchFiles(prev => prev.filter((_, idx) => idx !== index));
   };
 
   // Handle formula file upload - parse locally, don't navigate
@@ -163,8 +241,9 @@ export default function Home() {
 
   // Save both batch and formula to database
   const handleSaveToDatabase = async () => {
-    if (!batchFile || !formulaFile) {
-      setSaveMessage({ type: 'error', text: 'Both files are required to save' });
+    const successfulBatchFiles = batchFiles.filter(f => f.status === 'success');
+    if (successfulBatchFiles.length === 0 || !formulaFile) {
+      setSaveMessage({ type: 'error', text: 'Both batch files and formula file are required to save' });
       return;
     }
 
@@ -172,20 +251,24 @@ export default function Home() {
     setSaveMessage(null);
 
     try {
-      // Save batch data
-      const batchFormData = new FormData();
-      batchFormData.append('file', batchFile);
+      // Save each batch file separately
+      let savedBatches = 0;
+      for (const batchItem of successfulBatchFiles) {
+        const batchFormData = new FormData();
+        batchFormData.append('file', batchItem.file);
 
-      const batchResponse = await fetch('/api/batch', {
-        method: 'POST',
-        body: batchFormData,
-      });
-      const batchResult = await batchResponse.json();
+        const batchResponse = await fetch('/api/batch', {
+          method: 'POST',
+          body: batchFormData,
+        });
+        const batchResult = await batchResponse.json();
 
-      if (!batchResult.success) {
-        setSaveMessage({ type: 'error', text: `Batch save failed: ${batchResult.message}` });
-        setIsSaving(false);
-        return;
+        if (!batchResult.success) {
+          setSaveMessage({ type: 'error', text: `Batch save failed for ${batchItem.file.name}: ${batchResult.message}` });
+          setIsSaving(false);
+          return;
+        }
+        savedBatches++;
       }
 
       // Save formula data
@@ -204,7 +287,7 @@ export default function Home() {
         return;
       }
 
-      setSaveMessage({ type: 'success', text: 'Both batch and formula data saved successfully!' });
+      setSaveMessage({ type: 'success', text: `Successfully saved ${savedBatches} batch file(s) and formula data!` });
     } catch (error) {
       setSaveMessage({
         type: 'error',
@@ -260,8 +343,8 @@ export default function Home() {
     setView('upload');
     setSelectedFormula(null);
     setSelectedBatch(null);
-    setBatchData(null);
-    setBatchFile(null);
+    setBatchFiles([]);
+    setCombinedBatchData(null);
     setFormulaData(null);
     setFormulaFile(null);
     setUploadResult(null);
@@ -466,17 +549,17 @@ export default function Home() {
                     width: '28px',
                     height: '28px',
                     borderRadius: '50%',
-                    background: batchData
+                    background: combinedBatchData
                       ? 'linear-gradient(135deg, #10b981 0%, #34d399 100%)'
                       : 'linear-gradient(135deg, #14b8a6 0%, #06b6d4 100%)',
                     color: 'white',
                     fontSize: '0.875rem',
                     fontWeight: '700',
                   }}>
-                    {batchData ? '✓' : '1'}
+                    {combinedBatchData ? '✓' : '1'}
                   </span>
-                  Batch Creation XML
-                  {batchData && (
+                  Batch Creation XMLs
+                  {combinedBatchData && (
                     <span style={{
                       marginLeft: 'auto',
                       padding: '0.25rem 0.75rem',
@@ -486,13 +569,15 @@ export default function Home() {
                       fontSize: '0.75rem',
                       fontWeight: '600',
                     }}>
-                      ✓ Uploaded ({batchData.totalBatches} batches)
+                      ✓ {batchFiles.filter(f => f.status === 'success').length} file(s) - {combinedBatchData.totalBatches} batches
                     </span>
                   )}
                 </h3>
                 <BatchFileUpload
-                  onFileSelect={handleBatchFileSelect}
-                  isLoading={isUploading && uploadType === 'batch'}
+                  onFilesSelect={handleBatchFilesSelect}
+                  isLoading={batchFiles.some(f => f.status === 'parsing')}
+                  selectedFiles={batchFiles}
+                  onRemoveFile={handleRemoveBatchFile}
                 />
               </div>
 
@@ -546,7 +631,7 @@ export default function Home() {
             </div>
 
             {/* Upload Status */}
-            {(batchData || formulaData) && !(batchData && formulaData) && (
+            {(combinedBatchData || formulaData) && !(combinedBatchData && formulaData) && (
               <div style={{
                 marginTop: '2rem',
                 padding: '1.25rem',
@@ -556,8 +641,8 @@ export default function Home() {
                 textAlign: 'center',
               }}>
                 <p style={{ color: 'var(--primary-600)', fontWeight: '500' }}>
-                  {batchData && !formulaData && '✓ Batch data loaded. Now upload the Formula Master XML.'}
-                  {!batchData && formulaData && '✓ Formula data loaded. Now upload the Batch Creation XML.'}
+                  {combinedBatchData && !formulaData && `✓ ${batchFiles.filter(f => f.status === 'success').length} batch file(s) loaded. Now upload the Formula Master XML.`}
+                  {!combinedBatchData && formulaData && '✓ Formula data loaded. Now upload the Batch Creation XML(s).'}
                 </p>
               </div>
             )}
@@ -652,7 +737,7 @@ export default function Home() {
         )}
 
         {/* Combined View - Shows both Batch and Formula data */}
-        {view === 'combined-view' && batchData && formulaData && (
+        {view === 'combined-view' && combinedBatchData && formulaData && (
           <div className="animate-fadeIn">
             {/* Action Bar */}
             <div style={{
@@ -784,7 +869,7 @@ export default function Home() {
                   Batch Creation Data
                 </h2>
               </div>
-              <BatchDisplay batchData={batchData} />
+              <BatchDisplay batchData={combinedBatchData} />
             </div>
 
             {/* Divider */}
