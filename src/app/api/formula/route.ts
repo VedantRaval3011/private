@@ -6,7 +6,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectToDatabase } from '@/lib/mongodb';
 import Formula from '@/models/Formula';
+import ProcessingLog from '@/models/ProcessingLog';
 import { parseFormulaXml, validateXmlContent, createFormulaRecord } from '@/lib/xmlParser';
+import { generateNormalizedHash } from '@/lib/contentHash';
 import type { UploadResponse, FormulasListResponse } from '@/types/formula';
 
 // Maximum file size: 10MB
@@ -62,6 +64,22 @@ export async function POST(request: NextRequest): Promise<NextResponse<UploadRes
     
     // Parse XML content
     const parseResult = await parseFormulaXml(xmlContent);
+
+    // Generate content hash for duplicate detection
+    const contentHash = generateNormalizedHash(xmlContent);
+
+    // Check if duplicate file (by hash)
+    const existingLog = await ProcessingLog.findOne({ contentHash });
+    if (existingLog) {
+      return NextResponse.json(
+        { 
+          success: false, 
+          message: 'This file has already been processed', 
+          errors: [`File "${file.name}" was already processed on ${existingLog.processedAt.toLocaleDateString()}`] 
+        },
+        { status: 409 }
+      );
+    }
     
     if (!parseResult.success || !parseResult.data) {
       return NextResponse.json(
@@ -104,8 +122,20 @@ export async function POST(request: NextRequest): Promise<NextResponse<UploadRes
     }
     
     // Save to database
-    const formula = new Formula(formulaRecord);
+    const formula = new Formula({
+      ...formulaRecord,
+      contentHash
+    });
     await formula.save();
+
+    // Create a processing log entry
+    await ProcessingLog.create({
+      contentHash,
+      fileName: file.name,
+      fileType: 'FORMULA',
+      status: 'SUCCESS',
+      fileSize: file.size
+    });
     
     // Return success response
     return NextResponse.json({

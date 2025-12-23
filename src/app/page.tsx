@@ -8,6 +8,7 @@
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
+import Link from 'next/link';
 import FileUpload from '@/components/FileUpload';
 import BatchFileUpload from '@/components/BatchFileUpload';
 import FormulaDisplay from '@/components/FormulaDisplay';
@@ -22,6 +23,7 @@ import type {
   BatchRegistryRecord,
   BatchListResponse
 } from '@/types/formula';
+import type { IngestionResponse, IngestionResult } from '@/types/ingestion';
 import { parseBatchRegistryXml, parseFormulaXml } from '@/lib/xmlParser';
 
 type View = 'upload' | 'list' | 'detail' | 'batch-detail' | 'combined-view';
@@ -60,6 +62,10 @@ export default function Home() {
   const [limit] = useState(10);
   const [search, setSearch] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+
+  // Folder ingestion state
+  const [isIngesting, setIsIngesting] = useState(false);
+  const [ingestionResults, setIngestionResults] = useState<IngestionResult[]>([]);
 
   // Fetch formulas
   const fetchFormulas = useCallback(async () => {
@@ -366,6 +372,32 @@ export default function Home() {
     };
   };
 
+  // Load files from /files folder
+  const handleLoadFromFolder = async () => {
+    setIsIngesting(true);
+    setIngestionResults([]);
+
+    try {
+      const response = await fetch('/api/ingestion', {
+        method: 'POST',
+      });
+      const data: IngestionResponse = await response.json();
+
+      if (data.success) {
+        setIngestionResults(data.status.results);
+        // Refresh the lists to show new data
+        fetchFormulas();
+        fetchBatches();
+      } else {
+        console.error('Ingestion failed:', data.message);
+      }
+    } catch (error) {
+      console.error('Ingestion error:', error);
+    } finally {
+      setIsIngesting(false);
+    }
+  };
+
   return (
     <div style={{
       minHeight: '100vh',
@@ -495,6 +527,96 @@ export default function Home() {
                 </svg>
                 History
               </button>
+              <Link
+                href="/batch-data"
+                style={{
+                  padding: '0.625rem 1.25rem',
+                  background: 'transparent',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: 'var(--radius-md)',
+                  textDecoration: 'none',
+                  fontWeight: '500',
+                  transition: 'all var(--transition-fast)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.5rem',
+                }}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+                  <polyline points="14 2 14 8 20 8" />
+                </svg>
+                Batch Data
+              </Link>
+              <Link
+                href="/formula-data"
+                style={{
+                  padding: '0.625rem 1.25rem',
+                  background: 'transparent',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: 'var(--radius-md)',
+                  textDecoration: 'none',
+                  fontWeight: '500',
+                  transition: 'all var(--transition-fast)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.5rem',
+                }}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
+                </svg>
+                Formula Data
+              </Link>
+              <Link
+                href="/processing-logs"
+                style={{
+                  padding: '0.625rem 1.25rem',
+                  background: 'transparent',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: 'var(--radius-md)',
+                  textDecoration: 'none',
+                  fontWeight: '500',
+                  transition: 'all var(--transition-fast)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.5rem',
+                }}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                  <polyline points="14 2 14 8 20 8" />
+                  <line x1="16" y1="13" x2="8" y2="13" />
+                  <line x1="16" y1="17" x2="8" y2="17" />
+                </svg>
+                Logs
+              </Link>
+              <Link
+                href="/skipped-duplicates"
+                style={{
+                  padding: '0.625rem 1.25rem',
+                  background: 'transparent',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: 'var(--radius-md)',
+                  textDecoration: 'none',
+                  fontWeight: '500',
+                  transition: 'all var(--transition-fast)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.5rem',
+                }}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                  <line x1="12" y1="9" x2="12" y2="13" />
+                  <line x1="12" y1="17" x2="12.01" y2="17" />
+                </svg>
+                Duplicates
+              </Link>
             </nav>
           </div>
         </div>
@@ -733,6 +855,207 @@ export default function Home() {
                 </ul>
               </div>
             )}
+
+            {/* Separator */}
+            <div style={{
+              margin: '2.5rem 0',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '1rem',
+            }}>
+              <div style={{ flex: 1, height: '1px', background: 'var(--border)' }} />
+              <span style={{ color: 'var(--muted-foreground)', fontSize: '0.875rem', fontWeight: '500' }}>
+                OR
+              </span>
+              <div style={{ flex: 1, height: '1px', background: 'var(--border)' }} />
+            </div>
+
+            {/* Load from Files Folder Section */}
+            <div style={{
+              padding: '2rem',
+              background: 'var(--card)',
+              borderRadius: 'var(--radius-lg)',
+              border: '1px solid var(--border)',
+              boxShadow: 'var(--shadow-md)',
+            }}>
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '1rem',
+                marginBottom: '1rem',
+              }}>
+                <div style={{
+                  width: '48px',
+                  height: '48px',
+                  borderRadius: 'var(--radius-md)',
+                  background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}>
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
+                    <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z" />
+                  </svg>
+                </div>
+                <div>
+                  <h3 style={{
+                    fontSize: '1.25rem',
+                    fontWeight: '600',
+                    color: 'var(--foreground)',
+                  }}>
+                    Auto-Load from Files Folder
+                  </h3>
+                  <p style={{ color: 'var(--muted-foreground)', fontSize: '0.875rem' }}>
+                    Automatically scan and process all XML files in the /files folder
+                  </p>
+                </div>
+              </div>
+
+              <button
+                onClick={handleLoadFromFolder}
+                disabled={isIngesting}
+                style={{
+                  width: '100%',
+                  padding: '1rem 1.5rem',
+                  background: isIngesting ? 'var(--muted)' : 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)',
+                  border: 'none',
+                  borderRadius: 'var(--radius-md)',
+                  color: 'white',
+                  cursor: isIngesting ? 'not-allowed' : 'pointer',
+                  fontSize: '1rem',
+                  fontWeight: '600',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '0.75rem',
+                  boxShadow: isIngesting ? 'none' : 'var(--shadow-lg)',
+                  transition: 'all var(--transition-fast)',
+                }}
+              >
+                {isIngesting ? (
+                  <>
+                    <svg className="animate-spin" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M21 12a9 9 0 11-6.219-8.56" strokeLinecap="round" />
+                    </svg>
+                    Processing Files...
+                  </>
+                ) : (
+                  <>
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    </svg>
+                    Scan & Process Files
+                  </>
+                )}
+              </button>
+
+              {/* Ingestion Results */}
+              {ingestionResults.length > 0 && (
+                <div style={{ marginTop: '1.5rem' }}>
+                  <h4 style={{
+                    fontSize: '0.875rem',
+                    fontWeight: '600',
+                    color: 'var(--foreground)',
+                    marginBottom: '0.75rem',
+                  }}>
+                    Processing Results ({ingestionResults.length} files)
+                  </h4>
+                  <div style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '0.5rem',
+                  }}>
+                    {ingestionResults.map((result, index) => (
+                      <div
+                        key={index}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          padding: '0.75rem 1rem',
+                          background: result.status === 'SUCCESS'
+                            ? 'rgba(16, 185, 129, 0.1)'
+                            : result.status === 'DUPLICATE'
+                              ? 'rgba(245, 158, 11, 0.1)'
+                              : 'rgba(239, 68, 68, 0.1)',
+                          borderRadius: 'var(--radius-md)',
+                          border: `1px solid ${result.status === 'SUCCESS'
+                            ? 'rgba(16, 185, 129, 0.3)'
+                            : result.status === 'DUPLICATE'
+                              ? 'rgba(245, 158, 11, 0.3)'
+                              : 'rgba(239, 68, 68, 0.3)'
+                            }`,
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                          <span style={{
+                            width: '8px',
+                            height: '8px',
+                            borderRadius: '50%',
+                            background: result.status === 'SUCCESS'
+                              ? '#10b981'
+                              : result.status === 'DUPLICATE'
+                                ? '#f59e0b'
+                                : '#ef4444',
+                          }} />
+                          <div>
+                            <div style={{ fontWeight: '500', fontSize: '0.875rem', color: 'var(--foreground)' }}>
+                              {result.fileName}
+                            </div>
+                            <div style={{ fontSize: '0.75rem', color: 'var(--muted-foreground)' }}>
+                              {result.message}
+                            </div>
+                          </div>
+                        </div>
+                        <div style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '0.5rem',
+                        }}>
+                          <span style={{
+                            padding: '0.25rem 0.5rem',
+                            borderRadius: 'var(--radius-sm)',
+                            fontSize: '0.7rem',
+                            fontWeight: '600',
+                            textTransform: 'uppercase',
+                            background: result.fileType === 'BATCH'
+                              ? 'rgba(20, 184, 166, 0.2)'
+                              : result.fileType === 'FORMULA'
+                                ? 'rgba(139, 92, 246, 0.2)'
+                                : 'rgba(156, 163, 175, 0.2)',
+                            color: result.fileType === 'BATCH'
+                              ? '#14b8a6'
+                              : result.fileType === 'FORMULA'
+                                ? '#8b5cf6'
+                                : '#9ca3af',
+                          }}>
+                            {result.fileType}
+                          </span>
+                          <span style={{
+                            padding: '0.25rem 0.5rem',
+                            borderRadius: 'var(--radius-sm)',
+                            fontSize: '0.7rem',
+                            fontWeight: '600',
+                            background: result.status === 'SUCCESS'
+                              ? 'rgba(16, 185, 129, 0.2)'
+                              : result.status === 'DUPLICATE'
+                                ? 'rgba(245, 158, 11, 0.2)'
+                                : 'rgba(239, 68, 68, 0.2)',
+                            color: result.status === 'SUCCESS'
+                              ? '#10b981'
+                              : result.status === 'DUPLICATE'
+                                ? '#f59e0b'
+                                : '#ef4444',
+                          }}>
+                            {result.status}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         )}
 

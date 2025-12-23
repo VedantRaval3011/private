@@ -42,6 +42,7 @@ const BatchSchema = new Schema<IBatch>({
   fileName: { type: String, required: true },
   fileSize: { type: Number, required: true },
   rawXmlContent: { type: String },
+  contentHash: { type: String, index: true },
   parsingStatus: { 
     type: String, 
     enum: ['success', 'partial', 'failed'],
@@ -70,6 +71,8 @@ BatchSchema.index({ uploadedAt: -1 });
 BatchSchema.index({ companyName: 1 });
 BatchSchema.index({ 'batches.itemCode': 1 });
 BatchSchema.index({ 'batches.batchNumber': 1 });
+// Compound index for item-level duplicate detection (batchNumber + itemCode)
+BatchSchema.index({ 'batches.batchNumber': 1, 'batches.itemCode': 1 });
 
 // Virtual for summary display
 BatchSchema.virtual('displaySummary').get(function() {

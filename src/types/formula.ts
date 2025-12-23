@@ -138,6 +138,7 @@ export interface FormulaRecord extends FormulaMasterData {
   fileName: string;
   fileSize: number;
   rawXmlContent?: string;
+  contentHash?: string;
   parsingStatus: 'success' | 'partial' | 'failed';
   parsingErrors?: string[];
 }
@@ -251,6 +252,7 @@ export interface BatchRegistryRecord extends BatchRegistryData {
   fileName: string;
   fileSize: number;
   rawXmlContent?: string;
+  contentHash?: string;
   parsingStatus: 'success' | 'partial' | 'failed';
   parsingErrors?: string[];
 }

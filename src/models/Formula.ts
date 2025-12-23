@@ -97,6 +97,7 @@ const FormulaSchema = new Schema<IFormula>({
   fileName: { type: String, required: true },
   fileSize: { type: Number, required: true },
   rawXmlContent: { type: String },
+  contentHash: { type: String, index: true },
   parsingStatus: { 
     type: String, 
     enum: ['success', 'partial', 'failed'],

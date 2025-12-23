@@ -6,7 +6,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectToDatabase } from '@/lib/mongodb';
 import Batch from '@/models/Batch';
+import ProcessingLog from '@/models/ProcessingLog';
 import { parseBatchRegistryXml, validateXmlContent } from '@/lib/xmlParser';
+import { generateNormalizedHash } from '@/lib/contentHash';
 import type { BatchRegistryRecord } from '@/types/formula';
 
 // Maximum file size: 10MB
@@ -78,6 +80,22 @@ export async function POST(request: NextRequest): Promise<NextResponse<BatchUplo
     
     // Parse XML content
     const parseResult = await parseBatchRegistryXml(xmlContent);
+
+    // Generate content hash for duplicate detection
+    const contentHash = generateNormalizedHash(xmlContent);
+
+    // Check if duplicate file (by hash)
+    const existingLog = await ProcessingLog.findOne({ contentHash });
+    if (existingLog) {
+      return NextResponse.json(
+        { 
+          success: false, 
+          message: 'This file has already been processed', 
+          errors: [`File "${file.name}" was already processed on ${existingLog.processedAt.toLocaleDateString()}`] 
+        },
+        { status: 409 }
+      );
+    }
     
     if (!parseResult.success || !parseResult.data) {
       return NextResponse.json(
@@ -96,6 +114,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<BatchUplo
       fileName: file.name,
       fileSize: file.size,
       rawXmlContent: xmlContent,
+      contentHash,
       uploadedAt: new Date(),
       parsingStatus: parseResult.warnings.length > 0 ? 'partial' : 'success',
       parsingErrors: parseResult.warnings,
@@ -104,6 +123,15 @@ export async function POST(request: NextRequest): Promise<NextResponse<BatchUplo
     // Save to database
     const batch = new Batch(batchRecord);
     await batch.save();
+
+    // Create a processing log entry
+    await ProcessingLog.create({
+      contentHash,
+      fileName: file.name,
+      fileType: 'BATCH',
+      status: 'SUCCESS',
+      fileSize: file.size
+    });
     
     // Return success response
     return NextResponse.json({

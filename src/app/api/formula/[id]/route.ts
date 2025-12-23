@@ -6,6 +6,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectToDatabase } from '@/lib/mongodb';
 import Formula from '@/models/Formula';
+import ProcessingLog from '@/models/ProcessingLog';
+import { generateNormalizedHash } from '@/lib/contentHash';
 import type { FormulaDetailResponse } from '@/types/formula';
 
 /**
@@ -74,13 +76,36 @@ export async function DELETE(
       );
     }
     
-    const result = await Formula.findByIdAndDelete(id);
+    // Find first to get contentHash
+    const formula = await Formula.findById(id);
     
-    if (!result) {
+    if (!formula) {
       return NextResponse.json(
         { success: false, error: 'Formula not found' },
         { status: 404 }
       );
+    }
+
+    const contentHash = formula.contentHash || (formula.rawXmlContent ? generateNormalizedHash(formula.rawXmlContent) : null);
+    const fileName = formula.fileName;
+
+    // Delete the record
+    await Formula.findByIdAndDelete(id);
+    
+    // Delete ALL processing log entries for this file so it can be re-ingested
+    // This removes both SUCCESS and DUPLICATE logs that reference this file
+    const deleteConditions = [];
+    if (contentHash) {
+      deleteConditions.push({ contentHash });
+    }
+    if (fileName) {
+      // Delete by fileName regardless of fileType or status
+      deleteConditions.push({ fileName });
+    }
+    
+    if (deleteConditions.length > 0) {
+      const deleteResult = await ProcessingLog.deleteMany({ $or: deleteConditions });
+      console.log(`Deleted ${deleteResult.deletedCount} processing log(s) for formula: ${fileName}`);
     }
     
     return NextResponse.json({
