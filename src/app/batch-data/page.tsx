@@ -72,6 +72,18 @@ const getUomType = (batchUom: string): 'LTR' | 'KG' | 'Other' => {
     return 'Other';
 };
 
+// Parse conversion ratio to extract unit count (e.g., "192 BOT" -> 192)
+const parseConversionRatio = (conversionRatio: string): number => {
+    if (!conversionRatio || conversionRatio === 'N/A') return 0;
+    // Extract the numeric part from strings like "192 BOT", "5796 Bot", "100 TUBE"
+    const match = conversionRatio.match(/^[\d,]+/);
+    if (match) {
+        // Remove commas and parse as number
+        return parseInt(match[0].replace(/,/g, ''), 10) || 0;
+    }
+    return 0;
+};
+
 // Get color scheme for each product type
 const getProductTypeColor = (productType: string): { primary: string; light: string; border: string } => {
     const type = productType.toLowerCase();
@@ -111,8 +123,9 @@ interface YearSummary {
     totalBatches: number;
     totalLiters: number;
     totalKg: number;
-    productTypes: Record<string, { count: number; liters: number; kg: number }>;
-    packSizes: Record<string, Record<string, { count: number; liters: number; kg: number }>>;
+    totalUnits: number;
+    productTypes: Record<string, { count: number; liters: number; kg: number; units: number }>;
+    packSizes: Record<string, Record<string, { count: number; liters: number; kg: number; units: number }>>;
     items: BatchItemWithSource[];
 }
 
@@ -179,6 +192,7 @@ export default function BatchDataPage() {
                     totalBatches: 0,
                     totalLiters: 0,
                     totalKg: 0,
+                    totalUnits: 0,
                     productTypes: {},
                     packSizes: {},
                     items: [],
@@ -198,12 +212,17 @@ export default function BatchDataPage() {
                 summary.totalKg += batchSize;
             }
 
+            // Calculate units from conversion ratio
+            const unitCount = parseConversionRatio(item.conversionRatio);
+            summary.totalUnits += unitCount;
+
             // Product type breakdown
             const productType = getProductTypeName(item.unit);
             if (!summary.productTypes[productType]) {
-                summary.productTypes[productType] = { count: 0, liters: 0, kg: 0 };
+                summary.productTypes[productType] = { count: 0, liters: 0, kg: 0, units: 0 };
             }
             summary.productTypes[productType].count++;
+            summary.productTypes[productType].units += unitCount;
             if (uomType === 'LTR') {
                 summary.productTypes[productType].liters += batchSize;
             } else if (uomType === 'KG') {
@@ -216,9 +235,10 @@ export default function BatchDataPage() {
                 summary.packSizes[productType] = {};
             }
             if (!summary.packSizes[productType][pack]) {
-                summary.packSizes[productType][pack] = { count: 0, liters: 0, kg: 0 };
+                summary.packSizes[productType][pack] = { count: 0, liters: 0, kg: 0, units: 0 };
             }
             summary.packSizes[productType][pack].count++;
+            summary.packSizes[productType][pack].units += unitCount;
             if (uomType === 'LTR') {
                 summary.packSizes[productType][pack].liters += batchSize;
             } else if (uomType === 'KG') {
@@ -670,8 +690,38 @@ export default function BatchDataPage() {
                                                             color: typeColor.primary,
                                                             marginBottom: '0.75rem',
                                                         }}>
-                                                            {data.count.toLocaleString()}
+                                                            {data.count.toLocaleString()} <span style={{ fontSize: '0.9rem', fontWeight: '500', color: 'var(--muted-foreground)' }}>batches</span>
                                                         </div>
+                                                        {/* Units Count - Total number of bottles/tubes/syringes */}
+                                                        {data.units > 0 && (
+                                                            <div style={{
+                                                                display: 'flex',
+                                                                alignItems: 'center',
+                                                                gap: '0.5rem',
+                                                                padding: '0.5rem 0.75rem',
+                                                                borderRadius: 'var(--radius-sm)',
+                                                                background: `linear-gradient(135deg, ${typeColor.light} 0%, ${typeColor.border} 100%)`,
+                                                                border: `2px solid ${typeColor.primary}`,
+                                                                marginBottom: '0.75rem',
+                                                            }}>
+
+                                                                <span style={{
+                                                                    fontSize: '1.25rem',
+                                                                    fontWeight: '800',
+                                                                    color: typeColor.primary,
+                                                                }}>
+                                                                    {data.units.toLocaleString()}
+                                                                </span>
+                                                                <span style={{
+                                                                    fontSize: '0.8rem',
+                                                                    fontWeight: '500',
+                                                                    color: typeColor.primary,
+                                                                    opacity: 0.8,
+                                                                }}>
+                                                                    {type.includes('Bottle') ? 'bottles' : type.includes('Tube') ? 'tubes' : type.includes('Syringe') ? 'syringes' : 'units'}
+                                                                </span>
+                                                            </div>
+                                                        )}
                                                         {/* Volume Stats */}
                                                         <div style={{
                                                             display: 'flex',
@@ -801,11 +851,22 @@ export default function BatchDataPage() {
                                                                     fontWeight: '700',
                                                                     color: '#14b8a6',
                                                                 }}>
-                                                                    {data.count}
+                                                                    {data.count} <span style={{ fontSize: '0.7rem', fontWeight: '500', color: 'var(--muted-foreground)' }}>batches</span>
                                                                 </div>
+                                                                {data.units > 0 && (
+                                                                    <div style={{
+                                                                        fontSize: '0.85rem',
+                                                                        fontWeight: '700',
+                                                                        color: '#f97316',
+                                                                        marginTop: '0.25rem',
+                                                                    }}>
+                                                                        {data.units.toLocaleString()} units
+                                                                    </div>
+                                                                )}
                                                                 <div style={{
                                                                     fontSize: '0.7rem',
                                                                     color: 'var(--muted-foreground)',
+                                                                    marginTop: '0.25rem',
                                                                 }}>
                                                                     {data.liters > 0 && `${data.liters.toFixed(1)} L`}
                                                                     {data.liters > 0 && data.kg > 0 && ' / '}
