@@ -37,6 +37,33 @@ interface ItemLevelStats {
     successfulDetails: SuccessfulItemDetail[];
 }
 
+// Formula duplicate interfaces
+interface DuplicateFormulaDetail {
+    productCode: string;
+    productName: string;
+    revisionNo: string;
+    genericName?: string;
+    manufacturer?: string;
+    reason: string;
+    existingFileName: string;
+}
+
+interface SuccessfulFormulaDetail {
+    productCode: string;
+    productName: string;
+    revisionNo: string;
+    genericName?: string;
+    manufacturer?: string;
+}
+
+interface FormulaLevelStats {
+    totalFormulas: number;
+    newFormulas: number;
+    duplicateFormulas: number;
+    duplicateDetails: DuplicateFormulaDetail[];
+    successfulDetails: SuccessfulFormulaDetail[];
+}
+
 interface ProcessingLog {
     _id: string;
     fileName: string;
@@ -44,6 +71,7 @@ interface ProcessingLog {
     status: 'SUCCESS' | 'DUPLICATE' | 'ERROR';
     processedAt: string;
     itemStats?: ItemLevelStats;
+    formulaStats?: FormulaLevelStats;
 }
 
 interface LogsResponse {
@@ -63,14 +91,31 @@ interface FlatSuccessfulItem extends SuccessfulItemDetail {
     processedAt: string;
 }
 
-// Generate unique ID for an item
+// Flattened formula duplicates with source file info
+interface FlatDuplicateFormula extends DuplicateFormulaDetail {
+    sourceFileName: string;
+    processedAt: string;
+}
+
+interface FlatSuccessfulFormula extends SuccessfulFormulaDetail {
+    sourceFileName: string;
+    processedAt: string;
+}
+
+// Generate unique ID for a batch item
 const getItemKey = (batchNumber: string, itemCode: string) => `${batchNumber}-${itemCode}`;
+
+// Generate unique ID for a formula
+const getFormulaKey = (productCode: string, revisionNo: string) => `${productCode}-REV${revisionNo}`;
 
 export default function DataVerificationPage() {
     const [allDuplicates, setAllDuplicates] = useState<FlatDuplicateItem[]>([]);
     const [allSuccessful, setAllSuccessful] = useState<FlatSuccessfulItem[]>([]);
+    const [allFormulaDuplicates, setAllFormulaDuplicates] = useState<FlatDuplicateFormula[]>([]);
+    const [allSuccessfulFormulas, setAllSuccessfulFormulas] = useState<FlatSuccessfulFormula[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [filter, setFilter] = useState<'all' | 'successful' | 'duplicates'>('all');
+    const [dataType, setDataType] = useState<'batch' | 'formula'>('batch');
     const [searchTerm, setSearchTerm] = useState('');
     const [highlightedItem, setHighlightedItem] = useState<string | null>(null);
 
@@ -81,7 +126,7 @@ export default function DataVerificationPage() {
     const fetchData = useCallback(async () => {
         setIsLoading(true);
         try {
-            // Fetch successful items from actual database
+            // Fetch successful batch items from actual database
             const batchItemsResponse = await fetch('/api/batch/items');
             const batchItemsData = await batchItemsResponse.json();
 
@@ -89,20 +134,45 @@ export default function DataVerificationPage() {
             const logsResponse = await fetch('/api/ingestion/logs?limit=1000');
             const logsData: LogsResponse = await logsResponse.json();
 
-            // Set successful items from actual database
+            // Set successful batch items from actual database
             if (batchItemsData.success) {
                 setAllSuccessful(batchItemsData.data);
             }
 
             // Set duplicates from processing logs
             if (logsData.success) {
-                const duplicates: FlatDuplicateItem[] = [];
+                const batchDuplicates: FlatDuplicateItem[] = [];
+                const formulaDuplicates: FlatDuplicateFormula[] = [];
+                const successfulFormulas: FlatSuccessfulFormula[] = [];
 
                 logsData.data.forEach(log => {
+                    // Batch duplicates
                     if (log.itemStats && log.itemStats.duplicateDetails) {
                         log.itemStats.duplicateDetails.forEach(dup => {
-                            duplicates.push({
+                            batchDuplicates.push({
                                 ...dup,
+                                sourceFileName: log.fileName,
+                                processedAt: log.processedAt,
+                            });
+                        });
+                    }
+
+                    // Formula duplicates
+                    if (log.formulaStats && log.formulaStats.duplicateDetails) {
+                        log.formulaStats.duplicateDetails.forEach(dup => {
+                            formulaDuplicates.push({
+                                ...dup,
+                                sourceFileName: log.fileName,
+                                processedAt: log.processedAt,
+                            });
+                        });
+                    }
+
+                    // Successful formulas
+                    if (log.formulaStats && log.formulaStats.successfulDetails) {
+                        log.formulaStats.successfulDetails.forEach(formula => {
+                            successfulFormulas.push({
+                                ...formula,
                                 sourceFileName: log.fileName,
                                 processedAt: log.processedAt,
                             });
@@ -110,7 +180,9 @@ export default function DataVerificationPage() {
                     }
                 });
 
-                setAllDuplicates(duplicates);
+                setAllDuplicates(batchDuplicates);
+                setAllFormulaDuplicates(formulaDuplicates);
+                setAllSuccessfulFormulas(successfulFormulas);
             }
         } catch (error) {
             console.error('Error fetching data:', error);
@@ -243,7 +315,10 @@ export default function DataVerificationPage() {
                                 Data Verification
                             </h1>
                             <p style={{ color: 'rgba(255, 255, 255, 0.8)', fontSize: '1rem' }}>
-                                {allSuccessful.length} successful • {allDuplicates.length} duplicates
+                                {dataType === 'batch'
+                                    ? `${allSuccessful.length} batch items • ${allDuplicates.length} duplicates`
+                                    : `${allSuccessfulFormulas.length} formulas • ${allFormulaDuplicates.length} duplicates`
+                                }
                             </p>
                         </div>
                         <Link href="/processing-logs" style={{
@@ -274,6 +349,40 @@ export default function DataVerificationPage() {
                     flexWrap: 'wrap',
                     alignItems: 'center',
                 }}>
+                    {/* Data Type Toggle */}
+                    <div style={{ display: 'flex', gap: '0.25rem', background: 'var(--muted)', borderRadius: 'var(--radius-md)', padding: '0.25rem' }}>
+                        <button
+                            onClick={() => setDataType('batch')}
+                            style={{
+                                padding: '0.5rem 1rem',
+                                borderRadius: 'var(--radius-sm)',
+                                border: 'none',
+                                background: dataType === 'batch' ? 'var(--card)' : 'transparent',
+                                color: dataType === 'batch' ? '#8b5cf6' : 'var(--muted-foreground)',
+                                cursor: 'pointer',
+                                fontWeight: '600',
+                                boxShadow: dataType === 'batch' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+                            }}
+                        >
+                            📦 Batch Items
+                        </button>
+                        <button
+                            onClick={() => setDataType('formula')}
+                            style={{
+                                padding: '0.5rem 1rem',
+                                borderRadius: 'var(--radius-sm)',
+                                border: 'none',
+                                background: dataType === 'formula' ? 'var(--card)' : 'transparent',
+                                color: dataType === 'formula' ? '#ec4899' : 'var(--muted-foreground)',
+                                cursor: 'pointer',
+                                fontWeight: '600',
+                                boxShadow: dataType === 'formula' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+                            }}
+                        >
+                            🧪 Formulas
+                        </button>
+                    </div>
+
                     {/* Filter Buttons */}
                     <div style={{ display: 'flex', gap: '0.5rem' }}>
                         <button
@@ -302,7 +411,7 @@ export default function DataVerificationPage() {
                                 fontWeight: '500',
                             }}
                         >
-                            ✓ Successful ({allSuccessful.length})
+                            ✓ Successful ({dataType === 'batch' ? allSuccessful.length : allSuccessfulFormulas.length})
                         </button>
                         <button
                             onClick={() => setFilter('duplicates')}
@@ -316,7 +425,7 @@ export default function DataVerificationPage() {
                                 fontWeight: '500',
                             }}
                         >
-                            ⚠ Duplicates ({allDuplicates.length})
+                            ⚠ Duplicates ({dataType === 'batch' ? allDuplicates.length : allFormulaDuplicates.length})
                         </button>
                     </div>
 
@@ -441,8 +550,8 @@ export default function DataVerificationPage() {
                     </div>
                 ) : (
                     <>
-                        {/* Successful Items Table */}
-                        {(filter === 'all' || filter === 'successful') && filteredSuccessful.length > 0 && (
+                        {/* Successful Items Table (Batch) */}
+                        {dataType === 'batch' && (filter === 'all' || filter === 'successful') && filteredSuccessful.length > 0 && (
                             <div style={{ marginBottom: '2rem' }}>
                                 <h2 style={{
                                     fontSize: '1.25rem',
@@ -562,8 +671,8 @@ export default function DataVerificationPage() {
                             </div>
                         )}
 
-                        {/* Duplicate Items Table */}
-                        {(filter === 'all' || filter === 'duplicates') && filteredDuplicates.length > 0 && (
+                        {/* Duplicate Items Table (Batch) */}
+                        {dataType === 'batch' && (filter === 'all' || filter === 'duplicates') && filteredDuplicates.length > 0 && (
                             <div>
                                 <h2 style={{
                                     fontSize: '1.25rem',
@@ -699,16 +808,195 @@ export default function DataVerificationPage() {
                             </div>
                         )}
 
-                        {/* No Results */}
-                        {filteredSuccessful.length === 0 && filteredDuplicates.length === 0 && (
-                            <div style={{
-                                textAlign: 'center',
-                                padding: '4rem',
-                                color: 'var(--muted-foreground)',
-                            }}>
-                                No items found matching your search criteria
+                        {/* Formula Duplicates Table */}
+                        {dataType === 'formula' && (filter === 'all' || filter === 'duplicates') && allFormulaDuplicates.length > 0 && (
+                            <div>
+                                <h2 style={{
+                                    fontSize: '1.25rem',
+                                    fontWeight: '600',
+                                    color: '#f59e0b',
+                                    marginBottom: '1rem',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '0.5rem',
+                                }}>
+                                    ⚠ Skipped Formula Duplicates ({allFormulaDuplicates.length})
+                                </h2>
+                                <div style={{
+                                    background: 'var(--card)',
+                                    borderRadius: 'var(--radius-lg)',
+                                    border: '1px solid rgba(245, 158, 11, 0.3)',
+                                    overflow: 'hidden',
+                                }}>
+                                    <div style={{ overflowX: 'auto' }}>
+                                        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                                            <thead>
+                                                <tr style={{ background: 'rgba(245, 158, 11, 0.1)' }}>
+                                                    <th style={thStyle}>Product Code</th>
+                                                    <th style={thStyle}>Product Name</th>
+                                                    <th style={thStyle}>Revision</th>
+                                                    <th style={thStyle}>Generic Name</th>
+                                                    <th style={thStyle}>Manufacturer</th>
+                                                    <th style={thStyle}>Reason</th>
+                                                    <th style={thStyle}>Existing In</th>
+                                                    <th style={thStyle}>Attempted File</th>
+                                                    <th style={thStyle}>Attempted At</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {allFormulaDuplicates.map((formula, index) => (
+                                                    <tr
+                                                        key={index}
+                                                        style={{
+                                                            background: index % 2 === 0 ? 'transparent' : 'var(--muted)',
+                                                        }}
+                                                    >
+                                                        <td style={{ ...tdStyle, fontFamily: 'monospace', fontWeight: '600' }}>{formula.productCode}</td>
+                                                        <td style={tdStyle}>{formula.productName}</td>
+                                                        <td style={{ ...tdStyle, textAlign: 'center' }}>
+                                                            <span style={{
+                                                                display: 'inline-block',
+                                                                padding: '0.15rem 0.5rem',
+                                                                background: 'rgba(139, 92, 246, 0.1)',
+                                                                color: '#8b5cf6',
+                                                                borderRadius: 'var(--radius-sm)',
+                                                                fontSize: '0.75rem',
+                                                                fontWeight: '600',
+                                                            }}>
+                                                                REV {formula.revisionNo}
+                                                            </span>
+                                                        </td>
+                                                        <td style={tdStyle}>{formula.genericName || '-'}</td>
+                                                        <td style={tdStyle}>{formula.manufacturer || '-'}</td>
+                                                        <td style={{ ...tdStyle, color: '#f59e0b', fontWeight: '500' }}>{formula.reason}</td>
+                                                        <td style={tdStyle}>
+                                                            <span style={{
+                                                                display: 'inline-block',
+                                                                padding: '0.15rem 0.5rem',
+                                                                background: 'rgba(59, 130, 246, 0.1)',
+                                                                color: '#3b82f6',
+                                                                borderRadius: 'var(--radius-sm)',
+                                                                fontSize: '0.7rem',
+                                                                fontWeight: '500',
+                                                            }}>
+                                                                {formula.existingFileName}
+                                                            </span>
+                                                        </td>
+                                                        <td style={tdStyle}>
+                                                            <span style={{
+                                                                display: 'inline-block',
+                                                                padding: '0.15rem 0.5rem',
+                                                                background: 'rgba(236, 72, 153, 0.1)',
+                                                                color: '#ec4899',
+                                                                borderRadius: 'var(--radius-sm)',
+                                                                fontSize: '0.7rem',
+                                                                fontWeight: '500',
+                                                            }}>
+                                                                {formula.sourceFileName}
+                                                            </span>
+                                                        </td>
+                                                        <td style={{ ...tdStyle, fontSize: '0.85rem' }}>{formatDate(formula.processedAt)}</td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
                             </div>
                         )}
+
+                        {/* Formula Successful Table */}
+                        {dataType === 'formula' && (filter === 'all' || filter === 'successful') && allSuccessfulFormulas.length > 0 && (
+                            <div style={{ marginBottom: '2rem' }}>
+                                <h2 style={{
+                                    fontSize: '1.25rem',
+                                    fontWeight: '600',
+                                    color: '#22c55e',
+                                    marginBottom: '1rem',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '0.5rem',
+                                }}>
+                                    ✓ Successfully Processed Formulas ({allSuccessfulFormulas.length})
+                                </h2>
+                                <div style={{
+                                    background: 'var(--card)',
+                                    borderRadius: 'var(--radius-lg)',
+                                    border: '1px solid rgba(34, 197, 94, 0.3)',
+                                    overflow: 'hidden',
+                                }}>
+                                    <div style={{ overflowX: 'auto' }}>
+                                        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                                            <thead>
+                                                <tr style={{ background: 'rgba(34, 197, 94, 0.1)' }}>
+                                                    <th style={thStyle}>Product Code</th>
+                                                    <th style={thStyle}>Product Name</th>
+                                                    <th style={thStyle}>Revision</th>
+                                                    <th style={thStyle}>Generic Name</th>
+                                                    <th style={thStyle}>Manufacturer</th>
+                                                    <th style={thStyle}>Source File</th>
+                                                    <th style={thStyle}>Processed At</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {allSuccessfulFormulas.map((formula, index) => (
+                                                    <tr
+                                                        key={index}
+                                                        style={{
+                                                            background: index % 2 === 0 ? 'transparent' : 'var(--muted)',
+                                                        }}
+                                                    >
+                                                        <td style={{ ...tdStyle, fontFamily: 'monospace', fontWeight: '600' }}>{formula.productCode}</td>
+                                                        <td style={tdStyle}>{formula.productName}</td>
+                                                        <td style={{ ...tdStyle, textAlign: 'center' }}>
+                                                            <span style={{
+                                                                display: 'inline-block',
+                                                                padding: '0.15rem 0.5rem',
+                                                                background: 'rgba(139, 92, 246, 0.1)',
+                                                                color: '#8b5cf6',
+                                                                borderRadius: 'var(--radius-sm)',
+                                                                fontSize: '0.75rem',
+                                                                fontWeight: '600',
+                                                            }}>
+                                                                REV {formula.revisionNo}
+                                                            </span>
+                                                        </td>
+                                                        <td style={tdStyle}>{formula.genericName || '-'}</td>
+                                                        <td style={tdStyle}>{formula.manufacturer || '-'}</td>
+                                                        <td style={tdStyle}>
+                                                            <span style={{
+                                                                display: 'inline-block',
+                                                                padding: '0.15rem 0.5rem',
+                                                                background: 'rgba(139, 92, 246, 0.1)',
+                                                                color: '#8b5cf6',
+                                                                borderRadius: 'var(--radius-sm)',
+                                                                fontSize: '0.7rem',
+                                                                fontWeight: '500',
+                                                            }}>
+                                                                {formula.sourceFileName}
+                                                            </span>
+                                                        </td>
+                                                        <td style={{ ...tdStyle, fontSize: '0.85rem' }}>{formatDate(formula.processedAt)}</td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* No Results */}
+                        {((dataType === 'batch' && filteredSuccessful.length === 0 && filteredDuplicates.length === 0) ||
+                            (dataType === 'formula' && allSuccessfulFormulas.length === 0 && allFormulaDuplicates.length === 0)) && (
+                                <div style={{
+                                    textAlign: 'center',
+                                    padding: '4rem',
+                                    color: 'var(--muted-foreground)',
+                                }}>
+                                    No {dataType === 'batch' ? 'batch items' : 'formulas'} found matching your search criteria
+                                </div>
+                            )}
                     </>
                 )}
             </main>

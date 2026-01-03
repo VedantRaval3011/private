@@ -1,14 +1,157 @@
 'use client';
 
 /**
- * Formula Data Page
- * Displays all Formula Master records from all files in combined view
- * Shows which file each formula came from
+ * Formula Data Page - MFC Dashboard
+ * Shows all Master Formula Cards organized in expandable sections
+ * Displays complete MFC data with all fields - using FormulaDisplay style
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import Link from 'next/link';
-import type { FormulaRecord, MaterialItem, CompositionItem } from '@/types/formula';
+
+// Complete MasterFormulaDetails interface matching the parsed data
+interface MasterFormulaDetails {
+    masterCardNo: string;
+    productCode: string;
+    productName: string;
+    genericName: string;
+    specification: string;
+    manufacturingLicenseNo: string;
+    manufacturingLocation: string;
+    reasonForChange?: string;
+    revisionNo?: string;
+    manufacturer: string;
+    shelfLife: string;
+    effectiveBatchNo?: string;
+    date?: string;
+}
+
+interface BatchInfo {
+    batchSize: string;
+    labelClaim: string;
+    marketedBy?: string;
+    volume?: string;
+}
+
+interface MaterialItem {
+    srNo: number;
+    materialCode: string;
+    materialName: string;
+    potencyCorrection: string;
+    requiredQuantity: string;
+    overages?: string;
+    quantityPerUnit: string;
+    requiredQuantityStandardBatch: string;
+    equivalentMaterial?: string;
+    conversionFactor?: string;
+}
+
+interface FillingDetail {
+    productCode: string;
+    productName: string;
+    packingSize: string;
+    actualFillingQuantity: string;
+    numberOfSyringes: string;
+    syringeType?: string;
+    packingMaterials?: Array<{
+        srNo: number;
+        materialCode: string;
+        materialName: string;
+        qtyPerUnit: string;
+        reqAsPerStdBatchSize: string;
+        unit: string;
+    }>;
+}
+
+interface CompositionItem {
+    activeIngredientName: string;
+    strengthPerUnit: string;
+    form: string;
+    equivalentBase?: string;
+}
+
+interface ExcipientItem {
+    name: string;
+    type: string;
+    quantity: string;
+    unit: string;
+}
+
+interface CompanyInfo {
+    companyName: string;
+    companyAddress: string;
+    documentTitle: string;
+    pageNumber?: string;
+}
+
+interface SummaryTotals {
+    totalUnitsProduced?: string;
+    totalFillingQuantity?: string;
+    standardBatchSizeCompliance?: string;
+}
+
+// Process-based data interfaces
+interface ProcessMaterialItem {
+    srNo: number;
+    materialCode: string;
+    materialName: string;
+    potencyCorrection: string;
+    reqQty: string;
+    ovgPercent: string;
+    qtyPerUnit: string;
+    reqAsPerStdBatchSize: string;
+    unit: string;
+    materialType: string;
+    subMaterialType: string;
+}
+
+interface AsepticFillingProduct {
+    productCode: string;
+    productName: string;
+    packing: string;
+    packingSize?: string;  // Alternative field name
+    actualFillingQty: string;
+    actualFillingQuantity?: string;  // Alternative field name
+    actualFillingMl: string;
+    materials: ProcessMaterialItem[];
+}
+
+interface ProcessData {
+    processNo: number;
+    processName: string;
+    materials: ProcessMaterialItem[];
+    fillingProducts?: AsepticFillingProduct[];
+}
+
+interface PackingMaterialItem {
+    srNo: number;
+    materialCode: string;
+    materialName: string;
+    subType: string;
+    unit: string;
+    reqAsPerStdBatchSize: string;
+    artworkNo?: string;
+}
+
+interface FormulaRecord {
+    _id: string;
+    uniqueIdentifier: string;
+    fileName: string;
+    fileSize: number;
+    parsingStatus: 'success' | 'partial' | 'failed';
+    uploadedAt: string;
+    companyInfo: CompanyInfo;
+    masterFormulaDetails: MasterFormulaDetails;
+    batchInfo: BatchInfo;
+    composition: CompositionItem[];
+    materials: MaterialItem[];
+    excipients?: ExcipientItem[];
+    fillingDetails: FillingDetail[];
+    summary: SummaryTotals;
+    processes?: ProcessData[];
+    packingMaterials?: PackingMaterialItem[];
+    totalBatchCount?: number;  // Total batches across all product codes in this MFC
+}
 
 interface FormulaListResponse {
     success: boolean;
@@ -16,62 +159,580 @@ interface FormulaListResponse {
     total: number;
     page: number;
     limit: number;
+    batchCounts?: Record<string, number>;
+    unmatchedBatches?: Array<{ itemCode: string; count: number }>;
 }
 
-// Extended material with source info
-interface MaterialWithSource extends MaterialItem {
-    sourceFileName: string;
-    sourceProductName: string;
-    sourceProductCode: string;
+// ============================================
+// Section Component (from FormulaDisplay) - Enhanced with vibrant colors
+// ============================================
+interface SectionProps {
+    title: string;
+    icon: React.ReactNode;
+    children: React.ReactNode;
+    defaultOpen?: boolean;
+    gradient?: string;
 }
+
+function Section({ title, icon, children, defaultOpen = true, gradient = 'var(--gradient-primary)' }: SectionProps) {
+    const [isOpen, setIsOpen] = useState(defaultOpen);
+
+    // Extract accent color from gradient for border glow
+    const getAccentColor = (grad: string) => {
+        if (grad.includes('#7c3aed') || grad.includes('#8b5cf6')) return 'rgba(139, 92, 246, 0.4)';
+        if (grad.includes('#0891b2') || grad.includes('#0d9488')) return 'rgba(13, 148, 136, 0.4)';
+        if (grad.includes('#059669') || grad.includes('#10b981')) return 'rgba(16, 185, 129, 0.4)';
+        if (grad.includes('#db2777') || grad.includes('#ec4899')) return 'rgba(236, 72, 153, 0.4)';
+        if (grad.includes('#ea580c') || grad.includes('#f97316')) return 'rgba(249, 115, 22, 0.4)';
+        if (grad.includes('#6366f1')) return 'rgba(99, 102, 241, 0.4)';
+        return 'rgba(139, 92, 246, 0.3)';
+    };
+
+    const accentGlow = getAccentColor(gradient);
+
+    return (
+        <div
+            style={{
+                background: 'var(--card)',
+                borderRadius: '16px',
+                overflow: 'hidden',
+                boxShadow: isOpen ? `0 8px 32px ${accentGlow}, 0 4px 12px rgba(0,0,0,0.08)` : 'var(--shadow-md)',
+                border: 'none',
+                marginBottom: '1.25rem',
+                transition: 'all 0.3s ease',
+            }}
+        >
+            <button
+                onClick={() => setIsOpen(!isOpen)}
+                style={{
+                    width: '100%',
+                    padding: '1.125rem 1.5rem',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    background: gradient,
+                    border: 'none',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s ease',
+                    position: 'relative',
+                    overflow: 'hidden',
+                }}
+            >
+                {/* Decorative shimmer effect */}
+                <div style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: '-100%',
+                    width: '50%',
+                    height: '100%',
+                    background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent)',
+                    animation: isOpen ? 'none' : undefined,
+                }} />
+
+                {/* Decorative circles */}
+                <div style={{
+                    position: 'absolute',
+                    right: '40px',
+                    top: '50%',
+                    transform: 'translateY(-50%)',
+                    width: '60px',
+                    height: '60px',
+                    borderRadius: '50%',
+                    background: 'rgba(255,255,255,0.08)',
+                }} />
+                <div style={{
+                    position: 'absolute',
+                    right: '20px',
+                    top: '50%',
+                    transform: 'translateY(-50%)',
+                    width: '40px',
+                    height: '40px',
+                    borderRadius: '50%',
+                    background: 'rgba(255,255,255,0.05)',
+                }} />
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.875rem', zIndex: 1 }}>
+                    <div style={{
+                        width: '36px',
+                        height: '36px',
+                        background: 'rgba(255, 255, 255, 0.25)',
+                        borderRadius: '10px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        color: 'white',
+                        boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+                        backdropFilter: 'blur(10px)',
+                    }}>
+                        {icon}
+                    </div>
+                    <h3 style={{
+                        color: 'white',
+                        fontSize: '1.05rem',
+                        fontWeight: '700',
+                        margin: 0,
+                        textShadow: '0 1px 2px rgba(0,0,0,0.1)',
+                        letterSpacing: '-0.01em',
+                    }}>
+                        {title}
+                    </h3>
+                </div>
+                <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    zIndex: 1,
+                }}>
+                    <span style={{
+                        fontSize: '0.7rem',
+                        color: 'rgba(255,255,255,0.7)',
+                        fontWeight: '500',
+                    }}>
+                        {isOpen ? 'Collapse' : 'Expand'}
+                    </span>
+                    <div style={{
+                        width: '28px',
+                        height: '28px',
+                        borderRadius: '8px',
+                        background: 'rgba(255,255,255,0.2)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        transition: 'transform 0.2s ease',
+                    }}>
+                        <svg
+                            width="16"
+                            height="16"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="white"
+                            strokeWidth="2.5"
+                            style={{
+                                transform: isOpen ? 'rotate(180deg)' : 'rotate(0deg)',
+                                transition: 'transform 0.2s ease',
+                            }}
+                        >
+                            <polyline points="6 9 12 15 18 9" />
+                        </svg>
+                    </div>
+                </div>
+            </button>
+
+            {isOpen && (
+                <div style={{
+                    padding: '1.5rem',
+                    background: 'linear-gradient(180deg, rgba(249, 250, 251, 0.5) 0%, white 100%)',
+                    borderTop: `3px solid ${accentGlow.replace('0.4', '0.6').replace('0.3', '0.5')}`,
+                }}>
+                    {children}
+                </div>
+            )}
+        </div>
+    );
+}
+
+// ============================================
+// InfoRow Component (from FormulaDisplay) - Enhanced with colors
+// ============================================
+function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
+    return (
+        <div style={{
+            display: 'flex',
+            padding: '0.75rem 0.5rem',
+            borderBottom: '1px solid rgba(139, 92, 246, 0.1)',
+            borderRadius: '8px',
+            margin: '2px 0',
+            transition: 'all 0.2s ease',
+            background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.02) 0%, rgba(20, 184, 166, 0.02) 100%)',
+        }}
+            onMouseEnter={(e) => {
+                e.currentTarget.style.background = 'linear-gradient(135deg, rgba(139, 92, 246, 0.08) 0%, rgba(20, 184, 166, 0.05) 100%)';
+                e.currentTarget.style.borderColor = 'rgba(139, 92, 246, 0.3)';
+            }}
+            onMouseLeave={(e) => {
+                e.currentTarget.style.background = 'linear-gradient(135deg, rgba(139, 92, 246, 0.02) 0%, rgba(20, 184, 166, 0.02) 100%)';
+                e.currentTarget.style.borderColor = 'rgba(139, 92, 246, 0.1)';
+            }}
+        >
+            <span style={{
+                flex: '0 0 40%',
+                fontWeight: '600',
+                color: '#7c3aed',
+                fontSize: '0.85rem',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+            }}>
+                <span style={{
+                    width: '4px',
+                    height: '4px',
+                    borderRadius: '50%',
+                    background: 'linear-gradient(135deg, #8b5cf6 0%, #06b6d4 100%)',
+                }}></span>
+                {label}
+            </span>
+            <span style={{
+                flex: '0 0 60%',
+                color: 'var(--foreground)',
+                fontWeight: '500',
+                fontSize: '0.85rem',
+            }}>
+                {value || <span style={{ color: '#9ca3af', fontStyle: 'italic' }}>N/A</span>}
+            </span>
+        </div>
+    );
+}
+
+// ============================================
+// DataTable Component (from FormulaDisplay) - Enhanced with vibrant colors
+// ============================================
+
+// Color themes for different table types
+const tableColorThemes = [
+    { header: 'linear-gradient(135deg, #7c3aed 0%, #8b5cf6 100%)', evenRow: 'rgba(139, 92, 246, 0.03)', oddRow: 'rgba(139, 92, 246, 0.08)', border: '#8b5cf6', accent: '#7c3aed' },
+    { header: 'linear-gradient(135deg, #0891b2 0%, #06b6d4 100%)', evenRow: 'rgba(6, 182, 212, 0.03)', oddRow: 'rgba(6, 182, 212, 0.08)', border: '#06b6d4', accent: '#0891b2' },
+    { header: 'linear-gradient(135deg, #059669 0%, #10b981 100%)', evenRow: 'rgba(16, 185, 129, 0.03)', oddRow: 'rgba(16, 185, 129, 0.08)', border: '#10b981', accent: '#059669' },
+    { header: 'linear-gradient(135deg, #db2777 0%, #ec4899 100%)', evenRow: 'rgba(236, 72, 153, 0.03)', oddRow: 'rgba(236, 72, 153, 0.08)', border: '#ec4899', accent: '#db2777' },
+    { header: 'linear-gradient(135deg, #ea580c 0%, #f97316 100%)', evenRow: 'rgba(249, 115, 22, 0.03)', oddRow: 'rgba(249, 115, 22, 0.08)', border: '#f97316', accent: '#ea580c' },
+];
+
+let tableColorIndex = 0;
+const getNextTableTheme = () => {
+    const theme = tableColorThemes[tableColorIndex % tableColorThemes.length];
+    tableColorIndex++;
+    return theme;
+};
+
+function DataTable({
+    headers,
+    rows,
+    colorTheme
+}: {
+    headers: string[];
+    rows: (string | number | React.ReactNode | undefined)[][];
+    colorTheme?: { header: string; evenRow: string; oddRow: string; border: string; accent: string };
+}) {
+    const theme = colorTheme || getNextTableTheme();
+
+    return (
+        <div style={{
+            overflowX: 'auto',
+            borderRadius: '12px',
+            border: `2px solid ${theme.border}`,
+            boxShadow: `0 4px 16px rgba(0, 0, 0, 0.08), 0 0 0 1px ${theme.border}20`,
+            background: 'white',
+        }}>
+            <table style={{
+                width: '100%',
+                borderCollapse: 'collapse',
+                fontSize: '0.82rem',
+            }}>
+                <thead>
+                    <tr style={{ background: theme.header }}>
+                        {headers.map((header, i) => (
+                            <th key={i} style={{
+                                padding: '0.875rem 1rem',
+                                textAlign: 'left',
+                                fontWeight: '700',
+                                color: 'white',
+                                borderBottom: 'none',
+                                whiteSpace: 'nowrap',
+                                textTransform: 'uppercase',
+                                fontSize: '0.72rem',
+                                letterSpacing: '0.05em',
+                                textShadow: '0 1px 2px rgba(0,0,0,0.1)',
+                            }}>
+                                <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                    {i === 0 && <span style={{ opacity: 0.8 }}>📋</span>}
+                                    {header}
+                                </span>
+                            </th>
+                        ))}
+                    </tr>
+                </thead>
+                <tbody>
+                    {rows.length === 0 ? (
+                        <tr>
+                            <td
+                                colSpan={headers.length}
+                                style={{
+                                    padding: '2.5rem',
+                                    textAlign: 'center',
+                                    color: '#9ca3af',
+                                    background: 'linear-gradient(180deg, rgba(249, 250, 251, 0) 0%, rgba(249, 250, 251, 1) 100%)',
+                                }}
+                            >
+                                <span style={{ fontSize: '1.5rem', marginBottom: '8px', display: 'block' }}>📭</span>
+                                No data available
+                            </td>
+                        </tr>
+                    ) : (
+                        rows.map((row, rowIndex) => (
+                            <tr
+                                key={rowIndex}
+                                style={{
+                                    background: rowIndex % 2 === 0 ? theme.evenRow : theme.oddRow,
+                                    transition: 'all 0.2s ease',
+                                    borderLeft: rowIndex % 2 === 1 ? `3px solid ${theme.border}40` : '3px solid transparent',
+                                }}
+                                onMouseEnter={(e) => {
+                                    e.currentTarget.style.background = `${theme.border}15`;
+                                    e.currentTarget.style.transform = 'scale(1.002)';
+                                }}
+                                onMouseLeave={(e) => {
+                                    e.currentTarget.style.background = rowIndex % 2 === 0 ? theme.evenRow : theme.oddRow;
+                                    e.currentTarget.style.transform = 'scale(1)';
+                                }}
+                            >
+                                {row.map((cell, cellIndex) => (
+                                    <td key={cellIndex} style={{
+                                        padding: '0.75rem 1rem',
+                                        borderBottom: `1px solid ${theme.border}20`,
+                                        color: '#374151',
+                                        fontWeight: cellIndex === 0 ? '600' : '400',
+                                    }}>
+                                        {cellIndex === 0 && typeof cell === 'number' ? (
+                                            <span style={{
+                                                display: 'inline-flex',
+                                                alignItems: 'center',
+                                                justifyContent: 'center',
+                                                width: '24px',
+                                                height: '24px',
+                                                borderRadius: '6px',
+                                                background: theme.header,
+                                                color: 'white',
+                                                fontSize: '0.7rem',
+                                                fontWeight: '700',
+                                            }}>
+                                                {cell}
+                                            </span>
+                                        ) : cellIndex === 1 ? (
+                                            <span style={{
+                                                fontFamily: 'monospace',
+                                                padding: '2px 8px',
+                                                background: `${theme.border}15`,
+                                                borderRadius: '4px',
+                                                color: theme.accent,
+                                                fontWeight: '600',
+                                            }}>
+                                                {cell ?? 'N/A'}
+                                            </span>
+                                        ) : (
+                                            cell ?? <span style={{ color: '#d1d5db', fontStyle: 'italic' }}>N/A</span>
+                                        )}
+                                    </td>
+                                ))}
+                            </tr>
+                        ))
+                    )}
+                </tbody>
+            </table>
+        </div>
+    );
+}
+
+// Color scheme for different manufacturers - Enhanced with more visible pastel tints
+const getManufacturerColor = (manufacturer: string): { primary: string; light: string; border: string; glow: string; glass: string } => {
+    const mfr = manufacturer?.toLowerCase() || '';
+
+    if (mfr.includes('indiana')) {
+        return {
+            primary: '#f97316',
+            light: 'rgba(249, 115, 22, 0.18)',
+            border: 'rgba(249, 115, 22, 0.4)',
+            glow: 'rgba(249, 115, 22, 0.12)',
+            glass: 'linear-gradient(135deg, rgba(255, 237, 213, 0.6) 0%, rgba(254, 215, 170, 0.4) 50%, rgba(251, 191, 36, 0.15) 100%)'
+        };
+    }
+    if (mfr.includes('zenex')) {
+        return {
+            primary: '#ec4899',
+            light: 'rgba(236, 72, 153, 0.18)',
+            border: 'rgba(236, 72, 153, 0.4)',
+            glow: 'rgba(236, 72, 153, 0.12)',
+            glass: 'linear-gradient(135deg, rgba(253, 242, 248, 0.7) 0%, rgba(252, 231, 243, 0.5) 50%, rgba(244, 114, 182, 0.15) 100%)'
+        };
+    }
+    if (mfr.includes('ajanta')) {
+        return {
+            primary: '#3b82f6',
+            light: 'rgba(59, 130, 246, 0.18)',
+            border: 'rgba(59, 130, 246, 0.4)',
+            glow: 'rgba(59, 130, 246, 0.12)',
+            glass: 'linear-gradient(135deg, rgba(239, 246, 255, 0.7) 0%, rgba(219, 234, 254, 0.5) 50%, rgba(147, 197, 253, 0.2) 100%)'
+        };
+    }
+    if (mfr.includes('cadila')) {
+        return {
+            primary: '#14b8a6',
+            light: 'rgba(20, 184, 166, 0.18)',
+            border: 'rgba(20, 184, 166, 0.4)',
+            glow: 'rgba(20, 184, 166, 0.12)',
+            glass: 'linear-gradient(135deg, rgba(240, 253, 250, 0.7) 0%, rgba(204, 251, 241, 0.5) 50%, rgba(94, 234, 212, 0.2) 100%)'
+        };
+    }
+    // Default purple
+    return {
+        primary: '#8b5cf6',
+        light: 'rgba(139, 92, 246, 0.18)',
+        border: 'rgba(139, 92, 246, 0.4)',
+        glow: 'rgba(139, 92, 246, 0.12)',
+        glass: 'linear-gradient(135deg, rgba(245, 243, 255, 0.7) 0%, rgba(237, 233, 254, 0.5) 50%, rgba(196, 181, 253, 0.2) 100%)'
+    };
+};
 
 export default function FormulaDataPage() {
     const [formulas, setFormulas] = useState<FormulaRecord[]>([]);
-    const [allMaterials, setAllMaterials] = useState<MaterialWithSource[]>([]);
-    const [allCompositions, setAllCompositions] = useState<(CompositionItem & { sourceFileName: string; sourceProductName: string })[]>([]);
     const [isLoading, setIsLoading] = useState(true);
-    const [activeTab, setActiveTab] = useState<'overview' | 'materials' | 'composition'>('overview');
-    const [sortField, setSortField] = useState<string>('srNo');
-    const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
+    const [expandedMfc, setExpandedMfc] = useState<string | null>(null);
+    const [searchTerm, setSearchTerm] = useState('');
+    const [selectedManufacturer, setSelectedManufacturer] = useState<string | null>(null);
+    const [batchCounts, setBatchCounts] = useState<Record<string, number>>({});
+    const [unmatchedBatches, setUnmatchedBatches] = useState<{ itemCode: string; count: number }[]>([]);
+
+    // Section collapse states
+    const [orphanedBatchesOpen, setOrphanedBatchesOpen] = useState(true);
+    const [manufacturerFilterOpen, setManufacturerFilterOpen] = useState(false);
+    const [mainMfcsOpen, setMainMfcsOpen] = useState(true);
+    const [lowBatchMfcsOpen, setLowBatchMfcsOpen] = useState(false);
+    const [noBatchMfcsOpen, setNoBatchMfcsOpen] = useState(false);
+    const [placeboMfcsOpen, setPlaceboMfcsOpen] = useState(false);
+
+    // Sort by MFC Number state: 'none' | 'asc' | 'desc'
+    const [mfcSortOrder, setMfcSortOrder] = useState<'none' | 'asc' | 'desc'>('none');
+
+    // Batch Detail Modal State
+    interface BatchDetailInfo {
+        batchNumber: string;
+        itemCode: string;
+        itemName: string;
+        itemDetail: string;
+        mfgDate: string;
+        expiryDate: string;
+        batchSize: string;
+        unit: string;
+        mfgLicNo: string;
+        department: string;
+        pack: string;
+        type: string;
+        year: string;
+        make: string;
+        locationId: string;
+        mrpValue: string | null;
+        conversionRatio: string;
+        batchCompletionDate?: string;
+        companyName: string;
+        companyAddress: string;
+        fileName: string;
+        uploadedAt: Date;
+    }
+    const [selectedBatchNumber, setSelectedBatchNumber] = useState<string | null>(null);
+    const [batchDetails, setBatchDetails] = useState<BatchDetailInfo[] | null>(null);
+    const [isBatchModalLoading, setIsBatchModalLoading] = useState(false);
+    const [batchModalError, setBatchModalError] = useState<string | null>(null);
+
+    // Batch List Modal State (for viewing all batches of a product code)
+    interface BatchListItem {
+        batchNumber: string;
+        itemCode: string;
+        itemName: string;
+        itemDetail: string;
+        mfgDate: string;
+        expiryDate: string;
+        batchSize: string;
+        unit: string;
+        type: string;
+        mfgLicNo: string;
+        department: string;
+        pack: string;
+        year: string;
+        make: string;
+        locationId: string;
+        mrpValue: string | null;
+        conversionRatio: string;
+        batchCompletionDate?: string;
+        companyName: string;
+        companyAddress: string;
+        fileName: string;
+        uploadedAt: Date;
+    }
+    const [selectedProductCode, setSelectedProductCode] = useState<string | null>(null);
+    const [selectedProductName, setSelectedProductName] = useState<string | null>(null);
+    const [batchList, setBatchList] = useState<BatchListItem[] | null>(null);
+    const [isBatchListLoading, setIsBatchListLoading] = useState(false);
+    const [batchListError, setBatchListError] = useState<string | null>(null);
+
+    // Batch Reconciliation Summary State
+    interface BatchReconciliationSummary {
+        totalBatchesInSystem: number;
+        batchesMatchedToFormula: number;
+        batchesNotMatchedToFormula: number;
+        allBatchesAccountedFor: boolean;
+        reconciledBatchCount: number;
+        mismatchedBatchCount: number;
+        reconciliationPercentage: number;
+    }
+    const [batchReconciliation, setBatchReconciliation] = useState<BatchReconciliationSummary | null>(null);
+
+    // Section Batch List Modal State (for viewing all batches in a section)
+    interface SectionBatchItem {
+        batchNumber: string;
+        itemCode: string;
+        itemName: string;
+        itemDetail: string;
+        mfgDate: string;
+        expiryDate: string;
+        batchSize: string;
+        unit: string;
+        type: string;
+        mfgLicNo: string;
+        department: string;
+        pack: string;
+        year: string;
+        make: string;
+        locationId: string;
+        mrpValue: string | null;
+        conversionRatio: string;
+        batchCompletionDate?: string;
+        companyName: string;
+        companyAddress: string;
+        fileName: string;
+        uploadedAt: Date;
+    }
+    const [sectionBatchList, setSectionBatchList] = useState<SectionBatchItem[] | null>(null);
+    const [isSectionBatchListLoading, setIsSectionBatchListLoading] = useState(false);
+    const [sectionBatchListError, setSectionBatchListError] = useState<string | null>(null);
+
+    // Track expanded filling details per formula (product codes)
+    const [expandedFillingDetails, setExpandedFillingDetails] = useState<Set<string>>(new Set());
+
+    const toggleFillingDetail = (formulaId: string, productCode: string) => {
+        const key = `${formulaId}-${productCode}`;
+        setExpandedFillingDetails(prev => {
+            const next = new Set(prev);
+            if (next.has(key)) {
+                next.delete(key);
+            } else {
+                next.add(key);
+            }
+            return next;
+        });
+    };
+
+    const isFillingDetailExpanded = (formulaId: string, productCode: string) => {
+        return expandedFillingDetails.has(`${formulaId}-${productCode}`);
+    };
+    const [sectionBatchListTitle, setSectionBatchListTitle] = useState<string>('');
 
     const fetchFormulas = useCallback(async () => {
         setIsLoading(true);
         try {
-            const response = await fetch(`/api/formula?page=1&limit=100`);
+            const response = await fetch('/api/formula?page=1&limit=1000');
             const data: FormulaListResponse = await response.json();
             if (data.success) {
                 setFormulas(data.data);
-
-                // Flatten all materials with source info
-                const materials: MaterialWithSource[] = [];
-                const compositions: (CompositionItem & { sourceFileName: string; sourceProductName: string })[] = [];
-
-                data.data.forEach(formula => {
-                    // Materials
-                    if (formula.materials) {
-                        formula.materials.forEach(mat => {
-                            materials.push({
-                                ...mat,
-                                sourceFileName: formula.fileName,
-                                sourceProductName: formula.masterFormulaDetails?.productName || 'Unknown',
-                                sourceProductCode: formula.masterFormulaDetails?.productCode || 'N/A',
-                            });
-                        });
-                    }
-                    // Composition
-                    if (formula.composition) {
-                        formula.composition.forEach(comp => {
-                            compositions.push({
-                                ...comp,
-                                sourceFileName: formula.fileName,
-                                sourceProductName: formula.masterFormulaDetails?.productName || 'Unknown',
-                            });
-                        });
-                    }
-                });
-
-                setAllMaterials(materials);
-                setAllCompositions(compositions);
+                if (data.batchCounts) setBatchCounts(data.batchCounts);
+                if (data.unmatchedBatches) setUnmatchedBatches(data.unmatchedBatches);
             }
         } catch (error) {
             console.error('Error fetching formulas:', error);
@@ -80,100 +741,1480 @@ export default function FormulaDataPage() {
         }
     }, []);
 
+    // Fetch batch reconciliation summary
+    const fetchBatchReconciliation = useCallback(async () => {
+        try {
+            const response = await fetch('/api/reconciliation');
+            const data = await response.json();
+            if (data.success && data.data?.batchReconciliation) {
+                setBatchReconciliation(data.data.batchReconciliation);
+            }
+        } catch (error) {
+            console.error('Error fetching batch reconciliation:', error);
+        }
+    }, []);
+
     useEffect(() => {
         fetchFormulas();
-    }, [fetchFormulas]);
+        fetchBatchReconciliation();
+    }, [fetchFormulas, fetchBatchReconciliation]);
 
-    const handleSort = (field: string) => {
-        if (sortField === field) {
-            setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
-        } else {
-            setSortField(field);
-            setSortDirection('asc');
+    // Group formulas by manufacturer
+    const manufacturerSummary = useMemo(() => {
+        const summary: Record<string, { count: number; formulas: FormulaRecord[] }> = {};
+
+        formulas.forEach(formula => {
+            const manufacturer = formula.masterFormulaDetails?.manufacturer || 'Other';
+            if (!summary[manufacturer]) {
+                summary[manufacturer] = { count: 0, formulas: [] };
+            }
+            summary[manufacturer].count++;
+            summary[manufacturer].formulas.push(formula);
+        });
+
+        return Object.entries(summary)
+            .sort((a, b) => b[1].count - a[1].count)
+            .map(([name, data]) => ({ name, ...data }));
+    }, [formulas])
+
+    // Batch Detail Modal Functions
+    const openBatchModal = useCallback(async (batchNumber: string) => {
+        setSelectedBatchNumber(batchNumber);
+        setIsBatchModalLoading(true);
+        setBatchModalError(null);
+        setBatchDetails(null);
+
+        try {
+            const response = await fetch(`/api/batch/details/${encodeURIComponent(batchNumber)}`);
+            const data = await response.json();
+
+            if (data.success && data.data) {
+                setBatchDetails(data.data);
+            } else {
+                setBatchModalError(data.message || 'Batch not found');
+            }
+        } catch (error) {
+            console.error('Error fetching batch details:', error);
+            setBatchModalError('Failed to fetch batch details');
+        } finally {
+            setIsBatchModalLoading(false);
         }
+    }, []);
+
+    const closeBatchModal = useCallback(() => {
+        setSelectedBatchNumber(null);
+        setBatchDetails(null);
+        setBatchModalError(null);
+    }, []);
+
+    // Batch List Modal Functions
+    const openBatchListModal = useCallback(async (productCodes: string[], productName: string) => {
+        setSelectedProductCode(productCodes.join(', '));
+        setSelectedProductName(productName);
+        setIsBatchListLoading(true);
+        setBatchListError(null);
+        setBatchList(null);
+
+        try {
+            // Filter out invalid codes
+            const validCodes = productCodes.filter(code => code && code !== 'N/A');
+
+            if (validCodes.length === 0) {
+                setBatchListError('No valid product codes found');
+                return;
+            }
+
+            // Use by-codes API to get complete batch information for ALL product codes
+            const response = await fetch('/api/batch/by-codes', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ productCodes: validCodes }),
+            });
+            const data = await response.json();
+
+            if (data.success && data.data && data.data.length > 0) {
+                setBatchList(data.data);
+            } else {
+                setBatchListError(data.message || `No batches found for codes: ${validCodes.join(', ')}`);
+            }
+        } catch (error) {
+            console.error('Error fetching batch list:', error);
+            setBatchListError('Failed to fetch batch list');
+        } finally {
+            setIsBatchListLoading(false);
+        }
+    }, []);
+
+    const closeBatchListModal = useCallback(() => {
+        setSelectedProductCode(null);
+        setSelectedProductName(null);
+        setBatchList(null);
+        setBatchListError(null);
+    }, []);
+
+    // Helper function to get all product codes from a formula (for batch lookup)
+    const getFormulaAllProductCodes = useCallback((formula: FormulaRecord): string[] => {
+        const codes: string[] = [];
+
+        // Add main product code
+        const mainCode = formula.masterFormulaDetails?.productCode;
+        if (mainCode && mainCode !== 'N/A') {
+            codes.push(mainCode);
+        }
+
+        // Add filling details product codes
+        if (formula.fillingDetails && Array.isArray(formula.fillingDetails)) {
+            formula.fillingDetails.forEach((fd: any) => {
+                const fdCode = fd.productCode;
+                if (fdCode && fdCode !== 'N/A' && !codes.includes(fdCode)) {
+                    codes.push(fdCode);
+                }
+            });
+        }
+
+        // Add process filling product codes
+        if (formula.processes && Array.isArray(formula.processes)) {
+            formula.processes.forEach((p: any) => {
+                if (p.fillingProducts && Array.isArray(p.fillingProducts)) {
+                    p.fillingProducts.forEach((fp: any) => {
+                        const fpCode = fp.productCode;
+                        if (fpCode && fpCode !== 'N/A' && !codes.includes(fpCode)) {
+                            codes.push(fpCode);
+                        }
+                    });
+                }
+            });
+        }
+
+        return codes;
+    }, []);
+
+    // Filter formulas
+    const filteredFormulas = useMemo(() => {
+        let result = formulas;
+
+        if (selectedManufacturer) {
+            result = result.filter(f =>
+                (f.masterFormulaDetails?.manufacturer || 'Other') === selectedManufacturer
+            );
+        }
+
+        if (searchTerm) {
+            const term = searchTerm.toLowerCase();
+            result = result.filter(f =>
+                f.masterFormulaDetails.masterCardNo?.toLowerCase().includes(term) ||
+                f.masterFormulaDetails.productCode?.toLowerCase().includes(term) ||
+                f.masterFormulaDetails.productName?.toLowerCase().includes(term) ||
+                f.masterFormulaDetails.genericName?.toLowerCase().includes(term)
+            );
+        }
+
+        // Sort by MFC Number if enabled
+        if (mfcSortOrder !== 'none') {
+            result = [...result].sort((a, b) => {
+                const mfcA = a.masterFormulaDetails?.masterCardNo || '';
+                const mfcB = b.masterFormulaDetails?.masterCardNo || '';
+
+                // Natural sort for MFC numbers (handles alphanumeric like MFC/ZAIIUCF09)
+                const comparison = mfcA.localeCompare(mfcB, undefined, { numeric: true, sensitivity: 'base' });
+
+                return mfcSortOrder === 'asc' ? comparison : -comparison;
+            });
+        }
+
+        return result;
+    }, [formulas, selectedManufacturer, searchTerm, mfcSortOrder]);
+
+    // Separate formulas into categories with DEDUPLICATION by product code
+    const { mainFormulas, lowBatchFormulas, noBatchFormulas, placeboFormulas, sectionBatchTotals } = useMemo(() => {
+        const placebo: FormulaRecord[] = [];
+        const lowBatch: FormulaRecord[] = [];
+        const noBatch: FormulaRecord[] = [];
+        const main: FormulaRecord[] = [];
+
+        filteredFormulas.forEach(f => {
+            const productName = f.masterFormulaDetails.productName?.toLowerCase() || '';
+            // Include both 'placebo' and 'mediafill' in placebo section
+            const isPlaceboOrMediafill = productName.includes('placebo') || productName.includes('mediafill') || productName.includes('media fill');
+            const batchCount = f.totalBatchCount || 0;
+
+            if (isPlaceboOrMediafill) {
+                placebo.push(f);
+            } else if (batchCount === 0) {
+                // New category: MFCs with NO batches at all
+                noBatch.push(f);
+            } else if (batchCount < 3) {
+                // Low batch: 1-2 batches
+                lowBatch.push(f);
+            } else {
+                main.push(f);
+            }
+        });
+
+        // Calculate total batches for each section - DEDUPLICATED by PRODUCT CODE
+        // The key insight: batches are matched by product code (itemCode)
+        // If the same product code appears in multiple formulas, we only count it ONCE
+
+        // Track which product codes we've already counted (globally across all sections)
+        const countedProductCodes = new Set<string>();
+
+        // Helper function to get all product codes from a formula
+        const getFormulaProductCodes = (f: FormulaRecord): string[] => {
+            const codes: string[] = [];
+
+            // Main product code
+            const mainCode = f.masterFormulaDetails?.productCode;
+            if (mainCode && mainCode !== 'N/A') codes.push(mainCode);
+
+            // Filling details product codes
+            if (f.fillingDetails && Array.isArray(f.fillingDetails)) {
+                f.fillingDetails.forEach((fd: FillingDetail) => {
+                    if (fd.productCode && fd.productCode !== 'N/A' && !codes.includes(fd.productCode)) {
+                        codes.push(fd.productCode);
+                    }
+                });
+            }
+
+            // Process filling products
+            if (f.processes && Array.isArray(f.processes)) {
+                f.processes.forEach((p: ProcessData) => {
+                    if (p.fillingProducts && Array.isArray(p.fillingProducts)) {
+                        p.fillingProducts.forEach((fp: AsepticFillingProduct) => {
+                            if (fp.productCode && !codes.includes(fp.productCode)) {
+                                codes.push(fp.productCode);
+                            }
+                        });
+                    }
+                });
+            }
+
+            return codes;
+        };
+
+        let mainBatchTotal = 0;
+        let lowBatchTotal = 0;
+        let noBatchTotal = 0;
+        let placeboBatchTotal = 0;
+
+        // Calculate for main formulas (3+ batches)
+        main.forEach(f => {
+            const productCodes = getFormulaProductCodes(f);
+            productCodes.forEach(code => {
+                if (!countedProductCodes.has(code)) {
+                    countedProductCodes.add(code);
+                    mainBatchTotal += batchCounts[code] || 0;
+                }
+            });
+        });
+
+        // Calculate for low batch formulas (1-2 batches)
+        lowBatch.forEach(f => {
+            const productCodes = getFormulaProductCodes(f);
+            productCodes.forEach(code => {
+                if (!countedProductCodes.has(code)) {
+                    countedProductCodes.add(code);
+                    lowBatchTotal += batchCounts[code] || 0;
+                }
+            });
+        });
+
+        // No batch formulas always have 0
+        noBatch.forEach(f => {
+            const productCodes = getFormulaProductCodes(f);
+            productCodes.forEach(code => {
+                if (!countedProductCodes.has(code)) {
+                    countedProductCodes.add(code);
+                    noBatchTotal += batchCounts[code] || 0; // Should be 0
+                }
+            });
+        });
+
+        // Calculate for placebo formulas
+        placebo.forEach(f => {
+            const productCodes = getFormulaProductCodes(f);
+            productCodes.forEach(code => {
+                if (!countedProductCodes.has(code)) {
+                    countedProductCodes.add(code);
+                    placeboBatchTotal += batchCounts[code] || 0;
+                }
+            });
+        });
+
+        return {
+            mainFormulas: main,
+            lowBatchFormulas: lowBatch,
+            noBatchFormulas: noBatch,
+            placeboFormulas: placebo,
+            sectionBatchTotals: {
+                main: mainBatchTotal,
+                lowBatch: lowBatchTotal,
+                noBatch: noBatchTotal,
+                placebo: placeboBatchTotal,
+                // Total should now match actual batch count
+                totalCounted: mainBatchTotal + lowBatchTotal + noBatchTotal + placeboBatchTotal
+            }
+        };
+    }, [filteredFormulas, batchCounts]);
+
+    const toggleMfc = (mfcId: string) => {
+        setExpandedMfc(expandedMfc === mfcId ? null : mfcId);
     };
 
-    // Sort materials
-    const sortedMaterials = [...allMaterials].sort((a, b) => {
-        const aVal = a[sortField as keyof MaterialWithSource];
-        const bVal = b[sortField as keyof MaterialWithSource];
-        if (aVal === null || aVal === undefined) return 1;
-        if (bVal === null || bVal === undefined) return -1;
-        if (typeof aVal === 'number' && typeof bVal === 'number') {
-            return sortDirection === 'asc' ? aVal - bVal : bVal - aVal;
-        }
-        return sortDirection === 'asc'
-            ? String(aVal).localeCompare(String(bVal))
-            : String(bVal).localeCompare(String(aVal));
-    });
+    // Collapsible section header component with light colors
+    const CollapsibleSectionHeader = ({
+        title,
+        count,
+        totalBatches,
+        icon,
+        isOpen,
+        onToggle,
+        badgeColor,
+        badgeText,
+        description
+    }: {
+        title: string;
+        count: number;
+        totalBatches?: number;
+        icon: string;
+        isOpen: boolean;
+        onToggle: () => void;
+        badgeColor: string;
+        badgeText?: string;
+        description?: string;
+    }) => {
+        // Convert dark badge colors to light background colors
+        const getLightColors = (darkColor: string) => {
+            switch (darkColor) {
+                case '#dc2626': // red
+                    return { bg: '#fef2f2', border: '#fecaca', text: '#dc2626', badgeBg: '#fee2e2' };
+                case '#8b5cf6': // purple
+                    return { bg: '#faf5ff', border: '#e9d5ff', text: '#7c3aed', badgeBg: '#f3e8ff' };
+                case '#10b981': // green
+                    return { bg: '#ecfdf5', border: '#a7f3d0', text: '#059669', badgeBg: '#d1fae5' };
+                case '#f97316': // orange
+                    return { bg: '#fff7ed', border: '#fed7aa', text: '#ea580c', badgeBg: '#ffedd5' };
+                case '#f59e0b': // amber/yellow
+                    return { bg: '#fffbeb', border: '#fde68a', text: '#d97706', badgeBg: '#fef3c7' };
+                case '#6b7280': // gray
+                    return { bg: '#f9fafb', border: '#e5e7eb', text: '#4b5563', badgeBg: '#f3f4f6' };
+                default: // blue fallback
+                    return { bg: '#eff6ff', border: '#bfdbfe', text: '#2563eb', badgeBg: '#dbeafe' };
+            }
+        };
+
+        const colors = getLightColors(badgeColor);
+
+        return (
+            <button
+                onClick={onToggle}
+                style={{
+                    width: '100%',
+                    padding: '1rem 1.5rem',
+                    background: isOpen ? colors.bg : 'var(--card)',
+                    border: `1px solid ${isOpen ? colors.border : 'var(--border)'}`,
+                    borderRadius: 'var(--radius-lg)',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '1rem',
+                    textAlign: 'left',
+                    marginBottom: isOpen ? '1rem' : '0',
+                    transition: 'all 0.2s ease',
+                }}
+            >
+                <div style={{
+                    width: '28px',
+                    height: '28px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    borderRadius: '6px',
+                    background: colors.badgeBg,
+                    color: colors.text,
+                    transition: 'transform 0.2s ease',
+                    transform: isOpen ? 'rotate(90deg)' : 'rotate(0deg)',
+                    fontSize: '0.9rem',
+                }}>
+                    ▶
+                </div>
+                <div style={{ flex: 1 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: '1.25rem' }}>{icon}</span>
+                        <span style={{ fontSize: '1.1rem', fontWeight: '600', color: 'var(--foreground)' }}>
+                            {title} ({count})
+                        </span>
+                        {badgeText && (
+                            <span style={{
+                                padding: '0.25rem 0.5rem',
+                                background: colors.badgeBg,
+                                color: colors.text,
+                                border: `1px solid ${colors.border}`,
+                                borderRadius: '8px',
+                                fontSize: '0.75rem',
+                                fontWeight: '600',
+                            }}>
+                                {badgeText}
+                            </span>
+                        )}
+                        {/* Total Batches Display */}
+                        {totalBatches !== undefined && (
+                            <span style={{
+                                padding: '0.3rem 0.75rem',
+                                background: 'linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%)',
+                                color: 'white',
+                                borderRadius: '12px',
+                                fontSize: '0.8rem',
+                                fontWeight: '700',
+                                boxShadow: '0 2px 4px rgba(59, 130, 246, 0.3)',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '4px',
+                            }}>
+                                📦 {totalBatches.toLocaleString()} Batches
+                            </span>
+                        )}
+                    </div>
+                    {description && (
+                        <p style={{ fontSize: '0.8rem', color: 'var(--muted-foreground)', marginTop: '0.25rem' }}>
+                            {description}
+                        </p>
+                    )}
+                </div>
+                <div style={{
+                    fontSize: '0.8rem',
+                    color: 'var(--muted-foreground)',
+                    padding: '0.25rem 0.5rem',
+                    background: 'var(--background)',
+                    borderRadius: '4px',
+                }}>
+                    {isOpen ? 'Click to collapse' : 'Click to expand'}
+                </div>
+            </button>
+        );
+    };
+
+    // Batch Detail Modal Component (no background blur)
+    const BatchDetailModal = () => {
+        if (!selectedBatchNumber) return null;
+
+        return (
+            <div style={{
+                position: 'fixed',
+                top: '50%',
+                left: '50%',
+                transform: 'translate(-50%, -50%)',
+                zIndex: 1000,
+                width: '90%',
+                maxWidth: '700px',
+                maxHeight: '85vh',
+                overflowY: 'auto',
+                background: 'white',
+                borderRadius: '16px',
+                boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(0, 0, 0, 0.05)',
+                border: '2px solid #e5e7eb',
+            }}>
+                {/* Modal Header */}
+                <div style={{
+                    position: 'sticky',
+                    top: 0,
+                    background: 'linear-gradient(135deg, #7c3aed 0%, #8b5cf6 100%)',
+                    padding: '16px 24px',
+                    borderRadius: '14px 14px 0 0',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    zIndex: 10,
+                }}>
+                    <div>
+                        <h3 style={{ color: 'white', fontSize: '1.1rem', fontWeight: 700, margin: 0 }}>
+                            📦 Batch Details
+                        </h3>
+                        <p style={{ color: 'rgba(255,255,255,0.8)', fontSize: '0.85rem', marginTop: '4px' }}>
+                            Batch No: <strong>{selectedBatchNumber}</strong>
+                        </p>
+                    </div>
+                    <button
+                        onClick={closeBatchModal}
+                        style={{
+                            background: 'rgba(255,255,255,0.2)',
+                            border: 'none',
+                            borderRadius: '8px',
+                            padding: '8px 12px',
+                            color: 'white',
+                            fontSize: '1rem',
+                            cursor: 'pointer',
+                            fontWeight: 600,
+                        }}
+                    >
+                        ✕ Close
+                    </button>
+                </div>
+
+                {/* Modal Body */}
+                <div style={{ padding: '20px 24px' }}>
+                    {isBatchModalLoading && (
+                        <div style={{ textAlign: 'center', padding: '40px' }}>
+                            <svg className="animate-spin" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#8b5cf6" strokeWidth="2">
+                                <path d="M21 12a9 9 0 11-6.219-8.56" strokeLinecap="round" />
+                            </svg>
+                            <p style={{ marginTop: '12px', color: '#6b7280' }}>Loading batch details...</p>
+                        </div>
+                    )}
+
+                    {batchModalError && (
+                        <div style={{
+                            background: '#fef2f2',
+                            border: '1px solid #fecaca',
+                            borderRadius: '12px',
+                            padding: '20px',
+                            textAlign: 'center',
+                        }}>
+                            <span style={{ fontSize: '2rem' }}>⚠️</span>
+                            <p style={{ color: '#dc2626', fontWeight: 600, marginTop: '8px' }}>{batchModalError}</p>
+                        </div>
+                    )}
+
+                    {batchDetails && batchDetails.length > 0 && (
+                        <div>
+                            {batchDetails.map((batch, idx) => (
+                                <div key={idx} style={{
+                                    background: '#f9fafb',
+                                    borderRadius: '12px',
+                                    padding: '20px',
+                                    marginBottom: idx < batchDetails.length - 1 ? '16px' : 0,
+                                    border: '1px solid #e5e7eb',
+                                }}>
+                                    {/* Product Info */}
+                                    <div style={{
+                                        borderBottom: '1px solid #e5e7eb',
+                                        paddingBottom: '16px',
+                                        marginBottom: '16px',
+                                    }}>
+                                        <h4 style={{
+                                            color: '#1f2937',
+                                            fontSize: '1.05rem',
+                                            fontWeight: 700,
+                                            marginBottom: '8px',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '8px'
+                                        }}>
+                                            🏷️ {batch.itemName || 'N/A'}
+                                        </h4>
+                                        <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                                            <span style={{
+                                                background: '#dbeafe',
+                                                color: '#1d4ed8',
+                                                padding: '4px 10px',
+                                                borderRadius: '6px',
+                                                fontSize: '0.8rem',
+                                                fontWeight: 600,
+                                            }}>
+                                                Item Code: {batch.itemCode}
+                                            </span>
+                                            <span style={{
+                                                background: batch.type === 'Export' ? '#d1fae5' : '#fef3c7',
+                                                color: batch.type === 'Export' ? '#059669' : '#d97706',
+                                                padding: '4px 10px',
+                                                borderRadius: '6px',
+                                                fontSize: '0.8rem',
+                                                fontWeight: 600,
+                                            }}>
+                                                {batch.type}
+                                            </span>
+                                        </div>
+                                    </div>
+
+                                    {/* Details Grid */}
+                                    <div style={{
+                                        display: 'grid',
+                                        gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+                                        gap: '12px',
+                                    }}>
+                                        <DetailRow label="Batch Number" value={batch.batchNumber} />
+                                        <DetailRow label="Manufacturing Date" value={batch.mfgDate} />
+                                        <DetailRow label="Expiry Date" value={batch.expiryDate} />
+                                        <DetailRow label="Batch Size" value={`${batch.batchSize} ${batch.unit}`} />
+                                        <DetailRow label="Pack" value={batch.pack} />
+                                        <DetailRow label="Department" value={batch.department} />
+                                        <DetailRow label="Manufacturing License" value={batch.mfgLicNo} />
+                                        <DetailRow label="Location ID" value={batch.locationId} />
+                                        <DetailRow label="Year" value={batch.year} />
+                                        <DetailRow label="Make" value={batch.make} />
+                                        {batch.mrpValue && <DetailRow label="MRP" value={batch.mrpValue} />}
+                                        {batch.batchCompletionDate && <DetailRow label="Completion Date" value={batch.batchCompletionDate} />}
+                                    </div>
+
+                                    {/* Company Info */}
+                                    <div style={{
+                                        marginTop: '16px',
+                                        paddingTop: '16px',
+                                        borderTop: '1px solid #e5e7eb',
+                                    }}>
+                                        <p style={{ fontSize: '0.85rem', color: '#6b7280' }}>
+                                            <strong>Company:</strong> {batch.companyName}
+                                        </p>
+                                        <p style={{ fontSize: '0.8rem', color: '#9ca3af', marginTop: '4px' }}>
+                                            Source: {batch.fileName}
+                                        </p>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            </div>
+        );
+    };
+
+    // Detail row component for modal
+    const DetailRow = ({ label, value }: { label: string; value: string }) => (
+        <div style={{
+            background: 'white',
+            padding: '10px 12px',
+            borderRadius: '8px',
+            border: '1px solid #e5e7eb',
+        }}>
+            <p style={{ fontSize: '0.7rem', color: '#9ca3af', fontWeight: 500, marginBottom: '2px' }}>
+                {label}
+            </p>
+            <p style={{ fontSize: '0.9rem', color: '#1f2937', fontWeight: 600 }}>
+                {value || 'N/A'}
+            </p>
+        </div>
+    );
+
+    // Batch List Modal Component (shows all batches for a product code with complete details)
+    const [expandedBatchIdx, setExpandedBatchIdx] = useState<number | null>(null);
+
+    const BatchListModal = () => {
+        if (!selectedProductCode) return null;
+
+        return (
+            <div style={{
+                position: 'fixed',
+                top: '50%',
+                left: '50%',
+                transform: 'translate(-50%, -50%)',
+                zIndex: 1000,
+                width: '95%',
+                maxWidth: '1100px',
+                maxHeight: '90vh',
+                overflowY: 'auto',
+                background: 'white',
+                borderRadius: '16px',
+                boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(0, 0, 0, 0.05)',
+                border: '2px solid #10b981',
+            }}>
+                {/* Modal Header */}
+                <div style={{
+                    position: 'sticky',
+                    top: 0,
+                    background: 'linear-gradient(135deg, #059669 0%, #10b981 100%)',
+                    padding: '16px 24px',
+                    borderRadius: '14px 14px 0 0',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    zIndex: 10,
+                }}>
+                    <div>
+                        <h3 style={{ color: 'white', fontSize: '1.1rem', fontWeight: 700, margin: 0 }}>
+                            📋 Batch Information
+                        </h3>
+                        <p style={{ color: 'rgba(255,255,255,0.9)', fontSize: '0.85rem', marginTop: '4px' }}>
+                            {selectedProductName} <span style={{ opacity: 0.7 }}>({selectedProductCode})</span>
+                        </p>
+                    </div>
+                    <button
+                        onClick={() => {
+                            closeBatchListModal();
+                            setExpandedBatchIdx(null);
+                        }}
+                        style={{
+                            background: 'rgba(255,255,255,0.2)',
+                            border: 'none',
+                            borderRadius: '8px',
+                            padding: '8px 16px',
+                            color: 'white',
+                            fontSize: '1rem',
+                            cursor: 'pointer',
+                            fontWeight: 600,
+                        }}
+                    >
+                        ✕ Close
+                    </button>
+                </div>
+
+                {/* Modal Body */}
+                <div style={{ padding: '20px 24px' }}>
+                    {isBatchListLoading && (
+                        <div style={{ textAlign: 'center', padding: '40px' }}>
+                            <svg className="animate-spin" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="2">
+                                <path d="M21 12a9 9 0 11-6.219-8.56" strokeLinecap="round" />
+                            </svg>
+                            <p style={{ marginTop: '12px', color: '#6b7280' }}>Loading batch information...</p>
+                        </div>
+                    )}
+
+                    {batchListError && (
+                        <div style={{
+                            background: '#fef2f2',
+                            border: '1px solid #fecaca',
+                            borderRadius: '12px',
+                            padding: '20px',
+                            textAlign: 'center',
+                        }}>
+                            <span style={{ fontSize: '2rem' }}>📭</span>
+                            <p style={{ color: '#dc2626', fontWeight: 600, marginTop: '8px' }}>{batchListError}</p>
+                        </div>
+                    )}
+
+                    {batchList && batchList.length > 0 && (
+                        <div>
+                            {/* Summary Header */}
+                            <div style={{
+                                display: 'flex',
+                                gap: '16px',
+                                marginBottom: '20px',
+                                flexWrap: 'wrap',
+                            }}>
+                                <div style={{
+                                    padding: '12px 20px',
+                                    background: 'linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%)',
+                                    borderRadius: '12px',
+                                    border: '1px solid #a7f3d0',
+                                    flex: '1',
+                                    minWidth: '140px',
+                                }}>
+                                    <div style={{ fontSize: '1.5rem', fontWeight: 700, color: '#059669' }}>
+                                        {batchList.length}
+                                    </div>
+                                    <div style={{ fontSize: '0.8rem', color: '#047857', fontWeight: 500 }}>
+                                        Total Batches
+                                    </div>
+                                </div>
+                                <div style={{
+                                    padding: '12px 20px',
+                                    background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)',
+                                    borderRadius: '12px',
+                                    border: '1px solid #bbf7d0',
+                                    flex: '1',
+                                    minWidth: '140px',
+                                }}>
+                                    <div style={{ fontSize: '1.5rem', fontWeight: 700, color: '#16a34a' }}>
+                                        {batchList.filter(b => b.type === 'Export').length}
+                                    </div>
+                                    <div style={{ fontSize: '0.8rem', color: '#15803d', fontWeight: 500 }}>
+                                        Export Batches
+                                    </div>
+                                </div>
+                                <div style={{
+                                    padding: '12px 20px',
+                                    background: 'linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%)',
+                                    borderRadius: '12px',
+                                    border: '1px solid #fde68a',
+                                    flex: '1',
+                                    minWidth: '140px',
+                                }}>
+                                    <div style={{ fontSize: '1.5rem', fontWeight: 700, color: '#ca8a04' }}>
+                                        {batchList.filter(b => b.type === 'Import').length}
+                                    </div>
+                                    <div style={{ fontSize: '0.8rem', color: '#a16207', fontWeight: 500 }}>
+                                        Import Batches
+                                    </div>
+                                </div>
+                            </div>
+
+                            <p style={{
+                                fontSize: '0.85rem',
+                                color: '#6b7280',
+                                marginBottom: '16px',
+                                padding: '10px 16px',
+                                background: '#f0fdf4',
+                                borderRadius: '8px',
+                                border: '1px solid #bbf7d0'
+                            }}>
+                                💡 Click on any batch row to expand and view complete details.
+                            </p>
+
+                            {/* Batch Cards with Expandable Details */}
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                                {batchList.map((batch, idx) => (
+                                    <div
+                                        key={idx}
+                                        style={{
+                                            background: expandedBatchIdx === idx ? '#f0fdf4' : '#fff',
+                                            border: expandedBatchIdx === idx ? '2px solid #10b981' : '1px solid #e5e7eb',
+                                            borderRadius: '12px',
+                                            overflow: 'hidden',
+                                            transition: 'all 0.2s ease',
+                                        }}
+                                    >
+                                        {/* Batch Header Row - Clickable */}
+                                        <div
+                                            onClick={() => setExpandedBatchIdx(expandedBatchIdx === idx ? null : idx)}
+                                            style={{
+                                                padding: '14px 18px',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: '16px',
+                                                cursor: 'pointer',
+                                                transition: 'background 0.15s ease',
+                                            }}
+                                        >
+                                            {/* Expand Icon */}
+                                            <div style={{
+                                                width: '24px',
+                                                height: '24px',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                justifyContent: 'center',
+                                                borderRadius: '6px',
+                                                background: expandedBatchIdx === idx ? '#10b981' : '#e5e7eb',
+                                                color: expandedBatchIdx === idx ? 'white' : '#6b7280',
+                                                transition: 'all 0.2s ease',
+                                                transform: expandedBatchIdx === idx ? 'rotate(90deg)' : 'rotate(0deg)',
+                                                fontSize: '0.75rem',
+                                                fontWeight: 700,
+                                            }}>
+                                                ▶
+                                            </div>
+
+                                            {/* Index */}
+                                            <div style={{
+                                                width: '32px',
+                                                fontSize: '0.85rem',
+                                                fontWeight: 600,
+                                                color: '#9ca3af',
+                                            }}>
+                                                #{idx + 1}
+                                            </div>
+
+                                            {/* Batch Number */}
+                                            <div style={{
+                                                fontFamily: 'monospace',
+                                                fontSize: '0.95rem',
+                                                fontWeight: 700,
+                                                color: '#059669',
+                                                minWidth: '140px',
+                                            }}>
+                                                {batch.batchNumber}
+                                            </div>
+
+                                            {/* Mfg Date */}
+                                            <div style={{ flex: '1', fontSize: '0.85rem', color: '#374151' }}>
+                                                📅 {batch.mfgDate}
+                                            </div>
+
+                                            {/* Expiry */}
+                                            <div style={{ flex: '1', fontSize: '0.85rem', color: '#374151' }}>
+                                                ⏰ {batch.expiryDate}
+                                            </div>
+
+                                            {/* Batch Size */}
+                                            <div style={{ fontSize: '0.85rem', color: '#374151', fontWeight: 500 }}>
+                                                📦 {batch.batchSize} {batch.unit}
+                                            </div>
+
+                                            {/* Type Badge */}
+                                            <span style={{
+                                                padding: '4px 12px',
+                                                borderRadius: '20px',
+                                                fontSize: '0.75rem',
+                                                fontWeight: 600,
+                                                background: batch.type === 'Export' ? '#d1fae5' : '#fef3c7',
+                                                color: batch.type === 'Export' ? '#059669' : '#d97706',
+                                            }}>
+                                                {batch.type}
+                                            </span>
+                                        </div>
+
+                                        {/* Expanded Details */}
+                                        {expandedBatchIdx === idx && (
+                                            <div style={{
+                                                padding: '16px 20px',
+                                                background: 'linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%)',
+                                                borderTop: '1px solid #e5e7eb',
+                                            }}>
+                                                {/* Details Grid */}
+                                                <div style={{
+                                                    display: 'grid',
+                                                    gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+                                                    gap: '12px',
+                                                    marginBottom: '16px',
+                                                }}>
+                                                    <div style={{
+                                                        background: 'white',
+                                                        padding: '12px 16px',
+                                                        borderRadius: '8px',
+                                                        border: '1px solid #e5e7eb',
+                                                    }}>
+                                                        <div style={{ fontSize: '0.7rem', color: '#9ca3af', fontWeight: 500, marginBottom: '4px' }}>
+                                                            Item Code
+                                                        </div>
+                                                        <div style={{ fontSize: '0.9rem', color: '#1f2937', fontWeight: 600 }}>
+                                                            {batch.itemCode || 'N/A'}
+                                                        </div>
+                                                    </div>
+                                                    <div style={{
+                                                        background: 'white',
+                                                        padding: '12px 16px',
+                                                        borderRadius: '8px',
+                                                        border: '1px solid #e5e7eb',
+                                                    }}>
+                                                        <div style={{ fontSize: '0.7rem', color: '#9ca3af', fontWeight: 500, marginBottom: '4px' }}>
+                                                            Item Name
+                                                        </div>
+                                                        <div style={{ fontSize: '0.9rem', color: '#1f2937', fontWeight: 600 }}>
+                                                            {batch.itemName || 'N/A'}
+                                                        </div>
+                                                    </div>
+                                                    <div style={{
+                                                        background: 'white',
+                                                        padding: '12px 16px',
+                                                        borderRadius: '8px',
+                                                        border: '1px solid #e5e7eb',
+                                                    }}>
+                                                        <div style={{ fontSize: '0.7rem', color: '#9ca3af', fontWeight: 500, marginBottom: '4px' }}>
+                                                            Item Detail
+                                                        </div>
+                                                        <div style={{ fontSize: '0.9rem', color: '#1f2937', fontWeight: 600 }}>
+                                                            {batch.itemDetail || 'N/A'}
+                                                        </div>
+                                                    </div>
+                                                    <div style={{
+                                                        background: 'white',
+                                                        padding: '12px 16px',
+                                                        borderRadius: '8px',
+                                                        border: '1px solid #e5e7eb',
+                                                    }}>
+                                                        <div style={{ fontSize: '0.7rem', color: '#9ca3af', fontWeight: 500, marginBottom: '4px' }}>
+                                                            Manufacturing License
+                                                        </div>
+                                                        <div style={{ fontSize: '0.9rem', color: '#1f2937', fontWeight: 600 }}>
+                                                            {batch.mfgLicNo || 'N/A'}
+                                                        </div>
+                                                    </div>
+                                                    <div style={{
+                                                        background: 'white',
+                                                        padding: '12px 16px',
+                                                        borderRadius: '8px',
+                                                        border: '1px solid #e5e7eb',
+                                                    }}>
+                                                        <div style={{ fontSize: '0.7rem', color: '#9ca3af', fontWeight: 500, marginBottom: '4px' }}>
+                                                            Department
+                                                        </div>
+                                                        <div style={{ fontSize: '0.9rem', color: '#1f2937', fontWeight: 600 }}>
+                                                            {batch.department || 'N/A'}
+                                                        </div>
+                                                    </div>
+                                                    <div style={{
+                                                        background: 'white',
+                                                        padding: '12px 16px',
+                                                        borderRadius: '8px',
+                                                        border: '1px solid #e5e7eb',
+                                                    }}>
+                                                        <div style={{ fontSize: '0.7rem', color: '#9ca3af', fontWeight: 500, marginBottom: '4px' }}>
+                                                            Pack
+                                                        </div>
+                                                        <div style={{ fontSize: '0.9rem', color: '#1f2937', fontWeight: 600 }}>
+                                                            {batch.pack || 'N/A'}
+                                                        </div>
+                                                    </div>
+                                                    <div style={{
+                                                        background: 'white',
+                                                        padding: '12px 16px',
+                                                        borderRadius: '8px',
+                                                        border: '1px solid #e5e7eb',
+                                                    }}>
+                                                        <div style={{ fontSize: '0.7rem', color: '#9ca3af', fontWeight: 500, marginBottom: '4px' }}>
+                                                            Year
+                                                        </div>
+                                                        <div style={{ fontSize: '0.9rem', color: '#1f2937', fontWeight: 600 }}>
+                                                            {batch.year || 'N/A'}
+                                                        </div>
+                                                    </div>
+                                                    <div style={{
+                                                        background: 'white',
+                                                        padding: '12px 16px',
+                                                        borderRadius: '8px',
+                                                        border: '1px solid #e5e7eb',
+                                                    }}>
+                                                        <div style={{ fontSize: '0.7rem', color: '#9ca3af', fontWeight: 500, marginBottom: '4px' }}>
+                                                            Make
+                                                        </div>
+                                                        <div style={{ fontSize: '0.9rem', color: '#1f2937', fontWeight: 600 }}>
+                                                            {batch.make || 'N/A'}
+                                                        </div>
+                                                    </div>
+                                                    <div style={{
+                                                        background: 'white',
+                                                        padding: '12px 16px',
+                                                        borderRadius: '8px',
+                                                        border: '1px solid #e5e7eb',
+                                                    }}>
+                                                        <div style={{ fontSize: '0.7rem', color: '#9ca3af', fontWeight: 500, marginBottom: '4px' }}>
+                                                            Location ID
+                                                        </div>
+                                                        <div style={{ fontSize: '0.9rem', color: '#1f2937', fontWeight: 600 }}>
+                                                            {batch.locationId || 'N/A'}
+                                                        </div>
+                                                    </div>
+                                                    <div style={{
+                                                        background: 'white',
+                                                        padding: '12px 16px',
+                                                        borderRadius: '8px',
+                                                        border: '1px solid #e5e7eb',
+                                                    }}>
+                                                        <div style={{ fontSize: '0.7rem', color: '#9ca3af', fontWeight: 500, marginBottom: '4px' }}>
+                                                            MRP Value
+                                                        </div>
+                                                        <div style={{ fontSize: '0.9rem', color: '#1f2937', fontWeight: 600 }}>
+                                                            {batch.mrpValue || 'N/A'}
+                                                        </div>
+                                                    </div>
+                                                    <div style={{
+                                                        background: 'white',
+                                                        padding: '12px 16px',
+                                                        borderRadius: '8px',
+                                                        border: '1px solid #e5e7eb',
+                                                    }}>
+                                                        <div style={{ fontSize: '0.7rem', color: '#9ca3af', fontWeight: 500, marginBottom: '4px' }}>
+                                                            Conversion Ratio
+                                                        </div>
+                                                        <div style={{ fontSize: '0.9rem', color: '#1f2937', fontWeight: 600 }}>
+                                                            {batch.conversionRatio || 'N/A'}
+                                                        </div>
+                                                    </div>
+                                                    {batch.batchCompletionDate && (
+                                                        <div style={{
+                                                            background: 'white',
+                                                            padding: '12px 16px',
+                                                            borderRadius: '8px',
+                                                            border: '1px solid #e5e7eb',
+                                                        }}>
+                                                            <div style={{ fontSize: '0.7rem', color: '#9ca3af', fontWeight: 500, marginBottom: '4px' }}>
+                                                                Completion Date
+                                                            </div>
+                                                            <div style={{ fontSize: '0.9rem', color: '#1f2937', fontWeight: 600 }}>
+                                                                {batch.batchCompletionDate}
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                </div>
+
+                                                {/* Company Info Footer */}
+                                                <div style={{
+                                                    paddingTop: '12px',
+                                                    borderTop: '1px solid #e5e7eb',
+                                                    display: 'flex',
+                                                    flexWrap: 'wrap',
+                                                    gap: '16px',
+                                                    fontSize: '0.8rem',
+                                                    color: '#6b7280',
+                                                }}>
+                                                    <div>
+                                                        <strong>🏢 Company:</strong> {batch.companyName || 'N/A'}
+                                                    </div>
+                                                    <div>
+                                                        <strong>📍 Address:</strong> {batch.companyAddress || 'N/A'}
+                                                    </div>
+                                                    <div>
+                                                        <strong>📄 Source File:</strong> {batch.fileName || 'N/A'}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                </div>
+            </div>
+        );
+    };
+
+    // Helper function to render a formula card (reused for all sections) - Enhanced with colors
+    const renderFormulaCard = (formula: FormulaRecord, index: number, sectionIndex: number = 0) => {
+        const isExpanded = expandedMfc === formula._id;
+        const colors = getManufacturerColor(formula.masterFormulaDetails?.manufacturer || '');
+        const materialCount = formula.materials?.length || 0;
+        const mfcNo = formula.masterFormulaDetails?.masterCardNo?.trim() || 'N/A';
+
+        return (
+            <div
+                key={formula._id}
+                style={{
+                    background: isExpanded
+                        ? `linear-gradient(135deg, ${colors.light} 0%, ${colors.glow} 40%, rgba(255,255,255,0.92) 100%)`
+                        : `linear-gradient(135deg, ${colors.light} 0%, ${colors.glow} 50%, rgba(255,255,255,0.88) 100%)`,
+                    backdropFilter: 'blur(10px)',
+                    WebkitBackdropFilter: 'blur(10px)',
+                    borderRadius: '16px',
+                    border: isExpanded
+                        ? `2px solid ${colors.border}`
+                        : `1px solid ${colors.border}`,
+                    overflow: 'hidden',
+                    transition: 'all 0.3s ease',
+                    boxShadow: isExpanded
+                        ? `0 10px 40px ${colors.border}, 0 4px 16px ${colors.glow}, inset 0 1px 2px rgba(255,255,255,0.9)`
+                        : `0 4px 24px ${colors.glow}, 0 2px 8px rgba(0,0,0,0.03), inset 0 1px 0 rgba(255,255,255,0.95)`,
+                    position: 'relative' as const,
+                }}
+            >
+                {/* Colored accent bar on left */}
+                <div style={{
+                    position: 'absolute',
+                    left: 0,
+                    top: 0,
+                    bottom: 0,
+                    width: '5px',
+                    background: `linear-gradient(180deg, ${colors.primary} 0%, ${colors.primary}dd 100%)`,
+                    borderRadius: '16px 0 0 16px',
+                    boxShadow: `3px 0 16px ${colors.border}`,
+                }} />
+
+                {/* MFC Header - Always visible */}
+                <button
+                    onClick={() => toggleMfc(formula._id)}
+                    style={{
+                        width: '100%',
+                        padding: '1rem 1.5rem 1rem 1.75rem',
+                        background: isExpanded
+                            ? `linear-gradient(135deg, ${colors.light} 0%, ${colors.glow} 60%, rgba(255,255,255,0.96) 100%)`
+                            : `linear-gradient(135deg, ${colors.glow} 0%, rgba(255,255,255,0.95) 100%)`,
+                        border: 'none',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '1rem',
+                        textAlign: 'left',
+                        transition: 'all 0.2s ease',
+                    }}
+                >
+                    {/* Sr. No with gradient circle */}
+                    <div style={{
+                        width: '32px',
+                        height: '32px',
+                        borderRadius: '10px',
+                        background: `linear-gradient(135deg, ${colors.primary}15 0%, ${colors.primary}25 100%)`,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        fontSize: '0.8rem',
+                        fontWeight: '700',
+                        color: colors.primary,
+                    }}>
+                        #{sectionIndex + index + 1}
+                    </div>
+
+                    {/* Expand/Collapse Icon */}
+                    <div style={{
+                        width: '28px',
+                        height: '28px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        borderRadius: '8px',
+                        background: isExpanded
+                            ? `linear-gradient(135deg, ${colors.primary} 0%, ${colors.primary}cc 100%)`
+                            : colors.light,
+                        color: isExpanded ? 'white' : colors.primary,
+                        transition: 'all 0.2s ease',
+                        transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)',
+                        fontSize: '0.75rem',
+                        fontWeight: '700',
+                        boxShadow: isExpanded ? `0 2px 8px ${colors.border}` : 'none',
+                    }}>
+                        ▶
+                    </div>
+
+                    {/* MFC Number */}
+                    <div style={{
+                        fontFamily: 'monospace',
+                        fontSize: '1rem',
+                        fontWeight: '700',
+                        color: colors.primary,
+                        minWidth: '160px',
+                        padding: '4px 10px',
+                        background: `${colors.primary}08`,
+                        borderRadius: '6px',
+                    }}>
+                        {mfcNo}
+                    </div>
+
+                    {/* Product Name */}
+                    <div style={{
+                        flex: 1,
+                        fontSize: '0.9rem',
+                        fontWeight: '600',
+                        color: '#1f2937',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.75rem',
+                    }}>
+                        {formula.masterFormulaDetails.productName}
+                        {formula.totalBatchCount !== undefined && formula.totalBatchCount > 0 && (
+                            <button
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    openBatchListModal(
+                                        getFormulaAllProductCodes(formula),
+                                        formula.masterFormulaDetails.productName
+                                    );
+                                }}
+                                style={{
+                                    padding: '0.25rem 0.75rem',
+                                    background: 'linear-gradient(135deg, #059669 0%, #10b981 100%)',
+                                    color: '#fff',
+                                    borderRadius: '16px',
+                                    fontSize: '0.72rem',
+                                    fontWeight: '700',
+                                    boxShadow: '0 2px 8px rgba(16, 185, 129, 0.35)',
+                                    whiteSpace: 'nowrap',
+                                    border: 'none',
+                                    cursor: 'pointer',
+                                    transition: 'all 0.15s ease',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '4px',
+                                }}
+                                onMouseEnter={(e) => {
+                                    e.currentTarget.style.transform = 'scale(1.05)';
+                                    e.currentTarget.style.boxShadow = '0 4px 12px rgba(16, 185, 129, 0.45)';
+                                }}
+                                onMouseLeave={(e) => {
+                                    e.currentTarget.style.transform = 'scale(1)';
+                                    e.currentTarget.style.boxShadow = '0 2px 8px rgba(16, 185, 129, 0.35)';
+                                }}
+                                title="Click to view all batches"
+                            >
+                                📦 {formula.totalBatchCount} Batches
+                            </button>
+                        )}
+                    </div>
+
+                    {/* Product Code */}
+                    <div style={{
+                        fontFamily: 'monospace',
+                        fontSize: '0.8rem',
+                        color: '#6b7280',
+                        minWidth: '100px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                    }}>
+                        <span style={{
+                            padding: '2px 8px',
+                            background: '#f3f4f6',
+                            borderRadius: '4px',
+                        }}>
+                            {formula.masterFormulaDetails.productCode}
+                        </span>
+                        {batchCounts[formula.masterFormulaDetails.productCode] > 0 && (
+                            <span style={{
+                                background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                                color: '#fff',
+                                padding: '2px 8px',
+                                borderRadius: '8px',
+                                fontSize: '0.65rem',
+                                fontWeight: '700',
+                                boxShadow: '0 1px 4px rgba(16, 185, 129, 0.3)',
+                            }}>
+                                {batchCounts[formula.masterFormulaDetails.productCode]}
+                            </span>
+                        )}
+                    </div>
+
+                    {/* Manufacturer Tag */}
+                    <div style={{
+                        padding: '0.4rem 0.9rem',
+                        borderRadius: '20px',
+                        background: `linear-gradient(135deg, ${colors.light} 0%, ${colors.glow} 100%)`,
+                        backdropFilter: 'blur(6px)',
+                        color: colors.primary,
+                        fontSize: '0.72rem',
+                        fontWeight: '700',
+                        border: `1px solid ${colors.border}`,
+                        boxShadow: `inset 0 1px 0 rgba(255,255,255,0.5), 0 1px 4px ${colors.glow}`,
+                    }}>
+                        {formula.masterFormulaDetails.manufacturer || 'N/A'}
+                    </div>
+
+                    {/* Material Count */}
+                    <div style={{
+                        padding: '0.4rem 0.9rem',
+                        borderRadius: '20px',
+                        background: 'linear-gradient(135deg, rgba(240, 249, 255, 0.8) 0%, rgba(224, 242, 254, 0.7) 100%)',
+                        backdropFilter: 'blur(6px)',
+                        color: '#0284c7',
+                        fontSize: '0.72rem',
+                        fontWeight: '600',
+                        border: '1px solid rgba(186, 230, 253, 0.6)',
+                        boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.5)',
+                    }}>
+                        🧪 {materialCount} materials
+                    </div>
+
+                    {/* Revision */}
+                    <div style={{
+                        padding: '0.35rem 0.75rem',
+                        borderRadius: '10px',
+                        background: 'linear-gradient(135deg, rgba(253, 244, 255, 0.85) 0%, rgba(243, 232, 255, 0.75) 100%)',
+                        backdropFilter: 'blur(6px)',
+                        color: '#a855f7',
+                        fontSize: '0.72rem',
+                        fontWeight: '600',
+                        border: '1px solid rgba(243, 232, 255, 0.7)',
+                        boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.5)',
+                    }}>
+                        REV {formula.masterFormulaDetails.revisionNo || '0'}
+                    </div>
+                </button>
+            </div>
+        );
+    };
 
     return (
-        <div style={{ minHeight: '100vh', background: 'var(--background)' }}>
-            {/* Header */}
+        <div style={{ minHeight: '100vh', background: 'linear-gradient(180deg, #faf5ff 0%, #f5f3ff 50%, #fafafa 100%)' }}>
+            {/* Batch Modals */}
+            <BatchDetailModal />
+            <BatchListModal />
+            {/* Header with Back Button - Enhanced with gradient */}
             <header style={{
-                background: 'linear-gradient(135deg, #8b5cf6 0%, #a855f7 100%)',
-                padding: '2rem 0',
+                padding: '1.75rem 2rem',
+                borderBottom: 'none',
+                background: 'linear-gradient(135deg, #7c3aed 0%, #8b5cf6 40%, #a855f7 70%, #c084fc 100%)',
                 position: 'relative',
                 overflow: 'hidden',
             }}>
+                {/* Decorative elements */}
                 <div style={{
                     position: 'absolute',
                     top: '-50%',
-                    left: '-10%',
-                    width: '400px',
-                    height: '400px',
-                    background: 'rgba(255, 255, 255, 0.05)',
+                    right: '-5%',
+                    width: '300px',
+                    height: '300px',
                     borderRadius: '50%',
-                    filter: 'blur(40px)',
+                    background: 'rgba(255,255,255,0.1)',
                 }} />
                 <div style={{
-                    maxWidth: '1600px',
-                    margin: '0 auto',
-                    padding: '0 2rem',
-                    position: 'relative',
-                    zIndex: 1,
-                }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <div>
-                            <h1 style={{
-                                fontSize: 'clamp(1.5rem, 4vw, 2.25rem)',
-                                fontWeight: '700',
-                                color: 'white',
-                                marginBottom: '0.25rem',
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: '0.75rem',
-                            }}>
-                                <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                    <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
-                                </svg>
-                                Formula Master Data
-                            </h1>
-                            <p style={{ color: 'rgba(255, 255, 255, 0.8)', fontSize: '1rem' }}>
-                                All formula data from {formulas.length} file(s) • {allMaterials.length} materials • {allCompositions.length} compositions
-                            </p>
-                        </div>
-                        <Link href="/" style={{
-                            padding: '0.75rem 1.5rem',
-                            background: 'rgba(255, 255, 255, 0.2)',
-                            backdropFilter: 'blur(10px)',
-                            border: 'none',
-                            borderRadius: 'var(--radius-md)',
-                            color: 'white',
-                            textDecoration: 'none',
-                            fontWeight: '500',
-                            display: 'flex',
+                    position: 'absolute',
+                    bottom: '-60%',
+                    right: '15%',
+                    width: '200px',
+                    height: '200px',
+                    borderRadius: '50%',
+                    background: 'rgba(255,255,255,0.08)',
+                }} />
+                <div style={{
+                    position: 'absolute',
+                    top: '-30%',
+                    left: '10%',
+                    width: '150px',
+                    height: '150px',
+                    borderRadius: '50%',
+                    background: 'rgba(255,255,255,0.05)',
+                }} />
+
+                <div style={{ maxWidth: '1600px', margin: '0 auto', display: 'flex', alignItems: 'center', gap: '1.5rem', position: 'relative', zIndex: 1 }}>
+                    <Link
+                        href="/"
+                        style={{
+                            display: 'inline-flex',
                             alignItems: 'center',
                             gap: '0.5rem',
+                            padding: '0.75rem 1.25rem',
+                            background: 'rgba(255,255,255,0.2)',
+                            border: '1px solid rgba(255,255,255,0.3)',
+                            borderRadius: '12px',
+                            color: 'white',
+                            fontSize: '0.9rem',
+                            fontWeight: '600',
+                            textDecoration: 'none',
+                            transition: 'all 0.2s ease',
+                            backdropFilter: 'blur(10px)',
+                            boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
+                        }}
+                    >
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M19 12H5M12 19l-7-7 7-7" />
+                        </svg>
+                        Back to Home
+                    </Link>
+                    <div style={{ flex: 1 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '4px' }}>
+                            <span style={{ fontSize: '1.75rem' }}>🧪</span>
+                            <h1 style={{
+                                fontSize: '1.85rem',
+                                fontWeight: '800',
+                                color: 'white',
+                                margin: 0,
+                                textShadow: '0 2px 8px rgba(0,0,0,0.2)',
+                                letterSpacing: '-0.02em',
+                            }}>
+                                Master Formula Dashboard
+                            </h1>
+                        </div>
+                        <p style={{
+                            fontSize: '0.95rem',
+                            color: 'rgba(255,255,255,0.85)',
+                            marginTop: '0.25rem',
                         }}>
-                            ← Back to Home
-                        </Link>
+                            View and manage all Master Formula Cards • Comprehensive data visualization
+                        </p>
+                    </div>
+
+                    {/* Quick Stats in Header */}
+                    <div style={{
+                        display: 'flex',
+                        gap: '12px',
+                    }}>
+                        <div style={{
+                            padding: '0.85rem 1.5rem',
+                            background: 'linear-gradient(135deg, rgba(255,255,255,0.2) 0%, rgba(255,255,255,0.1) 100%)',
+                            borderRadius: '14px',
+                            backdropFilter: 'blur(12px)',
+                            WebkitBackdropFilter: 'blur(12px)',
+                            border: '1px solid rgba(255,255,255,0.25)',
+                            boxShadow: '0 4px 16px rgba(0,0,0,0.1), inset 0 1px 0 rgba(255,255,255,0.3)',
+                        }}>
+                            <div style={{ fontSize: '1.35rem', fontWeight: '800', color: 'white', textShadow: '0 1px 2px rgba(0,0,0,0.1)' }}>
+                                {formulas.length}
+                            </div>
+                            <div style={{ fontSize: '0.7rem', color: 'rgba(255,255,255,0.85)', fontWeight: '600' }}>
+                                Total MFCs
+                            </div>
+                        </div>
+                        {batchReconciliation && (
+                            <div style={{
+                                padding: '0.85rem 1.5rem',
+                                background: 'linear-gradient(135deg, rgba(16, 185, 129, 0.35) 0%, rgba(20, 184, 166, 0.25) 100%)',
+                                borderRadius: '14px',
+                                backdropFilter: 'blur(12px)',
+                                WebkitBackdropFilter: 'blur(12px)',
+                                border: '1px solid rgba(16, 185, 129, 0.4)',
+                                boxShadow: '0 4px 16px rgba(16, 185, 129, 0.2), inset 0 1px 0 rgba(255,255,255,0.2)',
+                            }}>
+                                <div style={{ fontSize: '1.35rem', fontWeight: '800', color: 'white', textShadow: '0 1px 2px rgba(0,0,0,0.1)' }}>
+                                    {batchReconciliation.totalBatchesInSystem.toLocaleString()}
+                                </div>
+                                <div style={{ fontSize: '0.7rem', color: 'rgba(255,255,255,0.95)', fontWeight: '600' }}>
+                                    Total Batches
+                                </div>
+                            </div>
+                        )}
                     </div>
                 </div>
             </header>
 
             <main style={{ maxWidth: '1600px', margin: '0 auto', padding: '2rem' }}>
                 {isLoading ? (
+                    // ... loading spinner ...
                     <div style={{ display: 'flex', justifyContent: 'center', padding: '4rem' }}>
                         <svg className="animate-spin" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#8b5cf6" strokeWidth="2">
                             <path d="M21 12a9 9 0 11-6.219-8.56" strokeLinecap="round" />
@@ -181,241 +2222,1793 @@ export default function FormulaDataPage() {
                     </div>
                 ) : (
                     <>
-                        {/* Tabs */}
+                        {/* BATCH RECONCILIATION SUMMARY - Enhanced with vibrant colors & glass effect */}
+                        {batchReconciliation && (
+                            <div style={{
+                                marginBottom: '2rem',
+                                background: 'linear-gradient(135deg, rgba(240, 249, 255, 0.85) 0%, rgba(250, 245, 255, 0.8) 50%, rgba(245, 243, 255, 0.85) 100%)',
+                                backdropFilter: 'blur(12px)',
+                                WebkitBackdropFilter: 'blur(12px)',
+                                borderRadius: '22px',
+                                border: '1px solid rgba(255,255,255,0.7)',
+                                padding: '24px 28px',
+                                position: 'relative',
+                                overflow: 'hidden',
+                                boxShadow: '0 8px 32px rgba(99, 102, 241, 0.15), inset 0 1px 0 rgba(255,255,255,0.8)',
+                            }}>
+                                {/* Decorative background elements */}
+                                <div style={{
+                                    position: 'absolute',
+                                    top: '-20%',
+                                    right: '-5%',
+                                    width: '200px',
+                                    height: '200px',
+                                    borderRadius: '50%',
+                                    background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.1) 0%, rgba(59, 130, 246, 0.1) 100%)',
+                                }} />
+                                <div style={{
+                                    position: 'absolute',
+                                    bottom: '-30%',
+                                    left: '10%',
+                                    width: '150px',
+                                    height: '150px',
+                                    borderRadius: '50%',
+                                    background: 'linear-gradient(135deg, rgba(16, 185, 129, 0.08) 0%, rgba(6, 182, 212, 0.08) 100%)',
+                                }} />
+
+                                <div style={{
+                                    position: 'absolute',
+                                    top: '16px',
+                                    right: '20px',
+                                    background: batchReconciliation.allBatchesAccountedFor
+                                        ? 'linear-gradient(135deg, #059669 0%, #10b981 100%)'
+                                        : 'linear-gradient(135deg, #dc2626 0%, #ef4444 100%)',
+                                    color: 'white',
+                                    padding: '6px 16px',
+                                    borderRadius: '24px',
+                                    fontSize: '11px',
+                                    fontWeight: 700,
+                                    boxShadow: batchReconciliation.allBatchesAccountedFor
+                                        ? '0 4px 12px rgba(16, 185, 129, 0.3)'
+                                        : '0 4px 12px rgba(239, 68, 68, 0.3)',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '6px',
+                                }}>
+                                    {batchReconciliation.allBatchesAccountedFor ? '✅ ALL BATCHES ACCOUNTED' : '❌ BATCHES MISSING'}
+                                </div>
+
+                                <h2 style={{
+                                    color: '#1e293b',
+                                    fontSize: '17px',
+                                    fontWeight: 700,
+                                    marginBottom: '20px',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '10px',
+                                    position: 'relative',
+                                    zIndex: 1,
+                                }}>
+                                    <span style={{
+                                        width: '36px',
+                                        height: '36px',
+                                        background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
+                                        borderRadius: '10px',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        fontSize: '18px',
+                                    }}>📊</span>
+                                    Batch Reconciliation Summary
+                                </h2>
+
+                                {/* Main Stats Cards */}
+                                <div style={{
+                                    display: 'flex',
+                                    alignItems: 'stretch',
+                                    justifyContent: 'center',
+                                    gap: '16px',
+                                    flexWrap: 'wrap',
+                                    position: 'relative',
+                                    zIndex: 1,
+                                }}>
+                                    {/* Total Batches Card */}
+                                    <div style={{
+                                        flex: '1',
+                                        minWidth: '160px',
+                                        background: 'linear-gradient(135deg, rgba(124, 58, 237, 0.85) 0%, rgba(139, 92, 246, 0.9) 100%)',
+                                        backdropFilter: 'blur(8px)',
+                                        WebkitBackdropFilter: 'blur(8px)',
+                                        borderRadius: '18px',
+                                        padding: '22px 26px',
+                                        textAlign: 'center',
+                                        boxShadow: '0 8px 32px rgba(139, 92, 246, 0.35), inset 0 1px 1px rgba(255,255,255,0.2)',
+                                        border: '1px solid rgba(255,255,255,0.2)',
+                                        color: 'white',
+                                        position: 'relative',
+                                        overflow: 'hidden',
+                                    }}>
+                                        <div style={{
+                                            position: 'absolute',
+                                            top: '-10px',
+                                            right: '-10px',
+                                            width: '50px',
+                                            height: '50px',
+                                            borderRadius: '50%',
+                                            background: 'rgba(255,255,255,0.1)',
+                                        }} />
+                                        <div style={{ fontSize: '32px', fontWeight: 800, marginBottom: '4px' }}>
+                                            {batchReconciliation.totalBatchesInSystem.toLocaleString()}
+                                        </div>
+                                        <div style={{ fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', opacity: 0.9 }}>
+                                            Total Batches
+                                        </div>
+                                        <div style={{ fontSize: '10px', opacity: 0.7, marginTop: '2px' }}>
+                                            Batch Creation
+                                        </div>
+                                    </div>
+
+                                    {/* Equals Sign */}
+                                    <div style={{
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        fontSize: '28px',
+                                        fontWeight: '300',
+                                        color: '#94a3b8',
+                                    }}>=</div>
+
+                                    {/* Matched Batches Card */}
+                                    <div style={{
+                                        flex: '1',
+                                        minWidth: '160px',
+                                        background: 'linear-gradient(135deg, rgba(5, 150, 105, 0.85) 0%, rgba(16, 185, 129, 0.9) 100%)',
+                                        backdropFilter: 'blur(8px)',
+                                        WebkitBackdropFilter: 'blur(8px)',
+                                        borderRadius: '18px',
+                                        padding: '22px 26px',
+                                        textAlign: 'center',
+                                        boxShadow: '0 8px 32px rgba(16, 185, 129, 0.35), inset 0 1px 1px rgba(255,255,255,0.2)',
+                                        border: '1px solid rgba(255,255,255,0.2)',
+                                        color: 'white',
+                                        position: 'relative',
+                                        overflow: 'hidden',
+                                    }}>
+                                        <div style={{
+                                            position: 'absolute',
+                                            top: '-10px',
+                                            right: '-10px',
+                                            width: '50px',
+                                            height: '50px',
+                                            borderRadius: '50%',
+                                            background: 'rgba(255,255,255,0.1)',
+                                        }} />
+                                        <div style={{ fontSize: '32px', fontWeight: 800, marginBottom: '4px' }}>
+                                            {batchReconciliation.batchesMatchedToFormula.toLocaleString()}
+                                        </div>
+                                        <div style={{ fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', opacity: 0.9 }}>
+                                            Matched to Formula
+                                        </div>
+                                        <div style={{ fontSize: '10px', opacity: 0.7, marginTop: '2px' }}>
+                                            Found in Master
+                                        </div>
+                                    </div>
+
+                                    {/* Plus Sign */}
+                                    <div style={{
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        fontSize: '28px',
+                                        fontWeight: '300',
+                                        color: '#94a3b8',
+                                    }}>+</div>
+
+                                    {/* Orphan Batches Card */}
+                                    <div style={{
+                                        flex: '1',
+                                        minWidth: '160px',
+                                        background: batchReconciliation.batchesNotMatchedToFormula > 0
+                                            ? 'linear-gradient(135deg, rgba(220, 38, 38, 0.85) 0%, rgba(239, 68, 68, 0.9) 100%)'
+                                            : 'linear-gradient(135deg, rgba(5, 150, 105, 0.85) 0%, rgba(16, 185, 129, 0.9) 100%)',
+                                        backdropFilter: 'blur(8px)',
+                                        WebkitBackdropFilter: 'blur(8px)',
+                                        borderRadius: '18px',
+                                        padding: '22px 26px',
+                                        textAlign: 'center',
+                                        boxShadow: batchReconciliation.batchesNotMatchedToFormula > 0
+                                            ? '0 8px 32px rgba(239, 68, 68, 0.35), inset 0 1px 1px rgba(255,255,255,0.2)'
+                                            : '0 8px 32px rgba(16, 185, 129, 0.35), inset 0 1px 1px rgba(255,255,255,0.2)',
+                                        border: '1px solid rgba(255,255,255,0.2)',
+                                        color: 'white',
+                                        position: 'relative',
+                                        overflow: 'hidden',
+                                    }}>
+                                        <div style={{
+                                            position: 'absolute',
+                                            top: '-10px',
+                                            right: '-10px',
+                                            width: '50px',
+                                            height: '50px',
+                                            borderRadius: '50%',
+                                            background: 'rgba(255,255,255,0.1)',
+                                        }} />
+                                        <div style={{ fontSize: '32px', fontWeight: 800, marginBottom: '4px' }}>
+                                            {batchReconciliation.batchesNotMatchedToFormula.toLocaleString()}
+                                        </div>
+                                        <div style={{ fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', opacity: 0.9 }}>
+                                            Not Matched
+                                        </div>
+                                        <div style={{ fontSize: '10px', opacity: 0.7, marginTop: '2px' }}>
+                                            Orphan Batches
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* DOWNLOAD REPORTS SECTION */}
                         <div style={{
+                            marginBottom: '2rem',
                             display: 'flex',
-                            gap: '0.5rem',
-                            marginBottom: '1.5rem',
-                            background: 'var(--muted)',
-                            padding: '0.375rem',
-                            borderRadius: 'var(--radius-lg)',
-                            width: 'fit-content',
+                            gap: '1rem',
+                            flexWrap: 'wrap',
                         }}>
-                            {[
-                                { key: 'overview', label: 'Formula Overview' },
-                                { key: 'materials', label: `Materials (${allMaterials.length})` },
-                                { key: 'composition', label: `Composition (${allCompositions.length})` },
-                            ].map(tab => (
-                                <button
-                                    key={tab.key}
-                                    onClick={() => setActiveTab(tab.key as 'overview' | 'materials' | 'composition')}
-                                    style={{
-                                        padding: '0.625rem 1.25rem',
-                                        background: activeTab === tab.key ? 'white' : 'transparent',
-                                        border: 'none',
-                                        borderRadius: 'var(--radius-md)',
-                                        cursor: 'pointer',
-                                        fontWeight: '500',
-                                        color: activeTab === tab.key ? '#8b5cf6' : 'var(--muted-foreground)',
-                                        transition: 'all var(--transition-fast)',
-                                    }}
-                                >
-                                    {tab.label}
-                                </button>
-                            ))}
+                            <button
+                                onClick={() => {
+                                    // Open Excel download in new tab
+                                    window.open('/api/reports/duplicate-batches?format=excel', '_blank');
+                                }}
+                                style={{
+                                    padding: '0.75rem 1.5rem',
+                                    background: 'linear-gradient(135deg, #dc2626 0%, #ef4444 100%)',
+                                    color: 'white',
+                                    borderRadius: '12px',
+                                    fontSize: '0.9rem',
+                                    fontWeight: '600',
+                                    border: 'none',
+                                    cursor: 'pointer',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '8px',
+                                    boxShadow: '0 4px 12px rgba(220, 38, 38, 0.3)',
+                                    transition: 'all 0.2s ease',
+                                }}
+                                onMouseEnter={(e) => {
+                                    e.currentTarget.style.transform = 'scale(1.02)';
+                                    e.currentTarget.style.boxShadow = '0 6px 16px rgba(220, 38, 38, 0.4)';
+                                }}
+                                onMouseLeave={(e) => {
+                                    e.currentTarget.style.transform = 'scale(1)';
+                                    e.currentTarget.style.boxShadow = '0 4px 12px rgba(220, 38, 38, 0.3)';
+                                }}
+                            >
+                                📥 Download Duplicate Batches Report (Excel)
+                            </button>
+
+                            <button
+                                onClick={() => {
+                                    window.open('/api/reports/reconciliation-mismatch?format=excel', '_blank');
+                                }}
+                                style={{
+                                    padding: '0.75rem 1.5rem',
+                                    background: 'linear-gradient(135deg, #2563eb 0%, #3b82f6 100%)',
+                                    color: 'white',
+                                    borderRadius: '12px',
+                                    fontSize: '0.9rem',
+                                    fontWeight: '600',
+                                    border: 'none',
+                                    cursor: 'pointer',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '8px',
+                                    boxShadow: '0 4px 12px rgba(37, 99, 235, 0.3)',
+                                    transition: 'all 0.2s ease',
+                                }}
+                                onMouseEnter={(e) => {
+                                    e.currentTarget.style.transform = 'scale(1.02)';
+                                    e.currentTarget.style.boxShadow = '0 6px 16px rgba(37, 99, 235, 0.4)';
+                                }}
+                                onMouseLeave={(e) => {
+                                    e.currentTarget.style.transform = 'scale(1)';
+                                    e.currentTarget.style.boxShadow = '0 4px 12px rgba(37, 99, 235, 0.3)';
+                                }}
+                            >
+                                📊 Download Reconciliation Mismatch Report (Excel)
+                            </button>
                         </div>
 
-                        {/* Overview Tab */}
-                        {activeTab === 'overview' && (
-                            <div style={{
-                                background: 'var(--card)',
-                                borderRadius: 'var(--radius-lg)',
-                                border: '1px solid var(--border)',
-                                overflow: 'hidden',
-                            }}>
-                                <div style={{ overflowX: 'auto' }}>
-                                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                                        <thead>
-                                            <tr style={{ background: 'var(--muted)' }}>
-                                                <th style={thStyle}>📁 Source File</th>
-                                                <th style={thStyle}>Product Code</th>
-                                                <th style={thStyle}>Product Name</th>
-                                                <th style={thStyle}>Generic Name</th>
-                                                <th style={thStyle}>Batch Size</th>
-                                                <th style={thStyle}>Manufacturer</th>
-                                                <th style={thStyle}>Materials</th>
-                                                <th style={thStyle}>Imported On</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            {formulas.map((formula, index) => (
-                                                <tr
-                                                    key={formula._id || index}
-                                                    style={{ background: index % 2 === 0 ? 'transparent' : 'var(--muted)' }}
-                                                >
-                                                    <td style={tdStyle}>
+                        {/* Orphaned Batches Alert Section */}
+                        {unmatchedBatches.length > 0 && (
+                            <div style={{ marginBottom: '2rem' }}>
+                                <CollapsibleSectionHeader
+                                    title="Batches without Formula Master"
+                                    count={unmatchedBatches.length}
+                                    icon="⚠️"
+                                    isOpen={orphanedBatchesOpen}
+                                    onToggle={() => setOrphanedBatchesOpen(!orphanedBatchesOpen)}
+                                    badgeColor="#dc2626"
+                                    badgeText="Alert"
+                                    description="These batches have item codes not found in any MFC"
+                                />
+                                {orphanedBatchesOpen && (
+                                    <div style={{
+                                        display: 'flex',
+                                        gap: '1rem',
+                                        overflowX: 'auto',
+                                        paddingBottom: '1rem',
+                                    }}>
+                                        {unmatchedBatches.map((item, idx) => (
+                                            <div
+                                                key={idx}
+                                                style={{
+                                                    minWidth: '200px',
+                                                    background: '#fee2e2', // red-100
+                                                    border: '1px solid #f87171', // red-400
+                                                    borderRadius: 'var(--radius-lg)',
+                                                    padding: '1rem',
+                                                    display: 'flex',
+                                                    flexDirection: 'column',
+                                                    gap: '0.5rem'
+                                                }}
+                                            >
+                                                <div style={{
+                                                    fontSize: '0.85rem',
+                                                    color: '#b91c1c', // red-700
+                                                    fontWeight: '600'
+                                                }}>
+                                                    Item Code
+                                                </div>
+                                                <div style={{
+                                                    fontSize: '1.1rem',
+                                                    fontWeight: '700',
+                                                    fontFamily: 'monospace',
+                                                    color: '#7f1d1d' // red-900
+                                                }}>
+                                                    {item.itemCode}
+                                                </div>
+                                                <div style={{
+                                                    fontSize: '0.8rem',
+                                                    color: '#b91c1c',
+                                                    marginTop: 'auto'
+                                                }}>
+                                                    Found in <strong>{item.count}</strong> batches
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {/* Manufacturer Summary Cards */}
+                        <div style={{ marginBottom: '2rem' }}>
+                            <CollapsibleSectionHeader
+                                title="By Manufacturer"
+                                count={manufacturerSummary.length}
+                                icon="📊"
+                                isOpen={manufacturerFilterOpen}
+                                onToggle={() => setManufacturerFilterOpen(!manufacturerFilterOpen)}
+                                badgeColor="#8b5cf6"
+                                description="Filter MFCs by manufacturer"
+                            />
+                            {manufacturerFilterOpen && (
+                                <div style={{
+                                    display: 'grid',
+                                    gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))',
+                                    gap: '1rem',
+                                }}>
+                                    {manufacturerSummary.map(item => {
+                                        const colors = getManufacturerColor(item.name);
+                                        const isActive = selectedManufacturer === item.name;
+                                        return (
+                                            <button
+                                                key={item.name}
+                                                onClick={() => setSelectedManufacturer(isActive ? null : item.name)}
+                                                style={{
+                                                    padding: '1rem',
+                                                    background: isActive ? colors.light : 'var(--card)',
+                                                    border: isActive ? `2px solid ${colors.primary}` : '1px solid var(--border)',
+                                                    borderRadius: 'var(--radius-md)',
+                                                    cursor: 'pointer',
+                                                    textAlign: 'left',
+                                                    transition: 'all 0.2s ease',
+                                                }}
+                                            >
+                                                <div style={{
+                                                    fontSize: '2rem',
+                                                    fontWeight: '800',
+                                                    color: colors.primary,
+                                                }}>
+                                                    {item.count}
+                                                </div>
+                                                <div style={{
+                                                    fontSize: '0.85rem',
+                                                    color: 'var(--muted-foreground)',
+                                                    fontWeight: '500',
+                                                }}>
+                                                    {item.name}
+                                                </div>
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Search and Sort */}
+                        <div style={{ marginBottom: '1.5rem', display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                            <input
+                                type="text"
+                                placeholder="Search by MFC number, product code, name, or generic name..."
+                                value={searchTerm}
+                                onChange={(e) => setSearchTerm(e.target.value)}
+                                style={{
+                                    flex: '1',
+                                    minWidth: '300px',
+                                    padding: '0.75rem 1rem',
+                                    borderRadius: 'var(--radius-md)',
+                                    border: '1px solid var(--border)',
+                                    background: 'var(--card)',
+                                    color: 'var(--foreground)',
+                                    fontSize: '0.9rem',
+                                }}
+                            />
+
+                            {/* Sort by MFC Number Button */}
+                            <button
+                                onClick={() => {
+                                    // Cycle through: none -> asc -> desc -> none
+                                    setMfcSortOrder(prev => {
+                                        if (prev === 'none') return 'asc';
+                                        if (prev === 'asc') return 'desc';
+                                        return 'none';
+                                    });
+                                }}
+                                style={{
+                                    padding: '0.75rem 1rem',
+                                    borderRadius: 'var(--radius-md)',
+                                    border: mfcSortOrder !== 'none'
+                                        ? '2px solid #8b5cf6'
+                                        : '1px solid var(--border)',
+                                    background: mfcSortOrder !== 'none'
+                                        ? 'linear-gradient(135deg, #f3e8ff 0%, #faf5ff 100%)'
+                                        : 'var(--card)',
+                                    color: mfcSortOrder !== 'none' ? '#7c3aed' : 'var(--foreground)',
+                                    cursor: 'pointer',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '0.5rem',
+                                    fontWeight: mfcSortOrder !== 'none' ? '600' : '500',
+                                    fontSize: '0.9rem',
+                                    transition: 'all 0.2s ease',
+                                    boxShadow: mfcSortOrder !== 'none'
+                                        ? '0 2px 8px rgba(139, 92, 246, 0.25)'
+                                        : 'none',
+                                }}
+                                title={
+                                    mfcSortOrder === 'none'
+                                        ? 'Click to sort by MFC Number (A→Z)'
+                                        : mfcSortOrder === 'asc'
+                                            ? 'Sorted A→Z. Click for Z→A'
+                                            : 'Sorted Z→A. Click to clear sort'
+                                }
+                            >
+                                <span style={{ fontSize: '1.1rem' }}>
+                                    {mfcSortOrder === 'none' && '🔢'}
+                                    {mfcSortOrder === 'asc' && '⬆️'}
+                                    {mfcSortOrder === 'desc' && '⬇️'}
+                                </span>
+                                Sort by MFC
+                                {mfcSortOrder === 'asc' && <span style={{ fontSize: '0.75rem', opacity: 0.8 }}>(A→Z)</span>}
+                                {mfcSortOrder === 'desc' && <span style={{ fontSize: '0.75rem', opacity: 0.8 }}>(Z→A)</span>}
+                            </button>
+
+                            {selectedManufacturer && (
+                                <button
+                                    onClick={() => setSelectedManufacturer(null)}
+                                    style={{
+                                        padding: '0.75rem 1rem',
+                                        borderRadius: 'var(--radius-md)',
+                                        border: '1px solid var(--border)',
+                                        background: 'var(--card)',
+                                        color: 'var(--foreground)',
+                                        cursor: 'pointer',
+                                    }}
+                                >
+                                    Clear Filter ✕
+                                </button>
+                            )}
+                        </div>
+
+                        {/* MFC List Title - Main (3+ Batches) */}
+                        <div style={{ marginBottom: mainMfcsOpen ? '1rem' : '0' }}>
+                            <CollapsibleSectionHeader
+                                title="MFCs with 3+ Batches"
+                                count={mainFormulas.length}
+                                totalBatches={sectionBatchTotals.main}
+                                icon="🧪"
+                                isOpen={mainMfcsOpen}
+                                onToggle={() => setMainMfcsOpen(!mainMfcsOpen)}
+                                badgeColor="#10b981"
+                                badgeText="Primary"
+                                description="MFCs with significant production volume"
+                            />
+                        </div>
+
+                        {/* MFC List - Main (3+ Batches) */}
+                        {mainMfcsOpen && (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                                {mainFormulas.map((formula, index) => {
+                                    const isExpanded = expandedMfc === formula._id;
+                                    const colors = getManufacturerColor(formula.masterFormulaDetails?.manufacturer || '');
+                                    const materialCount = formula.materials?.length || 0;
+                                    const mfcNo = formula.masterFormulaDetails?.masterCardNo?.trim() || 'N/A';
+
+                                    return (
+                                        <div
+                                            key={formula._id}
+                                            style={{
+                                                background: colors.glass,
+                                                backdropFilter: 'blur(10px)',
+                                                WebkitBackdropFilter: 'blur(10px)',
+                                                borderRadius: 'var(--radius-lg)',
+                                                border: isExpanded ? `2px solid ${colors.primary}` : `1px solid ${colors.border}`,
+                                                overflow: 'hidden',
+                                                transition: 'all 0.2s ease',
+                                                boxShadow: `0 4px 16px ${colors.glow}, 0 1px 3px rgba(0, 0, 0, 0.05)`,
+                                            }}
+                                        >
+                                            {/* MFC Header - Always visible */}
+                                            <button
+                                                onClick={() => toggleMfc(formula._id)}
+                                                style={{
+                                                    width: '100%',
+                                                    padding: '1rem 1.5rem',
+                                                    background: isExpanded ? colors.light : 'transparent',
+                                                    border: 'none',
+                                                    cursor: 'pointer',
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    gap: '1rem',
+                                                    textAlign: 'left',
+                                                }}
+                                            >
+                                                {/* Sr. No */}
+                                                <div style={{
+                                                    width: '40px',
+                                                    fontSize: '0.9rem',
+                                                    fontWeight: '600',
+                                                    color: 'var(--muted-foreground)',
+                                                }}>
+                                                    #{index + 1}
+                                                </div>
+
+                                                {/* Expand/Collapse Icon */}
+                                                <div style={{
+                                                    width: '24px',
+                                                    height: '24px',
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    justifyContent: 'center',
+                                                    borderRadius: '4px',
+                                                    background: colors.light,
+                                                    color: colors.primary,
+                                                    transition: 'transform 0.2s ease',
+                                                    transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)',
+                                                }}>
+                                                    ▶
+                                                </div>
+
+                                                {/* MFC Number */}
+                                                <div style={{
+                                                    fontFamily: 'monospace',
+                                                    fontSize: '1rem',
+                                                    fontWeight: '700',
+                                                    color: colors.primary,
+                                                    minWidth: '160px',
+                                                }}>
+                                                    {mfcNo}
+                                                </div>
+
+                                                {/* Product Name */}
+                                                <div style={{
+                                                    flex: 1,
+                                                    fontSize: '0.9rem',
+                                                    fontWeight: '500',
+                                                    color: 'var(--foreground)',
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    gap: '0.75rem',
+                                                }}>
+                                                    {formula.masterFormulaDetails.productName}
+                                                    {formula.totalBatchCount && formula.totalBatchCount > 0 && (
                                                         <span style={{
-                                                            display: 'inline-block',
-                                                            padding: '0.25rem 0.5rem',
-                                                            background: 'rgba(139, 92, 246, 0.1)',
-                                                            color: '#8b5cf6',
-                                                            borderRadius: 'var(--radius-sm)',
+                                                            padding: '0.2rem 0.6rem',
+                                                            background: 'linear-gradient(135deg, #059669 0%, #10b981 100%)',
+                                                            color: '#fff',
+                                                            borderRadius: '12px',
                                                             fontSize: '0.7rem',
                                                             fontWeight: '600',
-                                                            maxWidth: '180px',
-                                                            overflow: 'hidden',
-                                                            textOverflow: 'ellipsis',
+                                                            boxShadow: '0 2px 4px rgba(16, 185, 129, 0.3)',
                                                             whiteSpace: 'nowrap',
                                                         }}>
-                                                            {formula.fileName}
+                                                            📦 {formula.totalBatchCount} Batches
                                                         </span>
-                                                    </td>
-                                                    <td style={{ ...tdStyle, fontFamily: 'monospace' }}>
-                                                        {formula.masterFormulaDetails?.productCode}
-                                                    </td>
-                                                    <td style={tdStyle}>{formula.masterFormulaDetails?.productName}</td>
-                                                    <td style={tdStyle}>{formula.masterFormulaDetails?.genericName}</td>
-                                                    <td style={tdStyle}>{formula.batchInfo?.batchSize}</td>
-                                                    <td style={tdStyle}>{formula.masterFormulaDetails?.manufacturer}</td>
-                                                    <td style={tdStyle}>
+                                                    )}
+                                                </div>
+
+                                                {/* Product Code */}
+                                                <div style={{
+                                                    fontFamily: 'monospace',
+                                                    fontSize: '0.8rem',
+                                                    color: 'var(--muted-foreground)',
+                                                    minWidth: '100px',
+                                                }}>
+                                                    {formula.masterFormulaDetails.productCode}
+                                                    {batchCounts[formula.masterFormulaDetails.productCode] > 0 && (
                                                         <span style={{
-                                                            padding: '0.25rem 0.5rem',
-                                                            background: 'rgba(245, 158, 11, 0.1)',
-                                                            color: '#f59e0b',
-                                                            borderRadius: 'var(--radius-sm)',
-                                                            fontSize: '0.7rem',
-                                                            fontWeight: '600',
+                                                            marginLeft: '0.5rem',
+                                                            background: '#10b981',
+                                                            color: '#fff',
+                                                            padding: '0.1rem 0.4rem',
+                                                            borderRadius: '4px',
+                                                            fontSize: '0.7em',
+                                                            verticalAlign: 'middle'
                                                         }}>
-                                                            {formula.materials?.length || 0}
+                                                            {batchCounts[formula.masterFormulaDetails.productCode]}
                                                         </span>
-                                                    </td>
-                                                    <td style={{ ...tdStyle, fontSize: '0.8rem' }}>
-                                                        {new Date(formula.uploadedAt).toLocaleDateString('en-IN')}
-                                                    </td>
-                                                </tr>
-                                            ))}
-                                        </tbody>
-                                    </table>
-                                </div>
+                                                    )}
+                                                </div>
+
+                                                {/* Manufacturer Tag */}
+                                                <div style={{
+                                                    padding: '0.25rem 0.75rem',
+                                                    borderRadius: 'var(--radius-sm)',
+                                                    background: colors.light,
+                                                    color: colors.primary,
+                                                    fontSize: '0.75rem',
+                                                    fontWeight: '600',
+                                                }}>
+                                                    {formula.masterFormulaDetails.manufacturer || 'N/A'}
+                                                </div>
+
+                                                {/* Material Count */}
+                                                <div style={{
+                                                    padding: '0.25rem 0.75rem',
+                                                    borderRadius: 'var(--radius-sm)',
+                                                    background: 'var(--muted)',
+                                                    color: 'var(--muted-foreground)',
+                                                    fontSize: '0.75rem',
+                                                    fontWeight: '500',
+                                                }}>
+                                                    {materialCount} materials
+                                                </div>
+
+                                                {/* Revision */}
+                                                <div style={{
+                                                    fontSize: '0.75rem',
+                                                    color: 'var(--muted-foreground)',
+                                                }}>
+                                                    REV {formula.masterFormulaDetails.revisionNo || '0'}
+                                                </div>
+                                            </button>
+
+                                            {/* Expanded Content - FormulaDisplay Style */}
+                                            {isExpanded && (
+                                                <div style={{
+                                                    padding: '1.5rem',
+                                                    borderTop: '1px solid var(--border)',
+                                                    background: 'var(--background)',
+                                                }}>
+                                                    {/* Header with Product Name */}
+                                                    <div style={{
+                                                        display: 'flex',
+                                                        alignItems: 'flex-start',
+                                                        justifyContent: 'space-between',
+                                                        marginBottom: '1.5rem',
+                                                        flexWrap: 'wrap',
+                                                        gap: '1rem',
+                                                    }}>
+                                                        <div>
+                                                            <h2 style={{
+                                                                fontSize: '1.5rem',
+                                                                fontWeight: '700',
+                                                                color: 'var(--foreground)',
+                                                                marginBottom: '0.5rem',
+                                                            }}>
+                                                                {formula.masterFormulaDetails.productName || 'Formula Details'}
+                                                            </h2>
+                                                            <div style={{
+                                                                display: 'flex',
+                                                                gap: '0.75rem',
+                                                                flexWrap: 'wrap',
+                                                            }}>
+                                                                <span style={{
+                                                                    padding: '0.375rem 0.75rem',
+                                                                    background: 'var(--gradient-primary)',
+                                                                    color: 'white',
+                                                                    borderRadius: 'var(--radius-full)',
+                                                                    fontSize: '0.875rem',
+                                                                    fontWeight: '500',
+                                                                }}>
+                                                                    {mfcNo}
+                                                                </span>
+                                                                <span style={{
+                                                                    padding: '0.375rem 0.75rem',
+                                                                    background: formula.parsingStatus === 'success' ? '#10b981' : '#f59e0b',
+                                                                    color: 'white',
+                                                                    borderRadius: 'var(--radius-full)',
+                                                                    fontSize: '0.875rem',
+                                                                    fontWeight: '500',
+                                                                }}>
+                                                                    {formula.parsingStatus === 'success' ? 'Complete' : 'Partial'}
+                                                                </span>
+                                                                {formula.totalBatchCount && formula.totalBatchCount > 0 && (
+                                                                    <button
+                                                                        onClick={() => openBatchListModal(
+                                                                            getFormulaAllProductCodes(formula),
+                                                                            formula.masterFormulaDetails.productName
+                                                                        )}
+                                                                        style={{
+                                                                            padding: '0.375rem 0.75rem',
+                                                                            background: 'linear-gradient(135deg, #059669 0%, #10b981 100%)',
+                                                                            color: 'white',
+                                                                            borderRadius: 'var(--radius-full)',
+                                                                            fontSize: '0.875rem',
+                                                                            fontWeight: '600',
+                                                                            boxShadow: '0 2px 8px rgba(16, 185, 129, 0.3)',
+                                                                            border: 'none',
+                                                                            cursor: 'pointer',
+                                                                            transition: 'all 0.15s ease',
+                                                                            display: 'flex',
+                                                                            alignItems: 'center',
+                                                                            gap: '4px',
+                                                                        }}
+                                                                        onMouseEnter={(e) => {
+                                                                            e.currentTarget.style.transform = 'scale(1.05)';
+                                                                            e.currentTarget.style.boxShadow = '0 4px 12px rgba(16, 185, 129, 0.4)';
+                                                                        }}
+                                                                        onMouseLeave={(e) => {
+                                                                            e.currentTarget.style.transform = 'scale(1)';
+                                                                            e.currentTarget.style.boxShadow = '0 2px 8px rgba(16, 185, 129, 0.3)';
+                                                                        }}
+                                                                        title="Click to view all batch details"
+                                                                    >
+                                                                        📦 {formula.totalBatchCount} Batches - View Details
+                                                                    </button>
+                                                                )}
+                                                            </div>
+                                                        </div>
+                                                    </div>
+
+                                                    {/* File Info Banner */}
+                                                    <div style={{
+                                                        padding: '0.875rem 1.25rem',
+                                                        background: 'var(--muted)',
+                                                        borderRadius: 'var(--radius-lg)',
+                                                        marginBottom: '1.25rem',
+                                                        display: 'flex',
+                                                        justifyContent: 'space-between',
+                                                        flexWrap: 'wrap',
+                                                        gap: '1rem',
+                                                        fontSize: '0.8rem',
+                                                    }}>
+                                                        <span><strong>File:</strong> {formula.fileName}</span>
+                                                        <span><strong>Size:</strong> {(formula.fileSize / 1024).toFixed(2)} KB</span>
+                                                        <span><strong>Uploaded:</strong> {new Date(formula.uploadedAt).toLocaleString()}</span>
+                                                    </div>
+
+                                                    {/* VIEW BATCH DETAILS BUTTON - Prominent CTA */}
+                                                    {formula.totalBatchCount && formula.totalBatchCount > 0 && (
+                                                        <div style={{
+                                                            marginBottom: '1.25rem',
+                                                            padding: '1rem 1.25rem',
+                                                            background: 'linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%)',
+                                                            borderRadius: 'var(--radius-lg)',
+                                                            border: '2px solid #10b981',
+                                                            display: 'flex',
+                                                            alignItems: 'center',
+                                                            justifyContent: 'space-between',
+                                                            gap: '1rem',
+                                                            flexWrap: 'wrap',
+                                                        }}>
+                                                            <div>
+                                                                <div style={{
+                                                                    fontSize: '1rem',
+                                                                    fontWeight: '700',
+                                                                    color: '#059669',
+                                                                    marginBottom: '4px'
+                                                                }}>
+                                                                    📦 {formula.totalBatchCount} Production Batches Found
+                                                                </div>
+                                                                <div style={{
+                                                                    fontSize: '0.8rem',
+                                                                    color: '#047857'
+                                                                }}>
+                                                                    Click the button to view complete batch information from Batch Creation data
+                                                                </div>
+                                                            </div>
+                                                            <button
+                                                                onClick={() => openBatchListModal(
+                                                                    getFormulaAllProductCodes(formula),
+                                                                    formula.masterFormulaDetails.productName
+                                                                )}
+                                                                style={{
+                                                                    padding: '0.75rem 1.5rem',
+                                                                    background: 'linear-gradient(135deg, #059669 0%, #10b981 100%)',
+                                                                    color: 'white',
+                                                                    borderRadius: '12px',
+                                                                    fontSize: '0.95rem',
+                                                                    fontWeight: '700',
+                                                                    boxShadow: '0 4px 12px rgba(16, 185, 129, 0.4)',
+                                                                    border: 'none',
+                                                                    cursor: 'pointer',
+                                                                    transition: 'all 0.2s ease',
+                                                                    display: 'flex',
+                                                                    alignItems: 'center',
+                                                                    gap: '8px',
+                                                                    whiteSpace: 'nowrap',
+                                                                }}
+                                                                onMouseEnter={(e) => {
+                                                                    e.currentTarget.style.transform = 'scale(1.05)';
+                                                                    e.currentTarget.style.boxShadow = '0 6px 16px rgba(16, 185, 129, 0.5)';
+                                                                }}
+                                                                onMouseLeave={(e) => {
+                                                                    e.currentTarget.style.transform = 'scale(1)';
+                                                                    e.currentTarget.style.boxShadow = '0 4px 12px rgba(16, 185, 129, 0.4)';
+                                                                }}
+                                                            >
+                                                                🔍 View Batch Details
+                                                            </button>
+                                                        </div>
+                                                    )}
+
+                                                    {/* Company Information */}
+                                                    {formula.companyInfo && (
+                                                        <Section
+                                                            title="Company Information"
+                                                            icon={
+                                                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                                                    <path d="M3 21h18M3 7v1a3 3 0 0 0 6 0V7m0 1a3 3 0 0 0 6 0V7m0 1a3 3 0 0 0 6 0V7H3l2-4h14l2 4M5 21V10.85M19 21V10.85" />
+                                                                </svg>
+                                                            }
+                                                            gradient="linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)"
+                                                        >
+                                                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '0 2rem' }}>
+                                                                <InfoRow label="Company Name" value={formula.companyInfo.companyName} />
+                                                                <InfoRow label="Company Address" value={formula.companyInfo.companyAddress} />
+                                                                <InfoRow label="Document Title" value={formula.companyInfo.documentTitle} />
+                                                                <InfoRow label="Page Number" value={formula.companyInfo.pageNumber} />
+                                                            </div>
+                                                        </Section>
+                                                    )}
+
+                                                    {/* Master Formula Details */}
+                                                    <Section
+                                                        title="Master Formula Details"
+                                                        icon={
+                                                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                                                <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
+                                                            </svg>
+                                                        }
+                                                        gradient="var(--gradient-primary)"
+                                                    >
+                                                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '0 2rem' }}>
+                                                            <InfoRow label="Master Card No" value={formula.masterFormulaDetails.masterCardNo} />
+                                                            <InfoRow label="Product Code" value={
+                                                                <div style={{ display: 'flex', alignItems: 'center' }}>
+                                                                    {formula.masterFormulaDetails.productCode}
+                                                                    {batchCounts[formula.masterFormulaDetails.productCode] > 0 && (
+                                                                        <span style={{
+                                                                            marginLeft: '0.5rem',
+                                                                            background: '#10b981',
+                                                                            color: '#fff',
+                                                                            padding: '0.1rem 0.4rem',
+                                                                            borderRadius: '4px',
+                                                                            fontSize: '0.7em'
+                                                                        }}>
+                                                                            {batchCounts[formula.masterFormulaDetails.productCode]} batches
+                                                                        </span>
+                                                                    )}
+                                                                </div>
+                                                            } />
+                                                            <InfoRow label="Product Name" value={formula.masterFormulaDetails.productName} />
+                                                            <InfoRow label="Generic Name" value={formula.masterFormulaDetails.genericName} />
+                                                            <InfoRow label="Specification" value={formula.masterFormulaDetails.specification} />
+                                                            <InfoRow label="Manufacturing License No" value={formula.masterFormulaDetails.manufacturingLicenseNo} />
+                                                            <InfoRow label="Manufacturing Location" value={formula.masterFormulaDetails.manufacturingLocation} />
+                                                            <InfoRow label="Manufacturer" value={formula.masterFormulaDetails.manufacturer} />
+                                                            <InfoRow label="Shelf Life" value={formula.masterFormulaDetails.shelfLife} />
+                                                            <InfoRow label="Revision No" value={formula.masterFormulaDetails.revisionNo} />
+                                                            <InfoRow label="Reason for Change" value={formula.masterFormulaDetails.reasonForChange} />
+                                                            <InfoRow label="Effective Batch No" value={formula.masterFormulaDetails.effectiveBatchNo} />
+                                                            <InfoRow label="Date" value={formula.masterFormulaDetails.date} />
+                                                        </div>
+                                                    </Section>
+
+                                                    {/* Batch Information */}
+                                                    <Section
+                                                        title="Batch Information"
+                                                        icon={
+                                                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                                                <rect x="2" y="7" width="20" height="14" rx="2" ry="2" />
+                                                                <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16" />
+                                                            </svg>
+                                                        }
+                                                        gradient="linear-gradient(135deg, #0891b2 0%, #0d9488 100%)"
+                                                    >
+                                                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '0 2rem' }}>
+                                                            <InfoRow label="Batch Size" value={formula.batchInfo?.batchSize} />
+                                                            <InfoRow label="Label Claim" value={formula.batchInfo?.labelClaim} />
+                                                            <InfoRow label="Marketed By" value={formula.batchInfo?.marketedBy} />
+                                                            <InfoRow label="Volume" value={formula.batchInfo?.volume} />
+                                                        </div>
+                                                    </Section>
+
+                                                    {/* Composition */}
+                                                    {formula.composition && formula.composition.length > 0 && (
+                                                        <Section
+                                                            title={`Composition / Label Claim (${formula.composition.length} items)`}
+                                                            icon={
+                                                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                                                    <path d="M10 2v7.31M14 2v7.31M8.5 2h7M8.5 9.31h7M8.5 14.9h7M10 14.9v7.1M14 14.9v7.1" />
+                                                                </svg>
+                                                            }
+                                                            gradient="linear-gradient(135deg, #059669 0%, #10b981 100%)"
+                                                        >
+                                                            <DataTable
+                                                                headers={['Active Ingredient', 'Strength', 'Form', 'Equivalent Base']}
+                                                                rows={formula.composition.map(item => [
+                                                                    item.activeIngredientName,
+                                                                    item.strengthPerUnit,
+                                                                    item.form,
+                                                                    item.equivalentBase,
+                                                                ])}
+                                                            />
+                                                        </Section>
+                                                    )}
+
+                                                    {/* Materials Table */}
+                                                    {formula.materials && formula.materials.length > 0 && (
+                                                        <Section
+                                                            title={`Aseptic Mixing Materials (${formula.materials.length} items)`}
+                                                            icon={
+                                                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                                                    <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+                                                                    <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+                                                                </svg>
+                                                            }
+                                                            gradient="linear-gradient(135deg, #7c3aed 0%, #8b5cf6 100%)"
+                                                        >
+                                                            <DataTable
+                                                                headers={[
+                                                                    'Sr. No',
+                                                                    'Material Code',
+                                                                    'Material Name',
+                                                                    'Potency',
+                                                                    'Required Qty',
+                                                                    'Overages %',
+                                                                    'Qty/Unit',
+                                                                    'Std Batch Qty',
+                                                                ]}
+                                                                rows={formula.materials.map(item => [
+                                                                    item.srNo,
+                                                                    item.materialCode,
+                                                                    item.materialName,
+                                                                    item.potencyCorrection,
+                                                                    item.requiredQuantity,
+                                                                    item.overages,
+                                                                    item.quantityPerUnit,
+                                                                    item.requiredQuantityStandardBatch,
+                                                                ])}
+                                                            />
+                                                        </Section>
+                                                    )}
+
+                                                    {/* Excipients */}
+                                                    {formula.excipients && formula.excipients.length > 0 && (
+                                                        <Section
+                                                            title={`Excipients / Additives (${formula.excipients.length} items)`}
+                                                            icon={
+                                                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                                                    <circle cx="12" cy="12" r="10" />
+                                                                    <path d="M12 16v-4M12 8h.01" />
+                                                                </svg>
+                                                            }
+                                                            gradient="linear-gradient(135deg, #db2777 0%, #ec4899 100%)"
+                                                        >
+                                                            <DataTable
+                                                                headers={['Name', 'Type', 'Quantity', 'Unit']}
+                                                                rows={formula.excipients.map(item => [
+                                                                    item.name,
+                                                                    item.type,
+                                                                    item.quantity,
+                                                                    item.unit,
+                                                                ])}
+                                                            />
+                                                        </Section>
+                                                    )}
+
+
+                                                    {formula.fillingDetails && formula.fillingDetails.length > 0 && (
+                                                        <Section
+                                                            title={`Filling Details (${formula.fillingDetails.length} items)`}
+                                                            icon={
+                                                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                                                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                                                                    <polyline points="14 2 14 8 20 8" />
+                                                                    <line x1="12" y1="18" x2="12" y2="12" />
+                                                                    <line x1="9" y1="15" x2="15" y2="15" />
+                                                                </svg>
+                                                            }
+                                                            gradient="linear-gradient(135deg, #ea580c 0%, #f97316 100%)"
+                                                        >
+                                                            {/* Filling Details Table - without packing materials */}
+                                                            <div style={{
+                                                                overflowX: 'auto',
+                                                                borderRadius: 'var(--radius-lg)',
+                                                                border: '1px solid var(--border)',
+                                                            }}>
+                                                                <table style={{
+                                                                    width: '100%',
+                                                                    borderCollapse: 'collapse',
+                                                                    fontSize: '0.8rem',
+                                                                }}>
+                                                                    <thead>
+                                                                        <tr style={{ background: 'var(--muted)' }}>
+                                                                            <th style={{
+                                                                                padding: '0.75rem 1rem',
+                                                                                textAlign: 'left',
+                                                                                fontWeight: '600',
+                                                                                color: 'var(--foreground)',
+                                                                                borderBottom: '2px solid var(--border)',
+                                                                                whiteSpace: 'nowrap',
+                                                                            }}>Product Code</th>
+                                                                            <th style={{
+                                                                                padding: '0.75rem 1rem',
+                                                                                textAlign: 'left',
+                                                                                fontWeight: '600',
+                                                                                color: 'var(--foreground)',
+                                                                                borderBottom: '2px solid var(--border)',
+                                                                                whiteSpace: 'nowrap',
+                                                                            }}>Product Name</th>
+                                                                            <th style={{
+                                                                                padding: '0.75rem 1rem',
+                                                                                textAlign: 'left',
+                                                                                fontWeight: '600',
+                                                                                color: 'var(--foreground)',
+                                                                                borderBottom: '2px solid var(--border)',
+                                                                                whiteSpace: 'nowrap',
+                                                                            }}>Packing Size</th>
+                                                                            <th style={{
+                                                                                padding: '0.75rem 1rem',
+                                                                                textAlign: 'left',
+                                                                                fontWeight: '600',
+                                                                                color: 'var(--foreground)',
+                                                                                borderBottom: '2px solid var(--border)',
+                                                                                whiteSpace: 'nowrap',
+                                                                            }}>Filling Qty</th>
+                                                                            <th style={{
+                                                                                padding: '0.75rem 1rem',
+                                                                                textAlign: 'left',
+                                                                                fontWeight: '600',
+                                                                                color: 'var(--foreground)',
+                                                                                borderBottom: '2px solid var(--border)',
+                                                                                whiteSpace: 'nowrap',
+                                                                            }}>No. of Units</th>
+                                                                            <th style={{
+                                                                                padding: '0.75rem 1rem',
+                                                                                textAlign: 'left',
+                                                                                fontWeight: '600',
+                                                                                color: 'var(--foreground)',
+                                                                                borderBottom: '2px solid var(--border)',
+                                                                                whiteSpace: 'nowrap',
+                                                                            }}>Type</th>
+                                                                        </tr>
+                                                                    </thead>
+                                                                    <tbody>
+                                                                        {formula.fillingDetails.map((item, rowIndex) => {
+                                                                            const hasMatch = batchCounts[item.productCode] > 0;
+                                                                            const hasPackingMaterials = item.packingMaterials && item.packingMaterials.length > 0;
+                                                                            const isExpanded = expandedFillingDetails.has(`${formula._id}-${item.productCode}`);
+
+                                                                            return (
+                                                                                <React.Fragment key={item.productCode || rowIndex}>
+                                                                                    <tr
+                                                                                        style={{
+                                                                                            background: rowIndex % 2 === 0 ? 'transparent' : 'var(--muted)',
+                                                                                            transition: 'background 0.15s ease',
+                                                                                        }}
+                                                                                    >
+                                                                                        {/* Product Code */}
+                                                                                        <td style={{
+                                                                                            padding: '0.625rem 1rem',
+                                                                                            borderBottom: '1px solid var(--border)',
+                                                                                            color: 'var(--foreground)',
+                                                                                        }}>
+                                                                                            <span style={{
+                                                                                                display: 'inline-flex',
+                                                                                                alignItems: 'center',
+                                                                                                gap: '0.5rem',
+                                                                                                background: hasMatch ? '#dcfce7' : 'transparent',
+                                                                                                padding: hasMatch ? '0.25rem 0.5rem' : '0',
+                                                                                                borderRadius: '4px',
+                                                                                                fontFamily: 'monospace',
+                                                                                                fontWeight: hasMatch ? '600' : '400',
+                                                                                            }}>
+                                                                                                {/* Expand Button for Packing Materials */}
+                                                                                                {hasPackingMaterials && (
+                                                                                                    <button
+                                                                                                        onClick={(e) => {
+                                                                                                            e.stopPropagation();
+                                                                                                            toggleFillingDetail(formula._id, item.productCode);
+                                                                                                        }}
+                                                                                                        style={{
+                                                                                                            background: isExpanded
+                                                                                                                ? 'linear-gradient(135deg, #7c3aed 0%, #8b5cf6 100%)'
+                                                                                                                : 'linear-gradient(135deg, #6366f1 0%, #818cf8 100%)',
+                                                                                                            color: '#fff',
+                                                                                                            width: '24px',
+                                                                                                            height: '24px',
+                                                                                                            borderRadius: '6px',
+                                                                                                            fontSize: '0.75rem',
+                                                                                                            fontWeight: '600',
+                                                                                                            border: 'none',
+                                                                                                            cursor: 'pointer',
+                                                                                                            display: 'inline-flex',
+                                                                                                            alignItems: 'center',
+                                                                                                            justifyContent: 'center',
+                                                                                                            boxShadow: '0 2px 4px rgba(99, 102, 241, 0.3)',
+                                                                                                            transition: 'all 0.2s ease',
+                                                                                                            transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)',
+                                                                                                        }}
+                                                                                                        onMouseEnter={(e) => {
+                                                                                                            e.currentTarget.style.boxShadow = '0 4px 8px rgba(99, 102, 241, 0.4)';
+                                                                                                        }}
+                                                                                                        onMouseLeave={(e) => {
+                                                                                                            e.currentTarget.style.boxShadow = '0 2px 4px rgba(99, 102, 241, 0.3)';
+                                                                                                        }}
+                                                                                                        title={`Click to ${isExpanded ? 'hide' : 'view'} ${item.packingMaterials?.length} packing materials for ${item.productCode}`}
+                                                                                                    >
+                                                                                                        ▶
+                                                                                                    </button>
+                                                                                                )}
+                                                                                                {item.productCode}
+                                                                                                {hasMatch && (
+                                                                                                    <button
+                                                                                                        onClick={(e) => {
+                                                                                                            e.stopPropagation();
+                                                                                                            openBatchListModal([item.productCode], item.productName);
+                                                                                                        }}
+                                                                                                        style={{
+                                                                                                            background: 'linear-gradient(135deg, #059669 0%, #10b981 100%)',
+                                                                                                            color: '#fff',
+                                                                                                            padding: '0.2rem 0.5rem',
+                                                                                                            borderRadius: '6px',
+                                                                                                            fontSize: '0.7em',
+                                                                                                            fontWeight: '600',
+                                                                                                            border: 'none',
+                                                                                                            cursor: 'pointer',
+                                                                                                            display: 'inline-flex',
+                                                                                                            alignItems: 'center',
+                                                                                                            gap: '4px',
+                                                                                                            boxShadow: '0 2px 4px rgba(16, 185, 129, 0.3)',
+                                                                                                            transition: 'all 0.15s ease',
+                                                                                                        }}
+                                                                                                        onMouseEnter={(e) => {
+                                                                                                            e.currentTarget.style.transform = 'scale(1.05)';
+                                                                                                            e.currentTarget.style.boxShadow = '0 4px 8px rgba(16, 185, 129, 0.4)';
+                                                                                                        }}
+                                                                                                        onMouseLeave={(e) => {
+                                                                                                            e.currentTarget.style.transform = 'scale(1)';
+                                                                                                            e.currentTarget.style.boxShadow = '0 2px 4px rgba(16, 185, 129, 0.3)';
+                                                                                                        }}
+                                                                                                        title={`Click to view ${batchCounts[item.productCode]} batch details for ${item.productCode}`}
+                                                                                                    >
+                                                                                                        📦 {batchCounts[item.productCode]} batches
+                                                                                                    </button>
+                                                                                                )}
+                                                                                            </span>
+                                                                                        </td>
+                                                                                        {/* Product Name */}
+                                                                                        <td style={{
+                                                                                            padding: '0.625rem 1rem',
+                                                                                            borderBottom: '1px solid var(--border)',
+                                                                                            color: 'var(--foreground)',
+                                                                                        }}>
+                                                                                            {item.productName ?? 'N/A'}
+                                                                                        </td>
+                                                                                        {/* Packing Size */}
+                                                                                        <td style={{
+                                                                                            padding: '0.625rem 1rem',
+                                                                                            borderBottom: '1px solid var(--border)',
+                                                                                            color: 'var(--foreground)',
+                                                                                        }}>
+                                                                                            {item.packingSize ?? 'N/A'}
+                                                                                        </td>
+                                                                                        {/* Filling Qty */}
+                                                                                        <td style={{
+                                                                                            padding: '0.625rem 1rem',
+                                                                                            borderBottom: '1px solid var(--border)',
+                                                                                            color: 'var(--foreground)',
+                                                                                        }}>
+                                                                                            {item.actualFillingQuantity ?? 'N/A'}
+                                                                                        </td>
+                                                                                        {/* No. of Units */}
+                                                                                        <td style={{
+                                                                                            padding: '0.625rem 1rem',
+                                                                                            borderBottom: '1px solid var(--border)',
+                                                                                            color: 'var(--foreground)',
+                                                                                        }}>
+                                                                                            {item.numberOfSyringes ?? 'N/A'}
+                                                                                        </td>
+                                                                                        {/* Type */}
+                                                                                        <td style={{
+                                                                                            padding: '0.625rem 1rem',
+                                                                                            borderBottom: '1px solid var(--border)',
+                                                                                            color: 'var(--foreground)',
+                                                                                        }}>
+                                                                                            {item.syringeType ?? 'N/A'}
+                                                                                        </td>
+                                                                                    </tr>
+                                                                                    {/* Expanded Packing Materials Row */}
+                                                                                    {isExpanded && hasPackingMaterials && (
+                                                                                        <tr>
+                                                                                            <td colSpan={6} style={{
+                                                                                                padding: '0',
+                                                                                                background: 'linear-gradient(135deg, #f3e8ff 0%, #ede9fe 100%)',
+                                                                                                borderBottom: '2px solid #8b5cf6',
+                                                                                            }}>
+                                                                                                <div style={{
+                                                                                                    padding: '1rem',
+                                                                                                }}>
+                                                                                                    <div style={{
+                                                                                                        display: 'flex',
+                                                                                                        alignItems: 'center',
+                                                                                                        gap: '0.5rem',
+                                                                                                        marginBottom: '0.75rem',
+                                                                                                        fontWeight: '600',
+                                                                                                        fontSize: '0.85rem',
+                                                                                                        color: '#6b21a8',
+                                                                                                    }}>
+                                                                                                        📦 Packing Materials ({item.packingMaterials?.length} items)
+                                                                                                    </div>
+                                                                                                    <table style={{
+                                                                                                        width: '100%',
+                                                                                                        borderCollapse: 'collapse',
+                                                                                                        fontSize: '0.75rem',
+                                                                                                        background: 'white',
+                                                                                                        borderRadius: '8px',
+                                                                                                        overflow: 'hidden',
+                                                                                                        boxShadow: '0 2px 8px rgba(139, 92, 246, 0.15)',
+                                                                                                    }}>
+                                                                                                        <thead>
+                                                                                                            <tr style={{ background: 'linear-gradient(135deg, #7c3aed 0%, #8b5cf6 100%)' }}>
+                                                                                                                <th style={{ padding: '0.5rem 0.75rem', textAlign: 'left', color: 'white', fontWeight: '600' }}>Sr.</th>
+                                                                                                                <th style={{ padding: '0.5rem 0.75rem', textAlign: 'left', color: 'white', fontWeight: '600' }}>Material Code</th>
+                                                                                                                <th style={{ padding: '0.5rem 0.75rem', textAlign: 'left', color: 'white', fontWeight: '600' }}>Material Name</th>
+                                                                                                                <th style={{ padding: '0.5rem 0.75rem', textAlign: 'right', color: 'white', fontWeight: '600' }}>Qty/Unit</th>
+                                                                                                                <th style={{ padding: '0.5rem 0.75rem', textAlign: 'right', color: 'white', fontWeight: '600' }}>Req. As Per Std. Batch</th>
+                                                                                                            </tr>
+                                                                                                        </thead>
+                                                                                                        <tbody>
+                                                                                                            {item.packingMaterials?.map((mat, matIdx) => (
+                                                                                                                <tr
+                                                                                                                    key={mat.materialCode || matIdx}
+                                                                                                                    style={{
+                                                                                                                        background: matIdx % 2 === 0 ? 'white' : '#f5f3ff',
+                                                                                                                        borderBottom: '1px solid #e5e7eb',
+                                                                                                                    }}
+                                                                                                                >
+                                                                                                                    <td style={{ padding: '0.5rem 0.75rem' }}>{mat.srNo}</td>
+                                                                                                                    <td style={{
+                                                                                                                        padding: '0.5rem 0.75rem',
+                                                                                                                        fontFamily: 'monospace',
+                                                                                                                        color: '#7c3aed',
+                                                                                                                        fontWeight: '500'
+                                                                                                                    }}>{mat.materialCode}</td>
+                                                                                                                    <td style={{ padding: '0.5rem 0.75rem' }}>{mat.materialName}</td>
+                                                                                                                    <td style={{ padding: '0.5rem 0.75rem', textAlign: 'right' }}>
+                                                                                                                        {mat.qtyPerUnit || '-'}
+                                                                                                                    </td>
+                                                                                                                    <td style={{
+                                                                                                                        padding: '0.5rem 0.75rem',
+                                                                                                                        textAlign: 'right',
+                                                                                                                        fontWeight: '600'
+                                                                                                                    }}>
+                                                                                                                        {mat.reqAsPerStdBatchSize} {mat.unit || 'NOS'}
+                                                                                                                    </td>
+                                                                                                                </tr>
+                                                                                                            ))}
+                                                                                                        </tbody>
+                                                                                                    </table>
+                                                                                                </div>
+                                                                                            </td>
+                                                                                        </tr>
+                                                                                    )}
+                                                                                </React.Fragment>
+                                                                            );
+                                                                        })}
+                                                                    </tbody>
+                                                                </table>
+                                                            </div>
+                                                        </Section>
+                                                    )}
+                                                    {/* LABELLING & PACKING Section - Grouped by Product Code */}
+                                                    {formula.fillingDetails && formula.fillingDetails.some(item => item.packingMaterials && item.packingMaterials.length > 0) && (
+                                                        <Section
+                                                            title={`LABELLING & PACKING (${formula.fillingDetails.filter(item => item.packingMaterials && item.packingMaterials.length > 0).length} Products)`}
+                                                            icon={
+                                                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                                                    <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+                                                                    <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
+                                                                    <line x1="12" y1="22.08" x2="12" y2="12" />
+                                                                </svg>
+                                                            }
+                                                            gradient="linear-gradient(135deg, #7c3aed 0%, #8b5cf6 100%)"
+                                                        >
+                                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+                                                                {formula.fillingDetails
+                                                                    .filter(item => item.packingMaterials && item.packingMaterials.length > 0)
+                                                                    .map((item, productIndex) => {
+                                                                        // Calculate total materials count for this product
+                                                                        const materialsCount = item.packingMaterials?.length || 0;
+
+                                                                        return (
+                                                                            <div key={item.productCode || productIndex} style={{
+                                                                                background: 'var(--card)',
+                                                                                borderRadius: 'var(--radius-lg)',
+                                                                                border: '1px solid var(--border)',
+                                                                                overflow: 'hidden',
+                                                                            }}>
+                                                                                {/* Product Header */}
+                                                                                <div style={{
+                                                                                    background: 'linear-gradient(135deg, #f3e8ff 0%, #e9d5ff 100%)',
+                                                                                    padding: '0.75rem 1rem',
+                                                                                    borderBottom: '2px solid #8b5cf6',
+                                                                                }}>
+                                                                                    {/* First Row: Code, Packing, Actual Filling Qty, Actual Filling */}
+                                                                                    <div style={{
+                                                                                        display: 'flex',
+                                                                                        flexWrap: 'wrap',
+                                                                                        gap: '2rem',
+                                                                                        marginBottom: '0.5rem',
+                                                                                        fontSize: '0.85rem',
+                                                                                        fontWeight: '600',
+                                                                                    }}>
+                                                                                        <span>
+                                                                                            <span style={{ color: '#6b21a8' }}>Code : </span>
+                                                                                            <span style={{ color: '#1f2937', fontFamily: 'monospace' }}>{item.productCode}</span>
+                                                                                        </span>
+                                                                                        <span>
+                                                                                            <span style={{ color: '#6b21a8' }}>Packing : </span>
+                                                                                            <span style={{ color: '#1f2937' }}>{item.packingSize || 'N/A'}</span>
+                                                                                        </span>
+                                                                                        <span>
+                                                                                            <span style={{ color: '#6b21a8' }}>Actual Filling Qty : </span>
+                                                                                            <span style={{ color: '#1f2937' }}>{item.numberOfSyringes || 'N/A'} {item.syringeType || 'SYRIN'}</span>
+                                                                                        </span>
+                                                                                        <span>
+                                                                                            <span style={{ color: '#6b21a8' }}>Actual Filling </span>
+                                                                                            <span style={{ color: '#1f2937' }}>{item.actualFillingQuantity || 'N/A'}</span>
+                                                                                        </span>
+                                                                                    </div>
+                                                                                    {/* Second Row: Product Name */}
+                                                                                    <div style={{
+                                                                                        fontSize: '0.85rem',
+                                                                                        fontWeight: '600',
+                                                                                    }}>
+                                                                                        <span style={{ color: '#6b21a8' }}>Product Name : </span>
+                                                                                        <span style={{ color: '#1f2937' }}>{item.productName || 'N/A'}</span>
+                                                                                    </div>
+                                                                                </div>
+
+                                                                                {/* Materials Table */}
+                                                                                <div style={{ overflowX: 'auto' }}>
+                                                                                    <table style={{
+                                                                                        width: '100%',
+                                                                                        borderCollapse: 'collapse',
+                                                                                        fontSize: '0.8rem',
+                                                                                    }}>
+                                                                                        <thead>
+                                                                                            <tr style={{ background: 'var(--muted)' }}>
+                                                                                                <th style={{
+                                                                                                    padding: '0.6rem 0.75rem',
+                                                                                                    textAlign: 'left',
+                                                                                                    fontWeight: '600',
+                                                                                                    color: 'var(--foreground)',
+                                                                                                    borderBottom: '1px solid var(--border)',
+                                                                                                    width: '50px',
+                                                                                                }}>Sr.</th>
+                                                                                                <th style={{
+                                                                                                    padding: '0.6rem 0.75rem',
+                                                                                                    textAlign: 'left',
+                                                                                                    fontWeight: '600',
+                                                                                                    color: 'var(--foreground)',
+                                                                                                    borderBottom: '1px solid var(--border)',
+                                                                                                    width: '120px',
+                                                                                                }}>Material Code</th>
+                                                                                                <th style={{
+                                                                                                    padding: '0.6rem 0.75rem',
+                                                                                                    textAlign: 'left',
+                                                                                                    fontWeight: '600',
+                                                                                                    color: 'var(--foreground)',
+                                                                                                    borderBottom: '1px solid var(--border)',
+                                                                                                }}>Material Name</th>
+                                                                                                <th style={{
+                                                                                                    padding: '0.6rem 0.75rem',
+                                                                                                    textAlign: 'right',
+                                                                                                    fontWeight: '600',
+                                                                                                    color: 'var(--foreground)',
+                                                                                                    borderBottom: '1px solid var(--border)',
+                                                                                                    width: '100px',
+                                                                                                }}>Qty/Unit</th>
+                                                                                                <th style={{
+                                                                                                    padding: '0.6rem 0.75rem',
+                                                                                                    textAlign: 'right',
+                                                                                                    fontWeight: '600',
+                                                                                                    color: 'var(--foreground)',
+                                                                                                    borderBottom: '1px solid var(--border)',
+                                                                                                    width: '150px',
+                                                                                                }}>Req. As Per Std. Batch</th>
+                                                                                            </tr>
+                                                                                        </thead>
+                                                                                        <tbody>
+                                                                                            {item.packingMaterials?.map((mat, matIdx) => (
+                                                                                                <tr
+                                                                                                    key={mat.materialCode || matIdx}
+                                                                                                    style={{
+                                                                                                        borderBottom: '1px solid var(--border)',
+                                                                                                        background: matIdx % 2 === 0 ? 'white' : 'var(--muted)',
+                                                                                                    }}
+                                                                                                >
+                                                                                                    <td style={{ padding: '0.5rem 0.75rem' }}>{mat.srNo}</td>
+                                                                                                    <td style={{
+                                                                                                        padding: '0.5rem 0.75rem',
+                                                                                                        fontFamily: 'monospace',
+                                                                                                        color: '#7c3aed',
+                                                                                                        fontWeight: '500'
+                                                                                                    }}>{mat.materialCode}</td>
+                                                                                                    <td style={{ padding: '0.5rem 0.75rem' }}>{mat.materialName}</td>
+                                                                                                    <td style={{ padding: '0.5rem 0.75rem', textAlign: 'right' }}>
+                                                                                                        {mat.qtyPerUnit || ''}
+                                                                                                    </td>
+                                                                                                    <td style={{
+                                                                                                        padding: '0.5rem 0.75rem',
+                                                                                                        textAlign: 'right',
+                                                                                                        fontWeight: '600'
+                                                                                                    }}>
+                                                                                                        {mat.reqAsPerStdBatchSize}{mat.unit ? mat.unit : 'NOS'}
+                                                                                                    </td>
+                                                                                                </tr>
+                                                                                            ))}
+                                                                                        </tbody>
+                                                                                    </table>
+                                                                                </div>
+                                                                            </div>
+                                                                        );
+                                                                    })}
+                                                            </div>
+                                                        </Section>
+                                                    )}
+
+                                                    {/* Summary */}
+                                                    {formula.summary && (
+                                                        <Section
+                                                            title="Summary / Totals"
+                                                            icon={
+                                                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                                                    <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+                                                                </svg>
+                                                            }
+                                                            gradient="linear-gradient(135deg, #0284c7 0%, #0ea5e9 100%)"
+                                                        >
+                                                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '0 2rem' }}>
+                                                                <InfoRow label="Total Units Produced" value={formula.summary.totalUnitsProduced} />
+                                                                <InfoRow label="Total Filling Quantity" value={formula.summary.totalFillingQuantity} />
+                                                                <InfoRow label="Std Batch Size Compliance" value={formula.summary.standardBatchSizeCompliance} />
+                                                            </div>
+                                                        </Section>
+                                                    )}
+
+
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })}
                             </div>
                         )}
 
-                        {/* Materials Tab */}
-                        {activeTab === 'materials' && (
-                            <div style={{
-                                background: 'var(--card)',
-                                borderRadius: 'var(--radius-lg)',
-                                border: '1px solid var(--border)',
-                                overflow: 'hidden',
-                            }}>
-                                <div style={{ overflowX: 'auto' }}>
-                                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                                        <thead>
-                                            <tr style={{ background: 'var(--muted)' }}>
-                                                {[
-                                                    { key: 'sourceFileName', label: '📁 Source File' },
-                                                    { key: 'sourceProductName', label: 'Product' },
-                                                    { key: 'srNo', label: 'Sr' },
-                                                    { key: 'materialCode', label: 'Material Code' },
-                                                    { key: 'materialName', label: 'Material Name' },
-                                                    { key: 'requiredQuantity', label: 'Req Qty' },
-                                                    { key: 'quantityPerUnit', label: 'Qty/Unit' },
-                                                ].map(({ key, label }) => (
-                                                    <th
-                                                        key={key}
-                                                        onClick={() => handleSort(key)}
+                        {/* Low Batch MFCs Section (1-2 Batches) */}
+                        {lowBatchFormulas.length > 0 && (
+                            <div style={{ marginTop: '2rem' }}>
+                                <CollapsibleSectionHeader
+                                    title="Low Batch MFCs (1-2 Batches)"
+                                    count={lowBatchFormulas.length}
+                                    totalBatches={sectionBatchTotals.lowBatch}
+                                    icon="📊"
+                                    isOpen={lowBatchMfcsOpen}
+                                    onToggle={() => setLowBatchMfcsOpen(!lowBatchMfcsOpen)}
+                                    badgeColor="#f59e0b"
+                                    badgeText="1-2 Batches"
+                                    description="MFCs with 1 or 2 batches in the system"
+                                />
+                                {lowBatchMfcsOpen && (
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                                        {lowBatchFormulas.map((formula, index) => {
+                                            const isExpanded = expandedMfc === formula._id;
+                                            const colors = getManufacturerColor(formula.masterFormulaDetails?.manufacturer || '');
+                                            const materialCount = formula.materials?.length || 0;
+                                            const mfcNo = formula.masterFormulaDetails?.masterCardNo?.trim() || 'N/A';
+
+                                            return (
+                                                <div
+                                                    key={formula._id}
+                                                    style={{
+                                                        background: colors.glass,
+                                                        backdropFilter: 'blur(10px)',
+                                                        WebkitBackdropFilter: 'blur(10px)',
+                                                        borderRadius: 'var(--radius-lg)',
+                                                        borderTop: isExpanded ? `2px solid #f59e0b` : `1px solid ${colors.border}`,
+                                                        borderRight: isExpanded ? `2px solid #f59e0b` : `1px solid ${colors.border}`,
+                                                        borderBottom: isExpanded ? `2px solid #f59e0b` : `1px solid ${colors.border}`,
+                                                        borderLeft: '4px solid #f59e0b',
+                                                        overflow: 'hidden',
+                                                        transition: 'all 0.2s ease',
+                                                        boxShadow: `0 4px 16px ${colors.glow}, 0 1px 3px rgba(0, 0, 0, 0.05)`,
+                                                    }}
+                                                >
+                                                    {/* MFC Header */}
+                                                    <button
+                                                        onClick={() => toggleMfc(formula._id)}
                                                         style={{
-                                                            ...thStyle,
+                                                            width: '100%',
+                                                            padding: '1rem 1.5rem',
+                                                            background: isExpanded ? 'rgba(245, 158, 11, 0.1)' : 'transparent',
+                                                            border: 'none',
                                                             cursor: 'pointer',
-                                                            background: sortField === key ? 'rgba(139, 92, 246, 0.1)' : 'transparent',
+                                                            display: 'flex',
+                                                            alignItems: 'center',
+                                                            gap: '1rem',
+                                                            textAlign: 'left',
                                                         }}
                                                     >
-                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-                                                            {label}
-                                                            {sortField === key && (
-                                                                <span>{sortDirection === 'asc' ? '↑' : '↓'}</span>
+                                                        <div style={{ width: '40px', fontSize: '0.9rem', fontWeight: '600', color: 'var(--muted-foreground)' }}>
+                                                            #{index + 1}
+                                                        </div>
+                                                        <div style={{
+                                                            width: '24px', height: '24px', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                                            borderRadius: '4px', background: 'rgba(245, 158, 11, 0.2)', color: '#d97706',
+                                                            transition: 'transform 0.2s ease', transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)',
+                                                        }}>▶</div>
+                                                        <div style={{ fontFamily: 'monospace', fontSize: '1rem', fontWeight: '700', color: '#d97706', minWidth: '160px' }}>
+                                                            {mfcNo}
+                                                        </div>
+                                                        <div style={{ flex: 1, fontSize: '0.9rem', fontWeight: '500', color: 'var(--foreground)', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                                                            {formula.masterFormulaDetails.productName}
+                                                            {formula.totalBatchCount !== undefined && formula.totalBatchCount > 0 && (
+                                                                <span style={{ padding: '0.2rem 0.6rem', background: 'linear-gradient(135deg, #d97706 0%, #f59e0b 100%)', color: '#fff', borderRadius: '12px', fontSize: '0.7rem', fontWeight: '600' }}>
+                                                                    📦 {formula.totalBatchCount} Batches
+                                                                </span>
                                                             )}
                                                         </div>
-                                                    </th>
-                                                ))}
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            {sortedMaterials.map((material, index) => (
-                                                <tr
-                                                    key={index}
-                                                    style={{ background: index % 2 === 0 ? 'transparent' : 'var(--muted)' }}
-                                                >
-                                                    <td style={tdStyle}>
-                                                        <span style={{
-                                                            display: 'inline-block',
-                                                            padding: '0.25rem 0.5rem',
-                                                            background: 'rgba(139, 92, 246, 0.1)',
-                                                            color: '#8b5cf6',
-                                                            borderRadius: 'var(--radius-sm)',
-                                                            fontSize: '0.7rem',
-                                                            fontWeight: '600',
-                                                        }}>
-                                                            {material.sourceFileName}
-                                                        </span>
-                                                    </td>
-                                                    <td style={{ ...tdStyle, fontSize: '0.8rem' }}>
-                                                        {material.sourceProductName}
-                                                    </td>
-                                                    <td style={tdStyle}>{material.srNo}</td>
-                                                    <td style={{ ...tdStyle, fontFamily: 'monospace', fontSize: '0.8rem' }}>
-                                                        {material.materialCode}
-                                                    </td>
-                                                    <td style={tdStyle}>{material.materialName}</td>
-                                                    <td style={tdStyle}>{material.requiredQuantity}</td>
-                                                    <td style={tdStyle}>{material.quantityPerUnit}</td>
-                                                </tr>
-                                            ))}
-                                        </tbody>
-                                    </table>
-                                </div>
+                                                        <div style={{ fontFamily: 'monospace', fontSize: '0.8rem', color: 'var(--muted-foreground)', minWidth: '100px' }}>
+                                                            {formula.masterFormulaDetails.productCode}
+                                                        </div>
+                                                        <div style={{ padding: '0.25rem 0.75rem', borderRadius: 'var(--radius-sm)', background: colors.light, color: colors.primary, fontSize: '0.75rem', fontWeight: '600' }}>
+                                                            {formula.masterFormulaDetails.manufacturer || 'N/A'}
+                                                        </div>
+                                                        <div style={{ padding: '0.25rem 0.75rem', borderRadius: 'var(--radius-sm)', background: 'var(--muted)', color: 'var(--muted-foreground)', fontSize: '0.75rem', fontWeight: '500' }}>
+                                                            {materialCount} materials
+                                                        </div>
+                                                        <div style={{ fontSize: '0.75rem', color: 'var(--muted-foreground)' }}>
+                                                            REV {formula.masterFormulaDetails.revisionNo || '0'}
+                                                        </div>
+                                                    </button>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                )}
                             </div>
                         )}
 
-                        {/* Composition Tab */}
-                        {activeTab === 'composition' && (
-                            <div style={{
-                                background: 'var(--card)',
-                                borderRadius: 'var(--radius-lg)',
-                                border: '1px solid var(--border)',
-                                overflow: 'hidden',
-                            }}>
-                                <div style={{ overflowX: 'auto' }}>
-                                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                                        <thead>
-                                            <tr style={{ background: 'var(--muted)' }}>
-                                                <th style={thStyle}>📁 Source File</th>
-                                                <th style={thStyle}>Product</th>
-                                                <th style={thStyle}>Active Ingredient</th>
-                                                <th style={thStyle}>Strength/Unit</th>
-                                                <th style={thStyle}>Form</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            {allCompositions.map((comp, index) => (
-                                                <tr
-                                                    key={index}
-                                                    style={{ background: index % 2 === 0 ? 'transparent' : 'var(--muted)' }}
+                        {/* No Batch MFCs Section (0 Batches) */}
+                        {noBatchFormulas.length > 0 && (
+                            <div style={{ marginTop: '2rem' }}>
+                                <CollapsibleSectionHeader
+                                    title="No Batch MFCs"
+                                    count={noBatchFormulas.length}
+                                    totalBatches={sectionBatchTotals.noBatch}
+                                    icon="🚫"
+                                    isOpen={noBatchMfcsOpen}
+                                    onToggle={() => setNoBatchMfcsOpen(!noBatchMfcsOpen)}
+                                    badgeColor="#dc2626"
+                                    badgeText="0 Batches"
+                                    description="MFCs with no production batches in the system"
+                                />
+                                {noBatchMfcsOpen && (
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                                        {noBatchFormulas.map((formula, index) => {
+                                            const isExpanded = expandedMfc === formula._id;
+                                            const colors = getManufacturerColor(formula.masterFormulaDetails?.manufacturer || '');
+                                            const materialCount = formula.materials?.length || 0;
+                                            const mfcNo = formula.masterFormulaDetails?.masterCardNo?.trim() || 'N/A';
+
+                                            return (
+                                                <div
+                                                    key={formula._id}
+                                                    style={{
+                                                        background: colors.glass,
+                                                        backdropFilter: 'blur(10px)',
+                                                        WebkitBackdropFilter: 'blur(10px)',
+                                                        borderRadius: 'var(--radius-lg)',
+                                                        borderTop: isExpanded ? `2px solid #dc2626` : `1px solid ${colors.border}`,
+                                                        borderRight: isExpanded ? `2px solid #dc2626` : `1px solid ${colors.border}`,
+                                                        borderBottom: isExpanded ? `2px solid #dc2626` : `1px solid ${colors.border}`,
+                                                        borderLeft: '4px solid #dc2626',
+                                                        overflow: 'hidden',
+                                                        transition: 'all 0.2s ease',
+                                                        boxShadow: `0 4px 16px ${colors.glow}, 0 1px 3px rgba(0, 0, 0, 0.05)`,
+                                                        opacity: 0.85,
+                                                    }}
                                                 >
-                                                    <td style={tdStyle}>
-                                                        <span style={{
-                                                            display: 'inline-block',
-                                                            padding: '0.25rem 0.5rem',
-                                                            background: 'rgba(139, 92, 246, 0.1)',
-                                                            color: '#8b5cf6',
-                                                            borderRadius: 'var(--radius-sm)',
-                                                            fontSize: '0.7rem',
-                                                            fontWeight: '600',
-                                                        }}>
-                                                            {comp.sourceFileName}
-                                                        </span>
-                                                    </td>
-                                                    <td style={{ ...tdStyle, fontSize: '0.8rem' }}>
-                                                        {comp.sourceProductName}
-                                                    </td>
-                                                    <td style={tdStyle}>{comp.activeIngredientName}</td>
-                                                    <td style={tdStyle}>{comp.strengthPerUnit}</td>
-                                                    <td style={tdStyle}>{comp.form}</td>
-                                                </tr>
-                                            ))}
-                                        </tbody>
-                                    </table>
-                                </div>
+                                                    {/* MFC Header */}
+                                                    <button
+                                                        onClick={() => toggleMfc(formula._id)}
+                                                        style={{
+                                                            width: '100%',
+                                                            padding: '1rem 1.5rem',
+                                                            background: isExpanded ? 'rgba(220, 38, 38, 0.1)' : 'transparent',
+                                                            border: 'none',
+                                                            cursor: 'pointer',
+                                                            display: 'flex',
+                                                            alignItems: 'center',
+                                                            gap: '1rem',
+                                                            textAlign: 'left',
+                                                        }}
+                                                    >
+                                                        <div style={{ width: '40px', fontSize: '0.9rem', fontWeight: '600', color: 'var(--muted-foreground)' }}>
+                                                            #{index + 1}
+                                                        </div>
+                                                        <div style={{
+                                                            width: '24px', height: '24px', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                                            borderRadius: '4px', background: 'rgba(220, 38, 38, 0.2)', color: '#dc2626',
+                                                            transition: 'transform 0.2s ease', transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)',
+                                                        }}>▶</div>
+                                                        <div style={{ fontFamily: 'monospace', fontSize: '1rem', fontWeight: '700', color: '#dc2626', minWidth: '160px' }}>
+                                                            {mfcNo}
+                                                        </div>
+                                                        <div style={{ flex: 1, fontSize: '0.9rem', fontWeight: '500', color: 'var(--foreground)', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                                                            {formula.masterFormulaDetails.productName}
+                                                            <span style={{ padding: '0.2rem 0.6rem', background: '#fee2e2', color: '#dc2626', borderRadius: '12px', fontSize: '0.7rem', fontWeight: '600', border: '1px solid #fecaca' }}>
+                                                                ⚠️ No Batches
+                                                            </span>
+                                                        </div>
+                                                        <div style={{ fontFamily: 'monospace', fontSize: '0.8rem', color: 'var(--muted-foreground)', minWidth: '100px' }}>
+                                                            {formula.masterFormulaDetails.productCode}
+                                                        </div>
+                                                        <div style={{ padding: '0.25rem 0.75rem', borderRadius: 'var(--radius-sm)', background: colors.light, color: colors.primary, fontSize: '0.75rem', fontWeight: '600' }}>
+                                                            {formula.masterFormulaDetails.manufacturer || 'N/A'}
+                                                        </div>
+                                                        <div style={{ padding: '0.25rem 0.75rem', borderRadius: 'var(--radius-sm)', background: 'var(--muted)', color: 'var(--muted-foreground)', fontSize: '0.75rem', fontWeight: '500' }}>
+                                                            {materialCount} materials
+                                                        </div>
+                                                        <div style={{ fontSize: '0.75rem', color: 'var(--muted-foreground)' }}>
+                                                            REV {formula.masterFormulaDetails.revisionNo || '0'}
+                                                        </div>
+                                                    </button>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {/* Placebo & Media Fill Products Section */}
+                        {placeboFormulas.length > 0 && (
+                            <div style={{ marginTop: '2rem' }}>
+                                <CollapsibleSectionHeader
+                                    title="Placebo & Media Fill Products"
+                                    count={placeboFormulas.length}
+                                    totalBatches={sectionBatchTotals.placebo}
+                                    icon="💊"
+                                    isOpen={placeboMfcsOpen}
+                                    onToggle={() => setPlaceboMfcsOpen(!placeboMfcsOpen)}
+                                    badgeColor="#6b7280"
+                                    badgeText="Placebo/MediaFill"
+                                    description="Placebo formulations and Media Fill products for validation"
+                                />
+                                {placeboMfcsOpen && (
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                                        {placeboFormulas.map((formula, index) => {
+                                            const isExpanded = expandedMfc === formula._id;
+                                            const colors = getManufacturerColor(formula.masterFormulaDetails?.manufacturer || '');
+                                            const materialCount = formula.materials?.length || 0;
+                                            const mfcNo = formula.masterFormulaDetails?.masterCardNo?.trim() || 'N/A';
+
+                                            return (
+                                                <div
+                                                    key={formula._id}
+                                                    style={{
+                                                        background: colors.glass,
+                                                        backdropFilter: 'blur(10px)',
+                                                        WebkitBackdropFilter: 'blur(10px)',
+                                                        borderRadius: 'var(--radius-lg)',
+                                                        borderTop: isExpanded ? `2px solid #9ca3af` : `1px solid ${colors.border}`,
+                                                        borderRight: isExpanded ? `2px solid #9ca3af` : `1px solid ${colors.border}`,
+                                                        borderBottom: isExpanded ? `2px solid #9ca3af` : `1px solid ${colors.border}`,
+                                                        borderLeft: '4px solid #9ca3af',
+                                                        overflow: 'hidden',
+                                                        transition: 'all 0.2s ease',
+                                                        boxShadow: `0 4px 16px ${colors.glow}, 0 1px 3px rgba(0, 0, 0, 0.05)`,
+                                                    }}
+                                                >
+                                                    {/* MFC Header */}
+                                                    <button
+                                                        onClick={() => toggleMfc(formula._id)}
+                                                        style={{
+                                                            width: '100%',
+                                                            padding: '1rem 1.5rem',
+                                                            background: isExpanded ? 'rgba(156, 163, 175, 0.1)' : 'transparent',
+                                                            border: 'none',
+                                                            cursor: 'pointer',
+                                                            display: 'flex',
+                                                            alignItems: 'center',
+                                                            gap: '1rem',
+                                                            textAlign: 'left',
+                                                        }}
+                                                    >
+                                                        <div style={{ width: '40px', fontSize: '0.9rem', fontWeight: '600', color: 'var(--muted-foreground)' }}>
+                                                            #{index + 1}
+                                                        </div>
+                                                        <div style={{
+                                                            width: '24px', height: '24px', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                                            borderRadius: '4px', background: 'rgba(156, 163, 175, 0.2)', color: '#6b7280',
+                                                            transition: 'transform 0.2s ease', transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)',
+                                                        }}>▶</div>
+                                                        <div style={{ fontFamily: 'monospace', fontSize: '1rem', fontWeight: '700', color: '#6b7280', minWidth: '160px' }}>
+                                                            {mfcNo}
+                                                        </div>
+                                                        <div style={{ flex: 1, fontSize: '0.9rem', fontWeight: '500', color: 'var(--foreground)', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                                                            {formula.masterFormulaDetails.productName}
+                                                            {formula.totalBatchCount !== undefined && formula.totalBatchCount > 0 && (
+                                                                <span style={{ padding: '0.2rem 0.6rem', background: 'linear-gradient(135deg, #6b7280 0%, #9ca3af 100%)', color: '#fff', borderRadius: '12px', fontSize: '0.7rem', fontWeight: '600' }}>
+                                                                    📦 {formula.totalBatchCount} Batches
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                        <div style={{ fontFamily: 'monospace', fontSize: '0.8rem', color: 'var(--muted-foreground)', minWidth: '100px' }}>
+                                                            {formula.masterFormulaDetails.productCode}
+                                                        </div>
+                                                        <div style={{ padding: '0.25rem 0.75rem', borderRadius: 'var(--radius-sm)', background: colors.light, color: colors.primary, fontSize: '0.75rem', fontWeight: '600' }}>
+                                                            {formula.masterFormulaDetails.manufacturer || 'N/A'}
+                                                        </div>
+                                                        <div style={{ padding: '0.25rem 0.75rem', borderRadius: 'var(--radius-sm)', background: 'var(--muted)', color: 'var(--muted-foreground)', fontSize: '0.75rem', fontWeight: '500' }}>
+                                                            {materialCount} materials
+                                                        </div>
+                                                        <div style={{ fontSize: '0.75rem', color: 'var(--muted-foreground)' }}>
+                                                            REV {formula.masterFormulaDetails.revisionNo || '0'}
+                                                        </div>
+                                                    </button>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {filteredFormulas.length === 0 && (
+                            <div style={{
+                                textAlign: 'center',
+                                padding: '4rem',
+                                color: 'var(--muted-foreground)',
+                            }}>
+                                No formulas found matching your criteria
                             </div>
                         )}
                     </>
@@ -424,19 +4017,3 @@ export default function FormulaDataPage() {
         </div>
     );
 }
-
-// Table styles
-const thStyle: React.CSSProperties = {
-    padding: '0.75rem 0.5rem',
-    textAlign: 'left',
-    fontWeight: '600',
-    color: 'var(--foreground)',
-    whiteSpace: 'nowrap',
-    borderBottom: '1px solid var(--border)',
-};
-
-const tdStyle: React.CSSProperties = {
-    padding: '0.625rem 0.5rem',
-    borderBottom: '1px solid var(--border)',
-    color: 'var(--foreground)',
-};

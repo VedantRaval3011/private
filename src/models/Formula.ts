@@ -70,6 +70,16 @@ const ExcipientItemSchema = new Schema({
   unit: { type: String, default: 'N/A' },
 }, { _id: false });
 
+// Packing material inside a filling detail
+const FillingPackingMaterialSchema = new Schema({
+  srNo: { type: Number, default: 0 },
+  materialCode: { type: String, default: '' },
+  materialName: { type: String, default: '' },
+  qtyPerUnit: { type: String, default: '1.00' },
+  reqAsPerStdBatchSize: { type: String, default: 'N/A' },
+  unit: { type: String, default: '' },
+}, { _id: false });
+
 const FillingDetailSchema = new Schema({
   productCode: { type: String, default: 'N/A' },
   productName: { type: String, default: 'N/A' },
@@ -77,12 +87,59 @@ const FillingDetailSchema = new Schema({
   actualFillingQuantity: { type: String, default: 'N/A' },
   numberOfSyringes: { type: String, default: 'N/A' },
   syringeType: { type: String },
+  packingMaterials: [FillingPackingMaterialSchema],
 }, { _id: false });
 
 const SummaryTotalsSchema = new Schema({
   totalUnitsProduced: { type: String },
   totalFillingQuantity: { type: String },
   standardBatchSizeCompliance: { type: String },
+}, { _id: false });
+
+// Process Material Item Schema
+const ProcessMaterialItemSchema = new Schema({
+  srNo: { type: Number, default: 0 },
+  materialCode: { type: String, default: '' },
+  materialName: { type: String, default: '' },
+  potencyCorrection: { type: String, default: 'N' },
+  reqQty: { type: String, default: 'N/A' },
+  ovgPercent: { type: String, default: '' },
+  qtyPerUnit: { type: String, default: '' },
+  reqAsPerStdBatchSize: { type: String, default: 'N/A' },
+  unit: { type: String, default: '' },
+  materialType: { type: String, default: '' },
+  subMaterialType: { type: String, default: '' },
+}, { _id: false });
+
+// Aseptic Filling Product Schema
+const AsepticFillingProductSchema = new Schema({
+  productCode: { type: String, default: '' },
+  productName: { type: String, default: '' },
+  packingSize: { type: String, default: '' },
+  actualFillingQty: { type: String, default: '' },
+  actualFillingMl: { type: String, default: '' },
+  numberOfSyringes: { type: String, default: '' },
+  syringeType: { type: String, default: '' },
+  materials: [ProcessMaterialItemSchema],
+}, { _id: false });
+
+// Process Data Schema
+const ProcessDataSchema = new Schema({
+  processNo: { type: Number, default: 0 },
+  processName: { type: String, default: '' },
+  materials: [ProcessMaterialItemSchema],
+  fillingProducts: [AsepticFillingProductSchema],
+}, { _id: false });
+
+// Packing Material Item Schema (MATTYPE=PM)
+const PackingMaterialItemSchema = new Schema({
+  srNo: { type: Number, default: 0 },
+  materialCode: { type: String, default: '' },
+  materialName: { type: String, default: '' },
+  subType: { type: String, default: 'OTHER' },
+  unit: { type: String, default: '' },
+  reqAsPerStdBatchSize: { type: String, default: 'N/A' },
+  artworkNo: { type: String },
 }, { _id: false });
 
 // Main Formula Schema
@@ -114,6 +171,12 @@ const FormulaSchema = new Schema<IFormula>({
   excipients: [ExcipientItemSchema],
   fillingDetails: [FillingDetailSchema],
   summary: { type: SummaryTotalsSchema },
+  
+  // Process-based data (MIXING, ASEPTIC FILLING, etc.)
+  processes: [ProcessDataSchema],
+  
+  // Packing Materials (MATTYPE=PM)
+  packingMaterials: [PackingMaterialItemSchema],
 }, {
   timestamps: true,
   collection: 'formulas'
@@ -123,6 +186,8 @@ const FormulaSchema = new Schema<IFormula>({
 FormulaSchema.index({ 'masterFormulaDetails.productCode': 1 });
 FormulaSchema.index({ 'masterFormulaDetails.productName': 1 });
 FormulaSchema.index({ uploadedAt: -1 });
+// Unique index on masterCardNo to prevent duplicates
+FormulaSchema.index({ 'masterFormulaDetails.masterCardNo': 1 }, { unique: true, sparse: true });
 
 // Virtual for formatted display
 FormulaSchema.virtual('displayName').get(function() {

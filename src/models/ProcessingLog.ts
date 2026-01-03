@@ -18,7 +18,7 @@ const ProcessingLogSchema = new Schema<IProcessingLog>({
   fileName: { type: String, required: true },
   fileType: { 
     type: String, 
-    enum: ['BATCH', 'FORMULA', 'UNKNOWN'],
+    enum: ['BATCH', 'FORMULA', 'COA', 'UNKNOWN'],
     required: true 
   },
   status: { 
@@ -53,6 +53,31 @@ const ProcessingLogSchema = new Schema<IProcessingLog>({
         type: { type: String },
         mfgDate: { type: String },
         expiryDate: { type: String }
+      }]
+    },
+    required: false
+  },
+  // Formula-level duplicate statistics
+  formulaStats: {
+    type: {
+      totalFormulas: { type: Number },
+      newFormulas: { type: Number },
+      duplicateFormulas: { type: Number },
+      duplicateDetails: [{
+        productCode: { type: String },
+        productName: { type: String },
+        revisionNo: { type: String },
+        genericName: { type: String },
+        manufacturer: { type: String },
+        reason: { type: String },
+        existingFileName: { type: String }
+      }],
+      successfulDetails: [{
+        productCode: { type: String },
+        productName: { type: String },
+        revisionNo: { type: String },
+        genericName: { type: String },
+        manufacturer: { type: String }
       }]
     },
     required: false

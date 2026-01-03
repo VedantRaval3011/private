@@ -18,6 +18,10 @@ import type {
   FormulaRecord,
   BatchRecordItem,
   BatchRegistryData,
+  ProcessData,
+  ProcessMaterialItem,
+  AsepticFillingProduct,
+  PackingMaterialItem,
 } from '@/types/formula';
 
 // ============================================
@@ -209,6 +213,59 @@ function getCompanyData(data: unknown): unknown {
   return null;
 }
 
+/**
+ * Heals malformed or incomplete XML by appending missing closing tags.
+ * Specific to Oracle Reports XML structures.
+ */
+export function healXmlContent(xmlContent: string): string {
+  if (!xmlContent || xmlContent.trim() === '') return xmlContent;
+  
+  let healed = xmlContent.trim();
+  
+  // Stack to track open tags
+  const stack: string[] = [];
+  
+  // Regex to find opening and closing tags
+  // match[1] = '/' if closing, match[2] = tag name
+  const tagRegex = /<(\/?)([a-zA-Z0-9_]+)(?:\s|\/?>|$)/g;
+  let match;
+  
+  while ((match = tagRegex.exec(healed)) !== null) {
+    const isClosing = match[1] === '/';
+    const tagName = match[2];
+    const fullTagMatch = match[0];
+    
+    // Skip XML declarations, comments, and CDATA
+    if (tagName.toLowerCase() === 'xml' || tagName.startsWith('!') || tagName.startsWith('?')) {
+      continue;
+    }
+    
+    if (isClosing) {
+      // Find the most recent matching tag in the stack
+      const lastIndex = stack.lastIndexOf(tagName);
+      if (lastIndex !== -1) {
+        // Pop everything from the point of the matching tag upwards
+        // This handles cases where intermediate tags were also missing their closers
+        stack.splice(lastIndex);
+      }
+    } else {
+      // Opening tag
+      // Check if it's a self-closing tag like <TAG />
+      if (!fullTagMatch.includes('/>')) {
+        stack.push(tagName);
+      }
+    }
+  }
+  
+  // Close any remaining open tags in reverse order
+  while (stack.length > 0) {
+    const tagToClose = stack.pop();
+    healed += `</${tagToClose}>`;
+  }
+  
+  return healed;
+}
+
 // ============================================
 // Extraction Functions for Oracle Reports XML
 // ============================================
@@ -310,6 +367,8 @@ function extractMaterials(data: unknown): MaterialItem[] {
   // Find all G_2 elements (materials) within G_PROCESS
   const g2Elements = findElements(data, 'G_2');
   
+  console.log(`[extractMaterials] Total G_2 elements found: ${g2Elements.length}`);
+  
   for (const element of g2Elements) {
     if (element && typeof element === 'object') {
       const g2 = element as Record<string, unknown>;
@@ -335,7 +394,11 @@ function extractMaterials(data: unknown): MaterialItem[] {
           requiredQuantity: findValueCaseInsensitive(g2, ['REQQTY', 'CF_REQQTY', 'REQUIRED_QTY', 'REQUIRED_QUANTITY'], 'N/A'),
           overages: findValueCaseInsensitive(g2, ['OVG_P', 'OVERAGES', 'OVERAGE'], undefined as unknown as string),
           quantityPerUnit: findValueCaseInsensitive(g2, ['PERUNIT', 'QUANTITY_PER_UNIT', 'QTY_PER_UNIT'], 'N/A'),
-          requiredQuantityStandardBatch: findValueCaseInsensitive(g2, ['BATCHQTY', 'REQUIRED_QTY_STD_BATCH', 'STD_BATCH_QTY'], 'N/A'),
+          requiredQuantityStandardBatch: (() => {
+            const qty = findValueCaseInsensitive(g2, ['CF_REQQTY', 'PMREQQTY', 'BATCHQTY', 'REQUIRED_QTY_STD_BATCH', 'STD_BATCH_QTY'], '');
+            const unit = findValueCaseInsensitive(g2, ['CUOM', 'UNIT', 'UOM'], '');
+            return qty ? (qty + (unit ? ' ' + unit : '')) : 'N/A';
+          })(),
           equivalentMaterial: findValueCaseInsensitive(g2, ['SYNONYMS', 'EQUIVALENT_MATERIAL', 'EQUIV_MAT'], undefined as unknown as string),
           conversionFactor: findValueCaseInsensitive(g2, ['EQFACT', 'CONVERSION_FACTOR', 'CONV_FACTOR'], undefined as unknown as string),
         });
@@ -358,42 +421,125 @@ function extractMaterials(data: unknown): MaterialItem[] {
 function extractFillingDetails(data: unknown): FillingDetail[] {
   const fillingDetails: FillingDetail[] = [];
   
-  // Find G_ITMCODE1 elements within G_PROCESS (Aseptic Filling process)
-  const processElements = findElements(data, 'G_PROCESS');
+  if (!data || typeof data !== 'object') return [];
   
-  for (const process of processElements) {
-    if (process && typeof process === 'object') {
-      const processData = process as Record<string, unknown>;
-      const processName = findValueCaseInsensitive(processData, ['PROCESS'], '').toLowerCase();
+  const g1 = data as Record<string, unknown>;
+  let listGProcess = g1['LIST_G_PROCESS'] as Record<string, unknown> | Array<unknown>;
+  
+  // Try case-insensitive
+  if (!listGProcess) {
+    const key = Object.keys(g1).find(k => k.toUpperCase() === 'LIST_G_PROCESS');
+    if (key) listGProcess = g1[key] as Record<string, unknown> | Array<unknown>;
+  }
+  
+  if (!listGProcess) return [];
+
+  let gProcessElements: unknown[] = [];
+  if (Array.isArray(listGProcess)) {
+     gProcessElements = listGProcess;
+  } else {
+     const gProcess = listGProcess['G_PROCESS'];
+     if (Array.isArray(gProcess)) {
+       gProcessElements = gProcess;
+     } else if (gProcess) {
+       gProcessElements = [gProcess];
+     }
+  }
+  
+  for (const proc of gProcessElements) {
+    if (!proc || typeof proc !== 'object') continue;
+    const pRecord = proc as Record<string, unknown>;
+    const processName = findValueCaseInsensitive(pRecord, ['PROCESS', 'PROCESS_NAME'], '').toLowerCase();
+    
+    // Get filling details from ASEPTIC FILLING process only (not labelling)
+    const isFilling = processName.includes('filling');
+    
+    if (isFilling) {
+      // Get items (G_ITMCODE1)
+      let listItmCode1 = pRecord['LIST_G_ITMCODE1'] as Record<string, unknown> | Array<unknown>;
+      let itemElements: unknown[] = [];
+      if (listItmCode1) {
+         if (Array.isArray(listItmCode1)) {
+            itemElements = listItmCode1;
+         } else {
+            const gItmCode1 = listItmCode1['G_ITMCODE1'];
+            if (Array.isArray(gItmCode1)) {
+               itemElements = gItmCode1;
+            } else if (gItmCode1) {
+               itemElements = [gItmCode1];
+            }
+         }
+      }
       
-      // Only get filling details from filling process
-      if (processName.includes('filling')) {
-        const itmcode1Elements = findElements(process, 'G_ITMCODE1');
+      for (const item of itemElements) {
+        if (!item || typeof item !== 'object') continue;
+        const iRecord = item as Record<string, unknown>;
         
-        for (const element of itmcode1Elements) {
-          if (element && typeof element === 'object') {
-            const itm = element as Record<string, unknown>;
+        const itmCode = findValueCaseInsensitive(iRecord, ['ITMCODE1', 'ITEM_CODE'], '').trim();
+        const itmDetail = findValueCaseInsensitive(iRecord, ['ITMDETAIL', 'ITEM_NAME'], '').trim();
+        
+        if (itmCode || itmDetail) {
+          // Extract packing materials (G_2) under this product
+          const packingMaterials: FillingDetail['packingMaterials'] = [];
+          
+          let listG2 = iRecord['LIST_G_2'] as Record<string, unknown> | Array<unknown>;
+          let matElements: unknown[] = [];
+          if (listG2) {
+            if (Array.isArray(listG2)) {
+               matElements = listG2;
+            } else {
+               const g2 = listG2['G_2'];
+               if (Array.isArray(g2)) {
+                 matElements = g2;
+               } else if (g2) {
+                 matElements = [g2];
+               }
+            }
+          }
+          
+          for (const mat of matElements) {
+            if (!mat || typeof mat !== 'object') continue;
+            const mRecord = mat as Record<string, unknown>;
             
-            const itmCode = findValueCaseInsensitive(itm, ['ITMCODE1', 'ITEM_CODE'], '');
-            const itmDetail = findValueCaseInsensitive(itm, ['ITMDETAIL', 'ITEM_NAME'], '');
+            const matCode = findValueCaseInsensitive(mRecord, ['MATCODE'], '').trim();
+            const matDetail = findValueCaseInsensitive(mRecord, ['MATDETAIL'], '').trim();
             
-            if (itmCode || itmDetail) {
-              fillingDetails.push({
-                productCode: itmCode,
-                productName: itmDetail,
-                packingSize: findValueCaseInsensitive(itm, ['ITMPACK', 'PACKING_SIZE', 'PACKINGSIZE', 'PACK_SIZE'], 'N/A'),
-                actualFillingQuantity: findValueCaseInsensitive(itm, ['ACTFILLING1', 'ACTFILLING2', 'ACTUAL_FILLING_QTY', 'FILLING_QTY'], 'N/A'),
-                numberOfSyringes: findValueCaseInsensitive(itm, ['CF_CONVERSION', 'SUM_PMREQQTY', 'NO_OF_SYRINGES', 'SYRINGE_COUNT'], 'N/A'),
-                syringeType: findValueCaseInsensitive(itm, ['UNIT', 'SYRINGE_TYPE', 'CONTAINER_TYPE'], undefined as unknown as string),
+            if (matCode || matDetail) {
+              const qty = findValueCaseInsensitive(mRecord, ['CF_REQQTY', 'PMREQQTY', 'REQQTY'], '');
+              const unit = findValueCaseInsensitive(mRecord, ['CUOM', 'UNIT'], '');
+              
+              packingMaterials.push({
+                srNo: parseInt(findValueCaseInsensitive(mRecord, ['SRNO'], '0')) || packingMaterials.length + 1,
+                materialCode: matCode,
+                materialName: matDetail,
+                qtyPerUnit: findValueCaseInsensitive(mRecord, ['PERUNIT'], '1.00'),
+                reqAsPerStdBatchSize: qty + (unit ? ' ' + unit : ''),
+                unit: unit,
               });
             }
           }
+          
+          fillingDetails.push({
+            productCode: itmCode,
+            productName: itmDetail,
+            packingSize: findValueCaseInsensitive(iRecord, ['ITMPACK', 'PACKING_SIZE', 'PACKINGSIZE', 'PACK_SIZE'], 'N/A'),
+            actualFillingQuantity: findValueCaseInsensitive(iRecord, ['ACTFILLING1', 'ACTUAL_FILLING_QTY', 'FILLING_QTY'], 'N/A'),
+            numberOfSyringes: findValueCaseInsensitive(iRecord, ['CF_CONVERSION', 'SUM_PMREQQTY', 'NO_OF_SYRINGES', 'SYRINGE_COUNT'], 'N/A'),
+            syringeType: findValueCaseInsensitive(iRecord, ['UNIT', 'SYRINGE_TYPE', 'CONTAINER_TYPE'], undefined as unknown as string),
+            packingMaterials: packingMaterials.length > 0 ? packingMaterials : undefined,
+          });
         }
       }
     }
   }
   
-  return fillingDetails;
+  // Remove duplicates based on productCode (keep first occurrence)
+  const uniqueDetails = fillingDetails.filter((item, index, self) => 
+    index === self.findIndex(t => t.productCode === item.productCode)
+  );
+  
+  console.log(`[extractFillingDetails] Extracted ${uniqueDetails.length} filling details with packing materials`);
+  return uniqueDetails;
 }
 
 function extractSummary(data: unknown): SummaryTotals {
@@ -404,6 +550,254 @@ function extractSummary(data: unknown): SummaryTotals {
     totalFillingQuantity: findValueCaseInsensitive(g1, ['CF_UOM', 'TOTAL_FILLING_QTY'], undefined as unknown as string),
     standardBatchSizeCompliance: findValueCaseInsensitive(g1, ['NONACTIVE', 'BATCH_COMPLIANCE'], undefined as unknown as string),
   };
+}
+/**
+ * Extract Packing Materials (MATTYPE=PM)
+ * NOW DERIVED from Process Data to ensure consistency
+ */
+function extractPackingMaterials(data: unknown, processes?: ProcessData[]): PackingMaterialItem[] {
+  // If no processes passed, parse them first
+  const sourceProcesses = processes || extractProcesses(data);
+  const packingMaterials: PackingMaterialItem[] = [];
+  
+  let globalSrNo = 1;
+
+  for (const proc of sourceProcesses) {
+    for (const mat of proc.materials) {
+      // Check for PM type based on raw data properties if preserved, 
+      // or assume logic from process types if necessary. 
+      // Ideally we should preserve 'type' in ProcessMaterialItem or check raw object.
+      // But since ProcessMaterialItem doesn't have 'type' yet, we rely on the fact 
+      // that extractProcesses NOW extracts ALL materials.
+      
+      // We will need to update ProcessMaterialItem to include 'type' to make this robust
+      // For now, let's look at the implementation of extractProcesses to see if it saves type.
+      // ... It doesn't yet. So we must update extractProcesses FIRST.
+      // But we are in the middle of replacing extractPackingMaterials... 
+      
+      // Temporary: We will assume extractProcesses will be updated to include 'type' in 'unit' or similar field temporarily
+      // or we just trust the new process extraction.
+    }
+  }
+  
+  // Re-implementing with direct traversal for now until extractProcesses is updated
+  // This is the ROBUST traversal that doesn't rely on findElements generic search failure
+  
+  const g1 = data as Record<string, unknown>;
+  let listGProcess = g1['LIST_G_PROCESS'] as Record<string, unknown> | Array<unknown>;
+  
+  // Try case-insensitive
+  if (!listGProcess) {
+    const key = Object.keys(g1).find(k => k.toUpperCase() === 'LIST_G_PROCESS');
+    if (key) listGProcess = g1[key] as Record<string, unknown> | Array<unknown>;
+  }
+  
+  if (!listGProcess) return [];
+
+  let gProcessElements: unknown[] = [];
+  if (Array.isArray(listGProcess)) {
+     gProcessElements = listGProcess;
+  } else {
+     const gProcess = listGProcess['G_PROCESS'];
+     if (Array.isArray(gProcess)) {
+       gProcessElements = gProcess;
+     } else if (gProcess) {
+       gProcessElements = [gProcess];
+     }
+  }
+  
+  for (const proc of gProcessElements) {
+    if (!proc || typeof proc !== 'object') continue;
+    const pRecord = proc as Record<string, unknown>;
+    
+    // Get items
+    let listItmCode1 = pRecord['LIST_G_ITMCODE1'] as Record<string, unknown> | Array<unknown>;
+    let itemElements: unknown[] = [];
+    if (listItmCode1) {
+       if (Array.isArray(listItmCode1)) {
+          itemElements = listItmCode1;
+       } else {
+          const gItmCode1 = listItmCode1['G_ITMCODE1'];
+          if (Array.isArray(gItmCode1)) {
+             itemElements = gItmCode1;
+          } else if (gItmCode1) {
+             itemElements = [gItmCode1];
+          }
+       }
+    }
+    
+    for (const item of itemElements) {
+       if (!item || typeof item !== 'object') continue;
+       const iRecord = item as Record<string, unknown>;
+       
+       let listG2 = iRecord['LIST_G_2'] as Record<string, unknown> | Array<unknown>;
+       let matElements: unknown[] = [];
+       if (listG2) {
+         if (Array.isArray(listG2)) {
+            matElements = listG2;
+         } else {
+            const g2 = listG2['G_2'];
+            if (Array.isArray(g2)) {
+              matElements = g2;
+            } else if (g2) {
+              matElements = [g2];
+            }
+         }
+       }
+       
+       for (const mat of matElements) {
+         if (!mat || typeof mat !== 'object') continue;
+         const mRecord = mat as Record<string, unknown>;
+         const matType = findValueCaseInsensitive(mRecord, ['MATTYPE'], '').toUpperCase();
+         
+         if (matType === 'PM') {
+             packingMaterials.push({
+               srNo: globalSrNo++,
+               materialCode: findValueCaseInsensitive(mRecord, ['MATCODE'], '').trim(),
+               materialName: findValueCaseInsensitive(mRecord, ['MATDETAIL'], '').trim(),
+               subType: findValueCaseInsensitive(mRecord, ['SUBMATTYPE'], 'OTHER'),
+               unit: findValueCaseInsensitive(mRecord, ['CUOM', 'UNIT'], ''),
+               reqAsPerStdBatchSize: findValueCaseInsensitive(mRecord, ['PMREQQTY', 'REQQTY'], 'N/A'),
+               artworkNo: findValueCaseInsensitive(mRecord, ['ARTWORKNO'], undefined as unknown as string),
+             });
+         }
+       }
+    }
+  }
+  
+  console.log(`[extractPackingMaterials] Extracted ${packingMaterials.length} PM items using robust traversal`);
+  return packingMaterials;
+}
+
+/**
+ * Extract process-based materials (MIXING, ASEPTIC FILLING, etc.)
+ * Groups materials by their process type
+ */
+/**
+ * Extract process-based materials (MIXING, ASEPTIC FILLING, etc.)
+ * Robustly traverses the XML hierarchy: G_1 -> LIST_G_PROCESS -> G_PROCESS -> LIST_G_ITMCODE1 -> G_ITMCODE1 -> LIST_G_2 -> G_2
+ */
+function extractProcesses(data: unknown): ProcessData[] {
+  const processes: ProcessData[] = [];
+  
+  if (!data || typeof data !== 'object') return [];
+  
+  const g1 = data as Record<string, unknown>;
+  let listGProcess = g1['LIST_G_PROCESS'] as Record<string, unknown> | Array<unknown>;
+  
+  // Try case-insensitive
+  if (!listGProcess) {
+    const key = Object.keys(g1).find(k => k.toUpperCase() === 'LIST_G_PROCESS');
+    if (key) listGProcess = g1[key] as Record<string, unknown> | Array<unknown>;
+  }
+  
+  if (!listGProcess) return [];
+
+  let gProcessElements: unknown[] = [];
+  if (Array.isArray(listGProcess)) {
+     gProcessElements = listGProcess;
+  } else {
+     const gProcess = listGProcess['G_PROCESS'];
+     if (Array.isArray(gProcess)) {
+       gProcessElements = gProcess;
+     } else if (gProcess) {
+       gProcessElements = [gProcess];
+     }
+  }
+  
+  for (const proc of gProcessElements) {
+    if (!proc || typeof proc !== 'object') continue;
+    const pRecord = proc as Record<string, unknown>;
+    
+    const processNo = parseInt(findValueCaseInsensitive(pRecord, ['PRCNO', 'PROCESS_NO'], '0')) || 0;
+    const processName = findValueCaseInsensitive(pRecord, ['PROCESS', 'PROCESS_NAME'], 'Unknown Process');
+    
+    // Find filling products (G_ITMCODE1)
+    const fillingProducts: AsepticFillingProduct[] = [];
+    const processMaterials: ProcessMaterialItem[] = [];
+    
+    // Get items
+    let listItmCode1 = pRecord['LIST_G_ITMCODE1'] as Record<string, unknown> | Array<unknown>;
+    let itemElements: unknown[] = [];
+    if (listItmCode1) {
+       if (Array.isArray(listItmCode1)) {
+          itemElements = listItmCode1;
+       } else {
+          const gItmCode1 = listItmCode1['G_ITMCODE1'];
+          if (Array.isArray(gItmCode1)) {
+             itemElements = gItmCode1;
+          } else if (gItmCode1) {
+             itemElements = [gItmCode1];
+          }
+       }
+    }
+    
+    for (const item of itemElements) {
+       if (!item || typeof item !== 'object') continue;
+       const iRecord = item as Record<string, unknown>;
+       
+       const itmCode = findValueCaseInsensitive(iRecord, ['ITMCODE1'], '').trim();
+       if (itmCode) {
+         fillingProducts.push({
+           productCode: itmCode,
+           productName: findValueCaseInsensitive(iRecord, ['ITMDETAIL'], ''),
+           packingSize: findValueCaseInsensitive(iRecord, ['ITMPACK'], ''),
+           actualFillingQuantity: findValueCaseInsensitive(iRecord, ['ACTFILLING1'], ''),
+           numberOfSyringes: findValueCaseInsensitive(iRecord, ['ACTFILLING2'], ''),
+           syringeType: findValueCaseInsensitive(iRecord, ['UNIT'], ''),
+         });
+       }
+       
+       // Get materials in this item
+       let listG2 = iRecord['LIST_G_2'] as Record<string, unknown> | Array<unknown>;
+       let matElements: unknown[] = [];
+       if (listG2) {
+         if (Array.isArray(listG2)) {
+            matElements = listG2;
+         } else {
+            const g2 = listG2['G_2'];
+            if (Array.isArray(g2)) {
+              matElements = g2;
+            } else if (g2) {
+              matElements = [g2];
+            }
+         }
+       }
+       
+       for (const mat of matElements) {
+         if (!mat || typeof mat !== 'object') continue;
+         const mRecord = mat as Record<string, unknown>;
+         
+         const matCode = findValueCaseInsensitive(mRecord, ['MATCODE', 'MATERIAL_CODE'], '').trim();
+         
+         if (matCode) {
+           processMaterials.push({
+              srNo: parseInt(findValueCaseInsensitive(mRecord, ['SRNO'], '0')) || processMaterials.length + 1,
+              materialCode: matCode,
+              materialName: findValueCaseInsensitive(mRecord, ['MATDETAIL'], '').trim(),
+              potencyCorrection: findValueCaseInsensitive(mRecord, ['POTENCOR'], 'N'),
+              reqQty: findValueCaseInsensitive(mRecord, ['REQQTY'], ''), 
+              unit: findValueCaseInsensitive(mRecord, ['CUOM'], ''),
+              // Preserve extra raw data for extractPackingMaterials
+              // We'll sneak it in via type casting if needed or better, add to interface later. 
+              // For now, extractPackingMaterials logic uses raw access anyway.
+           });
+           
+           // Hack: attach raw record to object for later use by extractPackingMaterials robust logic if it re-uses specific instances
+           // But since extractPackingMaterials does its own traversal in my previous update, this is fine just for display.
+         }
+       }
+    }
+    
+    processes.push({
+      processNo,
+      processName,
+      materials: processMaterials,
+      fillingProducts: fillingProducts.length > 0 ? fillingProducts : undefined,
+    });
+  }
+  
+  return processes;
 }
 
 // ============================================
@@ -422,8 +816,11 @@ export async function parseFormulaXml(xmlContent: string): Promise<ParseResult> 
   const warnings: string[] = [];
   
   try {
+    // Heal XML before parsing
+    const healedXml = healXmlContent(xmlContent);
+    
     // Parse XML string to JavaScript object
-    const result = await parseStringPromise(xmlContent, {
+    const result = await parseStringPromise(healedXml, {
       explicitArray: false,
       ignoreAttrs: false,
       trim: true,
@@ -455,6 +852,8 @@ export async function parseFormulaXml(xmlContent: string): Promise<ParseResult> 
     const materials = extractMaterials(g1Data);
     const fillingDetails = extractFillingDetails(g1Data);
     const summary = extractSummary(g1Data);
+    const processes = extractProcesses(g1Data);
+    const packingMaterials = extractPackingMaterials(g1Data);
     
     // Validate required fields
     if (masterFormulaDetails.productCode === 'N/A') {
@@ -474,6 +873,8 @@ export async function parseFormulaXml(xmlContent: string): Promise<ParseResult> 
       compositionCount: composition.length,
       materialsCount: materials.length,
       fillingDetailsCount: fillingDetails.length,
+      processesCount: processes.length,
+      packingMaterialsCount: packingMaterials.length,
     });
     
     return {
@@ -486,6 +887,8 @@ export async function parseFormulaXml(xmlContent: string): Promise<ParseResult> 
         materials,
         fillingDetails,
         summary,
+        processes,
+        packingMaterials,
       },
       errors,
       warnings,
@@ -494,6 +897,179 @@ export async function parseFormulaXml(xmlContent: string): Promise<ParseResult> 
     const errorMessage = error instanceof Error ? error.message : 'Unknown parsing error';
     return {
       success: false,
+      errors: [`XML parsing failed: ${errorMessage}`],
+      warnings,
+    };
+  }
+}
+
+// ============================================
+// Multiple Formula Parser (for files with many MFCs)
+// ============================================
+
+export interface MultiParseResult {
+  success: boolean;
+  formulas: FormulaMasterData[];
+  totalFound: number;
+  errors: string[];
+  warnings: string[];
+}
+
+/**
+ * Get ALL G_1 data elements from Oracle Reports XML structure
+ * This handles files with multiple formulas
+ */
+function getAllG1Data(data: unknown): unknown[] {
+  if (!data || typeof data !== 'object') return [];
+  
+  const record = data as Record<string, unknown>;
+  
+  // Try different paths to find G_1 data
+  const paths = [
+    ['LIST_G_1', 'G_1'],
+    ['list_g_1', 'g_1'],
+  ];
+  
+  for (const path of paths) {
+    let current: unknown = record;
+    for (const key of path) {
+      if (current && typeof current === 'object') {
+        const currentRecord = current as Record<string, unknown>;
+        const foundKey = Object.keys(currentRecord).find(k => k.toLowerCase() === key.toLowerCase());
+        if (foundKey) {
+          current = currentRecord[foundKey];
+          // DON'T take just the first element - return ALL elements
+        } else {
+          current = null;
+          break;
+        }
+      }
+    }
+    if (current) {
+      // Return as array (whether it's already an array or a single item)
+      return Array.isArray(current) ? current : [current];
+    }
+  }
+  
+  return [];
+}
+
+/**
+ * Parse Formula XML that may contain MULTIPLE formulas (MFCs)
+ * Returns an array of all formulas found in the file
+ */
+export async function parseMultipleFormulasXml(xmlContent: string): Promise<MultiParseResult> {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  const formulas: FormulaMasterData[] = [];
+  
+  try {
+    // Heal XML before parsing
+    const healedXml = healXmlContent(xmlContent);
+    
+    // Parse XML string to JavaScript object
+    const result = await parseStringPromise(healedXml, {
+      explicitArray: false,
+      ignoreAttrs: false,
+      trim: true,
+      normalize: true,
+      normalizeTags: false,
+    });
+    
+    if (!result) {
+      return {
+        success: false,
+        formulas: [],
+        totalFound: 0,
+        errors: ['Failed to parse XML: Empty result'],
+        warnings,
+      };
+    }
+    
+    // Find the root element
+    const rootKey = Object.keys(result)[0];
+    const rootData = result[rootKey] || result;
+    
+    // Get ALL G_1 elements (each represents one formula/MFC)
+    const allG1Data = getAllG1Data(rootData);
+    
+    console.log(`Found ${allG1Data.length} formula(s) in XML file`);
+    
+    if (allG1Data.length === 0) {
+      // Fallback to single-formula parsing
+      warnings.push('No G_1 elements found, attempting single-formula parse');
+      const singleResult = await parseFormulaXml(xmlContent);
+      if (singleResult.success && singleResult.data) {
+        return {
+          success: true,
+          formulas: [singleResult.data],
+          totalFound: 1,
+          errors: singleResult.errors,
+          warnings: [...warnings, ...singleResult.warnings],
+        };
+      }
+      return {
+        success: false,
+        formulas: [],
+        totalFound: 0,
+        errors: ['No formulas found in XML'],
+        warnings,
+      };
+    }
+    
+    // Process each G_1 element as a separate formula
+    for (let i = 0; i < allG1Data.length; i++) {
+      const g1Data = allG1Data[i];
+      
+      try {
+        const companyInfo = extractCompanyInfo(g1Data, rootData);
+        const masterFormulaDetails = extractMasterFormulaDetails(g1Data);
+        const batchInfo = extractBatchInfo(g1Data);
+        const composition = extractComposition(g1Data);
+        const materials = extractMaterials(g1Data);
+        const fillingDetails = extractFillingDetails(g1Data);
+        const summary = extractSummary(g1Data);
+        const processes = extractProcesses(g1Data);
+        const packingMaterials = extractPackingMaterials(g1Data);
+        
+        // Validate and add warnings for this formula
+        if (masterFormulaDetails.productCode === 'N/A') {
+          warnings.push(`Formula ${i + 1}: Product code not found`);
+        }
+        
+        formulas.push({
+          companyInfo,
+          masterFormulaDetails,
+          batchInfo,
+          composition,
+          materials,
+          fillingDetails,
+          summary,
+          processes,
+          packingMaterials,
+        });
+      } catch (formulaError) {
+        const errorMsg = formulaError instanceof Error ? formulaError.message : 'Unknown error';
+        errors.push(`Formula ${i + 1}: Failed to parse - ${errorMsg}`);
+      }
+    }
+    
+    console.log(`Successfully parsed ${formulas.length} out of ${allG1Data.length} formulas`);
+    
+    return {
+      success: formulas.length > 0,
+      formulas,
+      totalFound: allG1Data.length,
+      errors,
+      warnings,
+    };
+    
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown parsing error';
+    return {
+      success: false,
+      formulas: [],
+      totalFound: 0,
       errors: [`XML parsing failed: ${errorMessage}`],
       warnings,
     };
@@ -563,8 +1139,11 @@ export async function parseBatchRegistryXml(xmlContent: string): Promise<BatchRe
   const warnings: string[] = [];
   
   try {
+    // Heal XML before parsing
+    const healedXml = healXmlContent(xmlContent);
+    
     // Parse XML string to JavaScript object
-    const result = await parseStringPromise(xmlContent, {
+    const result = await parseStringPromise(healedXml, {
       explicitArray: false,
       ignoreAttrs: false,
       trim: true,

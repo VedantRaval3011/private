@@ -79,6 +79,19 @@ export interface ExcipientItem {
 }
 
 // ============================================
+// 6b. Packing Materials (MATTYPE=PM)
+// ============================================
+export interface PackingMaterialItem {
+  srNo: number;
+  materialCode: string;
+  materialName: string;
+  subType: 'PRIMARY' | 'SECONDARY' | string; // SUBMATTYPE
+  unit: string;
+  reqAsPerStdBatchSize: string;
+  artworkNo?: string;
+}
+
+// ============================================
 // 7. Aseptic Filling Details
 // ============================================
 export interface FillingDetail {
@@ -88,6 +101,15 @@ export interface FillingDetail {
   actualFillingQuantity: string;
   numberOfSyringes: string;
   syringeType?: string;
+  // Packing materials (bottles, nozzles, caps) under this filling product
+  packingMaterials?: Array<{
+    srNo: number;
+    materialCode: string;
+    materialName: string;
+    qtyPerUnit: string;
+    reqAsPerStdBatchSize: string;
+    unit: string;
+  }>;
 }
 
 // ============================================
@@ -97,6 +119,49 @@ export interface SummaryTotals {
   totalUnitsProduced?: string;
   totalFillingQuantity?: string;
   standardBatchSizeCompliance?: string;
+}
+
+// ============================================
+// 9. Process Material Item (MIXING, ASEPTIC FILLING)
+// ============================================
+export interface ProcessMaterialItem {
+  srNo: number;
+  materialCode: string;
+  materialName: string;
+  potencyCorrection: 'Y' | 'N' | string;
+  // Label Claim Per 1 ML columns  
+  reqQty: string;        // Req. Qty
+  ovgPercent: string;    // Ovg %
+  qtyPerUnit: string;    // = Qty per Unit
+  // Standard Batch column
+  reqAsPerStdBatchSize: string;  // Req. As Per Std. Batch Size
+  unit: string;          // Unit (GM, KG, ML, etc.)
+  materialType: string;  // RM, PM, etc.
+  subMaterialType: string; // ACTIVE, INACTIVE, PRIMARY, SECONDARY
+}
+
+// ============================================
+// 10. Aseptic Filling Product
+// ============================================
+export interface AsepticFillingProduct {
+  productCode: string;       // Code: FP150B3H
+  productName: string;       // Product Name: FRINZY-PLUS EYE DROPS 10ML
+  packingSize: string;       // Packing: 10 ML (renamed from packing to match parser)
+  actualFillingQty: string;  // Actual Filling Qty: 9803 BOT
+  actualFillingMl: string;   // Actual Filling: 10.2 ML
+  numberOfSyringes?: string; // ACTFILLING2
+  syringeType?: string;      // UNIT (SYRIN, etc.)
+  materials: ProcessMaterialItem[]; // Materials under this product
+}
+
+// ============================================
+// 11. Process Data (groups materials by process)
+// ============================================
+export interface ProcessData {
+  processNo: number;
+  processName: string;  // MIXING, ASEPTIC MIXING, ASEPTIC FILLING, LABELLING & PACKING
+  materials: ProcessMaterialItem[];
+  fillingProducts?: AsepticFillingProduct[];  // Only for ASEPTIC FILLING process
 }
 
 // ============================================
@@ -121,11 +186,17 @@ export interface FormulaMasterData {
   // Excipients
   excipients?: ExcipientItem[];
   
+  // Packing Materials (MATTYPE=PM)
+  packingMaterials?: PackingMaterialItem[];
+  
   // Aseptic Filling Details
   fillingDetails: FillingDetail[];
   
   // Summary / Totals
   summary: SummaryTotals;
+  
+  // Process-based data (MIXING, ASEPTIC FILLING, etc.)
+  processes?: ProcessData[];
 }
 
 // ============================================
@@ -141,6 +212,7 @@ export interface FormulaRecord extends FormulaMasterData {
   contentHash?: string;
   parsingStatus: 'success' | 'partial' | 'failed';
   parsingErrors?: string[];
+  totalBatchCount?: number; // Total batches across all product codes in this MFC
 }
 
 // ============================================
@@ -159,6 +231,8 @@ export interface FormulasListResponse {
   total: number;
   page: number;
   limit: number;
+  batchCounts?: Record<string, number>;
+  unmatchedBatches?: Array<{itemCode: string; count: number}>;
 }
 
 export interface FormulaDetailResponse {

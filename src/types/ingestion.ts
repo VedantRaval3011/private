@@ -6,7 +6,7 @@
 // ============================================
 // XML File Type Detection
 // ============================================
-export type XmlFileType = 'BATCH' | 'FORMULA' | 'UNKNOWN';
+export type XmlFileType = 'BATCH' | 'FORMULA' | 'COA' | 'REQUISITION' | 'UNKNOWN';
 
 // ============================================
 // Item-Level Duplicate Statistics
@@ -40,6 +40,35 @@ export interface ItemLevelStats {
 }
 
 // ============================================
+// Formula-Level Duplicate Statistics
+// ============================================
+export interface DuplicateFormulaDetail {
+  productCode: string;
+  productName: string;
+  revisionNo: string;
+  genericName?: string;
+  manufacturer?: string;
+  reason: string;              // e.g., "Already exists in database"
+  existingFileName: string;    // The file where this formula already exists
+}
+
+export interface SuccessfulFormulaDetail {
+  productCode: string;
+  productName: string;
+  revisionNo: string;
+  genericName?: string;
+  manufacturer?: string;
+}
+
+export interface FormulaLevelStats {
+  totalFormulas: number;
+  newFormulas: number;
+  duplicateFormulas: number;
+  duplicateDetails: DuplicateFormulaDetail[];
+  successfulDetails: SuccessfulFormulaDetail[];
+}
+
+// ============================================
 // Processing Log Record
 // ============================================
 export interface ProcessingLogRecord {
@@ -52,7 +81,8 @@ export interface ProcessingLogRecord {
   errorMessage?: string;        // Error details if status is ERROR
   processedAt: Date;
   fileSize: number;
-  itemStats?: ItemLevelStats;   // Item-level duplicate statistics
+  itemStats?: ItemLevelStats;   // Item-level duplicate statistics (for batches)
+  formulaStats?: FormulaLevelStats; // Formula-level duplicate statistics
 }
 
 // ============================================
@@ -65,7 +95,8 @@ export interface IngestionResult {
   message: string;
   businessKey?: string;
   recordId?: string;            // MongoDB _id of stored record
-  itemStats?: ItemLevelStats;   // Item-level duplicate statistics
+  itemStats?: ItemLevelStats;   // Item-level duplicate statistics (for batches)
+  formulaStats?: FormulaLevelStats; // Formula-level duplicate statistics
 }
 
 // ============================================

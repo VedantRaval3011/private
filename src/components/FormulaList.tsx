@@ -176,9 +176,14 @@ export default function FormulaList({
                             className="animate-fadeInUp"
                             style={{
                                 padding: '1.5rem',
-                                background: 'var(--card)',
+                                background: formula.totalBatchCount && formula.totalBatchCount > 0
+                                    ? 'linear-gradient(to right, rgba(16, 185, 129, 0.05), transparent)'
+                                    : 'var(--card)',
                                 borderRadius: 'var(--radius-lg)',
                                 border: '1px solid var(--border)',
+                                borderLeft: formula.totalBatchCount && formula.totalBatchCount > 0
+                                    ? '4px solid #10b981'
+                                    : '1px solid var(--border)',
                                 cursor: 'pointer',
                                 transition: 'all var(--transition-base)',
                                 animationDelay: `${index * 0.05}s`,
@@ -193,6 +198,10 @@ export default function FormulaList({
                                 e.currentTarget.style.borderColor = 'var(--border)';
                                 e.currentTarget.style.boxShadow = 'none';
                                 e.currentTarget.style.transform = 'translateY(0)';
+                                // Restore green left border if it has batches
+                                if (formula.totalBatchCount && formula.totalBatchCount > 0) {
+                                    e.currentTarget.style.borderLeft = '4px solid #10b981';
+                                }
                             }}
                         >
                             <div style={{
@@ -251,6 +260,19 @@ export default function FormulaList({
                                         }}>
                                             {formula.parsingStatus === 'success' ? '✓ Complete' : '⚠ Partial'}
                                         </span>
+                                        {formula.totalBatchCount && formula.totalBatchCount > 0 && (
+                                            <span style={{
+                                                padding: '0.25rem 0.625rem',
+                                                background: 'linear-gradient(135deg, #059669 0%, #10b981 100%)',
+                                                color: 'white',
+                                                borderRadius: 'var(--radius-full)',
+                                                fontSize: '0.75rem',
+                                                fontWeight: '600',
+                                                boxShadow: '0 2px 4px rgba(16, 185, 129, 0.2)',
+                                            }}>
+                                                📦 {formula.totalBatchCount} Batches
+                                            </span>
+                                        )}
                                     </div>
 
                                     <div style={{
