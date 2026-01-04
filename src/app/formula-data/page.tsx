@@ -606,6 +606,7 @@ export default function FormulaDataPage() {
     const [showMfcSummaryTable, setShowMfcSummaryTable] = useState(false);
     const [mfcTableSortColumn, setMfcTableSortColumn] = useState<'sr' | 'mfc' | 'product' | 'batches'>('sr');
     const [mfcTableSortDirection, setMfcTableSortDirection] = useState<'asc' | 'desc'>('asc');
+    const [hideZeroBatches, setHideZeroBatches] = useState(false);
 
     // Batch Detail Modal State
     interface BatchDetailInfo {
@@ -4095,8 +4096,13 @@ export default function FormulaDataPage() {
                     });
                 });
 
+                // Filter out zero batches if enabled
+                const filteredData = hideZeroBatches
+                    ? tableData.filter(row => row.batches > 0)
+                    : tableData;
+
                 // Sort the data based on current sort settings
-                const sortedData = [...tableData].sort((a, b) => {
+                const sortedData = [...filteredData].sort((a, b) => {
                     let comparison = 0;
                     switch (mfcTableSortColumn) {
                         case 'sr':
@@ -4157,12 +4163,14 @@ export default function FormulaDataPage() {
 
                 const mergeGroups = getMergeGroups();
 
-                // Create a lookup for each row: is it first in group and what's the group size
+                // Create a lookup for each row: is it first in group, group size, and group index
                 const rowMergeInfo = sortedData.map((_, index) => {
-                    const group = mergeGroups.find(g => index >= g.startIndex && index < g.startIndex + g.count);
+                    const groupIndex = mergeGroups.findIndex(g => index >= g.startIndex && index < g.startIndex + g.count);
+                    const group = groupIndex >= 0 ? mergeGroups[groupIndex] : null;
                     return {
                         isFirstInGroup: group ? index === group.startIndex : true,
-                        groupSize: group ? group.count : 1
+                        groupSize: group ? group.count : 1,
+                        groupIndex: groupIndex // For alternating colors
                     };
                 });
 
@@ -4319,6 +4327,26 @@ export default function FormulaDataPage() {
                                     </span>
                                 </div>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                    {/* Hide Zero Batches Toggle */}
+                                    <button
+                                        onClick={() => setHideZeroBatches(!hideZeroBatches)}
+                                        style={{
+                                            padding: '4px 10px',
+                                            borderRadius: '4px',
+                                            border: 'none',
+                                            background: hideZeroBatches ? 'rgba(16,185,129,0.3)' : 'rgba(255,255,255,0.2)',
+                                            color: 'white',
+                                            cursor: 'pointer',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '4px',
+                                            fontSize: '0.75rem',
+                                            fontWeight: '600',
+                                            transition: 'all 0.2s ease',
+                                        }}
+                                    >
+                                        {hideZeroBatches ? '✓ Hide 0' : '○ Hide 0'}
+                                    </button>
                                     {/* Download Excel Button */}
                                     <button
                                         onClick={downloadExcel}
@@ -4462,11 +4490,15 @@ export default function FormulaDataPage() {
                                             const mergeProduct = mfcTableSortColumn === 'product';
                                             const mergeBatches = mfcTableSortColumn === 'batches';
 
+                                            // Alternating colors based on group index
+                                            const isEvenGroup = mergeInfo.groupIndex % 2 === 0;
+                                            const groupBgColor = isEvenGroup ? '#f0fdfa' : '#fff7ed'; // cyan tint vs orange tint
+
                                             return (
                                                 <tr
                                                     key={`${row.formulaId}-${row.product}-${index}`}
                                                     style={{
-                                                        background: isEvenRow ? '#f8fafc' : 'white',
+                                                        background: groupBgColor,
                                                     }}
                                                 >
                                                     {/* Sr Number - merge when sorted by sr or mfc */}
@@ -4481,7 +4513,7 @@ export default function FormulaDataPage() {
                                                                 fontWeight: '600',
                                                                 verticalAlign: 'middle',
                                                                 textAlign: 'center',
-                                                                background: mergeSrMfc && mergeInfo.groupSize > 1 ? '#f1f5f9' : 'inherit',
+                                                                background: groupBgColor,
                                                             }}
                                                         >
                                                             {row.mfcIndex}
@@ -4498,7 +4530,7 @@ export default function FormulaDataPage() {
                                                                 color: '#1e293b',
                                                                 fontWeight: '600',
                                                                 verticalAlign: 'middle',
-                                                                background: mergeSrMfc && mergeInfo.groupSize > 1 ? '#f1f5f9' : 'inherit',
+                                                                background: groupBgColor,
                                                             }}
                                                         >
                                                             {row.mfc}
@@ -4515,7 +4547,7 @@ export default function FormulaDataPage() {
                                                                 color: '#0891b2',
                                                                 fontWeight: '500',
                                                                 verticalAlign: 'middle',
-                                                                background: mergeProduct && mergeInfo.groupSize > 1 ? '#f1f5f9' : 'inherit',
+                                                                background: groupBgColor,
                                                             }}
                                                         >
                                                             {row.product}
@@ -4532,7 +4564,7 @@ export default function FormulaDataPage() {
                                                                 fontWeight: '600',
                                                                 color: row.batches > 0 ? '#059669' : '#94a3b8',
                                                                 verticalAlign: 'middle',
-                                                                background: mergeBatches && mergeInfo.groupSize > 1 ? '#f1f5f9' : 'inherit',
+                                                                background: groupBgColor,
                                                             }}
                                                         >
                                                             {row.batches}
