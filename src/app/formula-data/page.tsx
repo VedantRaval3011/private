@@ -8,6 +8,7 @@
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import Link from 'next/link';
+import * as XLSX from 'xlsx';
 
 // Complete MasterFormulaDetails interface matching the parsed data
 interface MasterFormulaDetails {
@@ -600,6 +601,11 @@ export default function FormulaDataPage() {
 
     // Sort by MFC Number state: 'none' | 'asc' | 'desc'
     const [mfcSortOrder, setMfcSortOrder] = useState<'none' | 'asc' | 'desc'>('none');
+
+    // MFC Summary Table modal state
+    const [showMfcSummaryTable, setShowMfcSummaryTable] = useState(false);
+    const [mfcTableSortColumn, setMfcTableSortColumn] = useState<'sr' | 'mfc' | 'product' | 'batches'>('sr');
+    const [mfcTableSortDirection, setMfcTableSortDirection] = useState<'asc' | 'desc'>('asc');
 
     // Batch Detail Modal State
     interface BatchDetailInfo {
@@ -2704,6 +2710,37 @@ export default function FormulaDataPage() {
                                 {mfcSortOrder === 'desc' && <span style={{ fontSize: '0.75rem', opacity: 0.8 }}>(Z→A)</span>}
                             </button>
 
+                            {/* MFC Summary Table Button */}
+                            <button
+                                onClick={() => setShowMfcSummaryTable(true)}
+                                style={{
+                                    padding: '0.75rem 1rem',
+                                    borderRadius: 'var(--radius-md)',
+                                    border: '1px solid #06b6d4',
+                                    background: 'linear-gradient(135deg, #ecfeff 0%, #cffafe 100%)',
+                                    color: '#0891b2',
+                                    cursor: 'pointer',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '0.5rem',
+                                    fontWeight: '600',
+                                    fontSize: '0.9rem',
+                                    transition: 'all 0.2s ease',
+                                    boxShadow: '0 2px 8px rgba(6, 182, 212, 0.25)',
+                                }}
+                                onMouseEnter={(e) => {
+                                    e.currentTarget.style.transform = 'scale(1.02)';
+                                    e.currentTarget.style.boxShadow = '0 4px 12px rgba(6, 182, 212, 0.35)';
+                                }}
+                                onMouseLeave={(e) => {
+                                    e.currentTarget.style.transform = 'scale(1)';
+                                    e.currentTarget.style.boxShadow = '0 2px 8px rgba(6, 182, 212, 0.25)';
+                                }}
+                            >
+                                <span style={{ fontSize: '1.1rem' }}>📋</span>
+                                MFC Summary Table
+                            </button>
+
                             {selectedManufacturer && (
                                 <button
                                     onClick={() => setSelectedManufacturer(null)}
@@ -4014,6 +4051,540 @@ export default function FormulaDataPage() {
                     </>
                 )}
             </main>
+
+            {/* MFC Summary Table Modal */}
+            {showMfcSummaryTable && (() => {
+                // Build the data rows first so we can sort them
+                // Also track row counts per MFC for merged cells
+                interface TableRow {
+                    sr: number;
+                    mfc: string;
+                    product: string;
+                    batches: number;
+                    formulaId: string;
+                    isFirstRow: boolean;
+                    rowCount: number; // Number of rows for this MFC (for rowSpan)
+                    mfcIndex: number; // Index of MFC group (1-based for display)
+                }
+                const tableData: TableRow[] = [];
+                let srCounter = 0;
+                let mfcIndex = 0;
+
+                formulas.forEach((formula) => {
+                    const mfcNo = formula.masterFormulaDetails?.masterCardNo?.trim() || 'N/A';
+                    const productCodes = formula.fillingDetails?.map(fd => fd.productCode) || [];
+                    if (productCodes.length === 0) {
+                        productCodes.push(formula.masterFormulaDetails?.productCode || 'N/A');
+                    }
+                    const uniqueProductCodes = [...new Set(productCodes)];
+                    const rowCount = uniqueProductCodes.length;
+                    mfcIndex++;
+
+                    uniqueProductCodes.forEach((productCode, pcIndex) => {
+                        srCounter++;
+                        tableData.push({
+                            sr: srCounter,
+                            mfc: mfcNo,
+                            product: productCode,
+                            batches: batchCounts[productCode] || 0,
+                            formulaId: formula._id,
+                            isFirstRow: pcIndex === 0,
+                            rowCount: rowCount,
+                            mfcIndex: mfcIndex,
+                        });
+                    });
+                });
+
+                // Sort the data based on current sort settings
+                const sortedData = [...tableData].sort((a, b) => {
+                    let comparison = 0;
+                    switch (mfcTableSortColumn) {
+                        case 'sr':
+                            comparison = a.sr - b.sr;
+                            break;
+                        case 'mfc':
+                            comparison = a.mfc.localeCompare(b.mfc);
+                            break;
+                        case 'product':
+                            comparison = a.product.localeCompare(b.product);
+                            break;
+                        case 'batches':
+                            comparison = a.batches - b.batches;
+                            break;
+                    }
+                    return mfcTableSortDirection === 'asc' ? comparison : -comparison;
+                });
+
+                // Calculate merge groups for sorted data based on the sorted column
+                // This creates merged cells for consecutive duplicate values in the primary sorted column
+                interface MergeGroup {
+                    startIndex: number;
+                    count: number;
+                    value: string | number;
+                }
+
+                const getMergeGroups = (): MergeGroup[] => {
+                    const groups: MergeGroup[] = [];
+                    if (sortedData.length === 0) return groups;
+
+                    let currentGroup: MergeGroup = { startIndex: 0, count: 1, value: '' };
+
+                    // Determine which column value to group by based on sort
+                    const getGroupValue = (row: typeof sortedData[0]): string | number => {
+                        switch (mfcTableSortColumn) {
+                            case 'sr': return row.mfcIndex; // Group by MFC index for Sr sort
+                            case 'mfc': return row.mfc;
+                            case 'product': return row.product;
+                            case 'batches': return row.batches;
+                            default: return row.mfcIndex;
+                        }
+                    };
+
+                    currentGroup.value = getGroupValue(sortedData[0]);
+
+                    for (let i = 1; i < sortedData.length; i++) {
+                        const currentValue = getGroupValue(sortedData[i]);
+                        if (currentValue === currentGroup.value) {
+                            currentGroup.count++;
+                        } else {
+                            groups.push({ ...currentGroup });
+                            currentGroup = { startIndex: i, count: 1, value: currentValue };
+                        }
+                    }
+                    groups.push(currentGroup); // Push the last group
+                    return groups;
+                };
+
+                const mergeGroups = getMergeGroups();
+
+                // Create a lookup for each row: is it first in group and what's the group size
+                const rowMergeInfo = sortedData.map((_, index) => {
+                    const group = mergeGroups.find(g => index >= g.startIndex && index < g.startIndex + g.count);
+                    return {
+                        isFirstInGroup: group ? index === group.startIndex : true,
+                        groupSize: group ? group.count : 1
+                    };
+                });
+
+                // Excel download function with merged cells for any sort order
+                const downloadExcel = () => {
+                    // Build data array for Excel
+                    const excelData: (string | number)[][] = [
+                        ['Sr Number', 'MFC Number', 'Product Code', 'Number of Batches']
+                    ];
+
+                    // Track merge ranges for merged cells
+                    const merges: XLSX.Range[] = [];
+
+                    sortedData.forEach((row, index) => {
+                        const mergeInfo = rowMergeInfo[index];
+                        const excelRow = index + 1; // Excel row (1-indexed after header)
+
+                        if (mergeInfo.isFirstInGroup) {
+                            // First row of group - add full data
+                            excelData.push([row.mfcIndex, row.mfc, row.product, row.batches]);
+
+                            // Add merge ranges if group has multiple rows
+                            if (mergeInfo.groupSize > 1) {
+                                // Determine which columns to merge based on sort
+                                if (mfcTableSortColumn === 'sr' || mfcTableSortColumn === 'mfc') {
+                                    // Merge Sr Number and MFC Number columns
+                                    merges.push({ s: { r: excelRow, c: 0 }, e: { r: excelRow + mergeInfo.groupSize - 1, c: 0 } });
+                                    merges.push({ s: { r: excelRow, c: 1 }, e: { r: excelRow + mergeInfo.groupSize - 1, c: 1 } });
+                                } else if (mfcTableSortColumn === 'product') {
+                                    // Merge Product Code column
+                                    merges.push({ s: { r: excelRow, c: 2 }, e: { r: excelRow + mergeInfo.groupSize - 1, c: 2 } });
+                                } else if (mfcTableSortColumn === 'batches') {
+                                    // Merge Batches column
+                                    merges.push({ s: { r: excelRow, c: 3 }, e: { r: excelRow + mergeInfo.groupSize - 1, c: 3 } });
+                                }
+                            }
+                        } else {
+                            // Subsequent rows in group - hide grouped column values
+                            if (mfcTableSortColumn === 'sr' || mfcTableSortColumn === 'mfc') {
+                                excelData.push(['', '', row.product, row.batches]);
+                            } else if (mfcTableSortColumn === 'product') {
+                                excelData.push([row.mfcIndex, row.mfc, '', row.batches]);
+                            } else if (mfcTableSortColumn === 'batches') {
+                                excelData.push([row.mfcIndex, row.mfc, row.product, '']);
+                            } else {
+                                excelData.push([row.mfcIndex, row.mfc, row.product, row.batches]);
+                            }
+                        }
+                    });
+
+                    // Create worksheet
+                    const ws = XLSX.utils.aoa_to_sheet(excelData);
+
+                    // Apply merges if any
+                    if (merges.length > 0) {
+                        ws['!merges'] = merges;
+                    }
+
+                    // Set column widths
+                    ws['!cols'] = [
+                        { wch: 12 }, // Sr Number
+                        { wch: 20 }, // MFC Number
+                        { wch: 18 }, // Product Code
+                        { wch: 18 }, // Number of Batches
+                    ];
+
+                    // Create workbook and add worksheet
+                    const wb = XLSX.utils.book_new();
+                    XLSX.utils.book_append_sheet(wb, ws, 'MFC Summary');
+
+                    // Download file
+                    XLSX.writeFile(wb, `MFC_Summary_${new Date().toISOString().split('T')[0]}.xlsx`);
+                };
+
+                // Toggle sort function
+                const toggleSort = (column: 'sr' | 'mfc' | 'product' | 'batches') => {
+                    if (mfcTableSortColumn === column) {
+                        setMfcTableSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
+                    } else {
+                        setMfcTableSortColumn(column);
+                        setMfcTableSortDirection('asc');
+                    }
+                };
+
+                // Sort indicator component
+                const SortIndicator = ({ column }: { column: 'sr' | 'mfc' | 'product' | 'batches' }) => {
+                    if (mfcTableSortColumn !== column) return <span style={{ opacity: 0.3, marginLeft: '4px' }}>↕</span>;
+                    return <span style={{ marginLeft: '4px' }}>{mfcTableSortDirection === 'asc' ? '↑' : '↓'}</span>;
+                };
+
+                return (
+                    <div
+                        style={{
+                            position: 'fixed',
+                            inset: 0,
+                            zIndex: 1000,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            padding: '0.5rem',
+                        }}
+                        onClick={() => setShowMfcSummaryTable(false)}
+                    >
+                        {/* Backdrop */}
+                        <div style={{
+                            position: 'absolute',
+                            inset: 0,
+                            background: 'rgba(0, 0, 0, 0.5)',
+                        }} />
+
+                        {/* Modal Content */}
+                        <div
+                            style={{
+                                position: 'relative',
+                                background: 'white',
+                                borderRadius: '8px',
+                                width: '100%',
+                                maxWidth: '1000px',
+                                maxHeight: '95vh',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+                                overflow: 'hidden',
+                            }}
+                            onClick={(e) => e.stopPropagation()}
+                        >
+                            {/* Header */}
+                            <div style={{
+                                padding: '0.5rem 0.75rem',
+                                background: 'linear-gradient(135deg, #0891b2 0%, #06b6d4 100%)',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                            }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                    <span style={{ fontSize: '1rem' }}>📋</span>
+                                    <h2 style={{
+                                        margin: 0,
+                                        fontSize: '0.95rem',
+                                        fontWeight: '700',
+                                        color: 'white',
+                                    }}>
+                                        MFC Summary
+                                    </h2>
+                                    <span style={{
+                                        padding: '2px 8px',
+                                        background: 'rgba(255,255,255,0.2)',
+                                        borderRadius: '12px',
+                                        fontSize: '0.75rem',
+                                        color: 'white',
+                                        fontWeight: '600',
+                                    }}>
+                                        {formulas.length} MFCs
+                                    </span>
+                                </div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                    {/* Download Excel Button */}
+                                    <button
+                                        onClick={downloadExcel}
+                                        style={{
+                                            padding: '4px 10px',
+                                            borderRadius: '4px',
+                                            border: 'none',
+                                            background: 'rgba(255,255,255,0.2)',
+                                            color: 'white',
+                                            cursor: 'pointer',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '4px',
+                                            fontSize: '0.75rem',
+                                            fontWeight: '600',
+                                            transition: 'all 0.2s ease',
+                                        }}
+                                        onMouseEnter={(e) => {
+                                            e.currentTarget.style.background = 'rgba(255,255,255,0.3)';
+                                        }}
+                                        onMouseLeave={(e) => {
+                                            e.currentTarget.style.background = 'rgba(255,255,255,0.2)';
+                                        }}
+                                    >
+                                        📥 Excel
+                                    </button>
+                                    <button
+                                        onClick={() => setShowMfcSummaryTable(false)}
+                                        style={{
+                                            width: '28px',
+                                            height: '28px',
+                                            borderRadius: '4px',
+                                            border: 'none',
+                                            background: 'rgba(255,255,255,0.2)',
+                                            color: 'white',
+                                            cursor: 'pointer',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
+                                            fontSize: '1rem',
+                                            transition: 'all 0.2s ease',
+                                        }}
+                                        onMouseEnter={(e) => {
+                                            e.currentTarget.style.background = 'rgba(255,255,255,0.3)';
+                                        }}
+                                        onMouseLeave={(e) => {
+                                            e.currentTarget.style.background = 'rgba(255,255,255,0.2)';
+                                        }}
+                                    >
+                                        ✕
+                                    </button>
+                                </div>
+                            </div>
+
+                            {/* Table Container */}
+                            <div style={{
+                                flex: 1,
+                                overflow: 'auto',
+                                padding: '0',
+                            }}>
+                                <table style={{
+                                    width: '100%',
+                                    borderCollapse: 'collapse',
+                                    fontSize: '0.75rem',
+                                }}>
+                                    <thead>
+                                        <tr style={{
+                                            background: 'linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%)',
+                                            position: 'sticky',
+                                            top: 0,
+                                            zIndex: 1,
+                                        }}>
+                                            <th
+                                                onClick={() => toggleSort('sr')}
+                                                style={{
+                                                    padding: '0.5rem 0.6rem',
+                                                    textAlign: 'center',
+                                                    fontWeight: '600',
+                                                    color: mfcTableSortColumn === 'sr' ? '#0891b2' : '#334155',
+                                                    borderBottom: '2px solid #e2e8f0',
+                                                    whiteSpace: 'nowrap',
+                                                    cursor: 'pointer',
+                                                    userSelect: 'none',
+                                                }}
+                                            >
+                                                Sr Number <SortIndicator column="sr" />
+                                            </th>
+                                            <th
+                                                onClick={() => toggleSort('mfc')}
+                                                style={{
+                                                    padding: '0.5rem 0.6rem',
+                                                    textAlign: 'left',
+                                                    fontWeight: '600',
+                                                    color: mfcTableSortColumn === 'mfc' ? '#0891b2' : '#334155',
+                                                    borderBottom: '2px solid #e2e8f0',
+                                                    whiteSpace: 'nowrap',
+                                                    cursor: 'pointer',
+                                                    userSelect: 'none',
+                                                }}
+                                            >
+                                                MFC Number <SortIndicator column="mfc" />
+                                            </th>
+                                            <th
+                                                onClick={() => toggleSort('product')}
+                                                style={{
+                                                    padding: '0.5rem 0.6rem',
+                                                    textAlign: 'left',
+                                                    fontWeight: '600',
+                                                    color: mfcTableSortColumn === 'product' ? '#0891b2' : '#334155',
+                                                    borderBottom: '2px solid #e2e8f0',
+                                                    cursor: 'pointer',
+                                                    userSelect: 'none',
+                                                }}
+                                            >
+                                                Product Code <SortIndicator column="product" />
+                                            </th>
+                                            <th
+                                                onClick={() => toggleSort('batches')}
+                                                style={{
+                                                    padding: '0.5rem 0.6rem',
+                                                    textAlign: 'right',
+                                                    fontWeight: '600',
+                                                    color: mfcTableSortColumn === 'batches' ? '#0891b2' : '#334155',
+                                                    borderBottom: '2px solid #e2e8f0',
+                                                    whiteSpace: 'nowrap',
+                                                    cursor: 'pointer',
+                                                    userSelect: 'none',
+                                                }}
+                                            >
+                                                Batches <SortIndicator column="batches" />
+                                            </th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {sortedData.map((row, index) => {
+                                            const isEvenRow = index % 2 === 0;
+                                            const mergeInfo = rowMergeInfo[index];
+
+                                            // Determine which columns to merge based on sort
+                                            const mergeSrMfc = mfcTableSortColumn === 'sr' || mfcTableSortColumn === 'mfc';
+                                            const mergeProduct = mfcTableSortColumn === 'product';
+                                            const mergeBatches = mfcTableSortColumn === 'batches';
+
+                                            return (
+                                                <tr
+                                                    key={`${row.formulaId}-${row.product}-${index}`}
+                                                    style={{
+                                                        background: isEvenRow ? '#f8fafc' : 'white',
+                                                    }}
+                                                >
+                                                    {/* Sr Number - merge when sorted by sr or mfc */}
+                                                    {(!mergeSrMfc || mergeInfo.isFirstInGroup) && (
+                                                        <td
+                                                            rowSpan={mergeSrMfc && mergeInfo.groupSize > 1 ? mergeInfo.groupSize : 1}
+                                                            style={{
+                                                                padding: '0.35rem 0.5rem',
+                                                                borderBottom: '1px solid #e2e8f0',
+                                                                borderRight: '1px solid #e2e8f0',
+                                                                color: '#64748b',
+                                                                fontWeight: '600',
+                                                                verticalAlign: 'middle',
+                                                                textAlign: 'center',
+                                                                background: mergeSrMfc && mergeInfo.groupSize > 1 ? '#f1f5f9' : 'inherit',
+                                                            }}
+                                                        >
+                                                            {row.mfcIndex}
+                                                        </td>
+                                                    )}
+                                                    {/* MFC Number - merge when sorted by sr or mfc */}
+                                                    {(!mergeSrMfc || mergeInfo.isFirstInGroup) && (
+                                                        <td
+                                                            rowSpan={mergeSrMfc && mergeInfo.groupSize > 1 ? mergeInfo.groupSize : 1}
+                                                            style={{
+                                                                padding: '0.35rem 0.5rem',
+                                                                borderBottom: '1px solid #e2e8f0',
+                                                                borderRight: '1px solid #e2e8f0',
+                                                                color: '#1e293b',
+                                                                fontWeight: '600',
+                                                                verticalAlign: 'middle',
+                                                                background: mergeSrMfc && mergeInfo.groupSize > 1 ? '#f1f5f9' : 'inherit',
+                                                            }}
+                                                        >
+                                                            {row.mfc}
+                                                        </td>
+                                                    )}
+                                                    {/* Product Code - merge when sorted by product */}
+                                                    {(!mergeProduct || mergeInfo.isFirstInGroup) && (
+                                                        <td
+                                                            rowSpan={mergeProduct && mergeInfo.groupSize > 1 ? mergeInfo.groupSize : 1}
+                                                            style={{
+                                                                padding: '0.35rem 0.5rem',
+                                                                borderBottom: '1px solid #e2e8f0',
+                                                                fontFamily: 'monospace',
+                                                                color: '#0891b2',
+                                                                fontWeight: '500',
+                                                                verticalAlign: 'middle',
+                                                                background: mergeProduct && mergeInfo.groupSize > 1 ? '#f1f5f9' : 'inherit',
+                                                            }}
+                                                        >
+                                                            {row.product}
+                                                        </td>
+                                                    )}
+                                                    {/* Batches - merge when sorted by batches */}
+                                                    {(!mergeBatches || mergeInfo.isFirstInGroup) && (
+                                                        <td
+                                                            rowSpan={mergeBatches && mergeInfo.groupSize > 1 ? mergeInfo.groupSize : 1}
+                                                            style={{
+                                                                padding: '0.35rem 0.5rem',
+                                                                borderBottom: '1px solid #e2e8f0',
+                                                                textAlign: 'right',
+                                                                fontWeight: '600',
+                                                                color: row.batches > 0 ? '#059669' : '#94a3b8',
+                                                                verticalAlign: 'middle',
+                                                                background: mergeBatches && mergeInfo.groupSize > 1 ? '#f1f5f9' : 'inherit',
+                                                            }}
+                                                        >
+                                                            {row.batches}
+                                                        </td>
+                                                    )}
+                                                </tr>
+                                            );
+                                        })}
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            {/* Footer */}
+                            <div style={{
+                                padding: '0.4rem 0.75rem',
+                                background: '#f8fafc',
+                                borderTop: '1px solid #e2e8f0',
+                                display: 'flex',
+                                justifyContent: 'space-between',
+                                alignItems: 'center',
+                                gap: '8px',
+                            }}>
+                                <div style={{ fontSize: '0.7rem', color: '#64748b' }}>
+                                    Total MFCs: <strong>{formulas.length}</strong> |
+                                    Total Rows: <strong>{sortedData.length}</strong> |
+                                    Sorted by: <strong style={{ color: '#0891b2' }}>
+                                        {mfcTableSortColumn === 'sr' ? 'Sr Number' :
+                                            mfcTableSortColumn === 'mfc' ? 'MFC Number' :
+                                                mfcTableSortColumn === 'product' ? 'Product Code' : 'Number of Batches'}
+                                        {' '}({mfcTableSortDirection === 'asc' ? 'A→Z' : 'Z→A'})
+                                    </strong>
+                                </div>
+                                <button
+                                    onClick={() => setShowMfcSummaryTable(false)}
+                                    style={{
+                                        padding: '0.25rem 0.75rem',
+                                        borderRadius: '4px',
+                                        border: '1px solid #e2e8f0',
+                                        background: 'white',
+                                        color: '#374151',
+                                        cursor: 'pointer',
+                                        fontWeight: '500',
+                                        fontSize: '0.75rem',
+                                    }}
+                                >
+                                    Close
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                );
+            })()}
         </div>
     );
 }
