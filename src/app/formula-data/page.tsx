@@ -1560,16 +1560,21 @@ export default function FormulaDataPage() {
                                             transition: 'all 0.2s ease',
                                         }}
                                     >
-                                        {/* Batch Header Row - Clickable */}
+                                        {/* Batch Header Row - Clickable - Shows essential data */}
                                         <div
-                                            onClick={() => setExpandedBatchIdx(expandedBatchIdx === idx ? null : idx)}
+                                            onClick={(e) => {
+                                                e.preventDefault();
+                                                e.stopPropagation();
+                                                setExpandedBatchIdx(expandedBatchIdx === idx ? null : idx);
+                                            }}
                                             style={{
                                                 padding: '14px 18px',
                                                 display: 'flex',
                                                 alignItems: 'center',
-                                                gap: '16px',
+                                                gap: '12px',
                                                 cursor: 'pointer',
                                                 transition: 'background 0.15s ease',
+                                                flexWrap: 'wrap',
                                             }}
                                         >
                                             {/* Expand Icon */}
@@ -1586,54 +1591,115 @@ export default function FormulaDataPage() {
                                                 transform: expandedBatchIdx === idx ? 'rotate(90deg)' : 'rotate(0deg)',
                                                 fontSize: '0.75rem',
                                                 fontWeight: 700,
+                                                flexShrink: 0,
                                             }}>
                                                 ▶
                                             </div>
 
                                             {/* Index */}
                                             <div style={{
-                                                width: '32px',
-                                                fontSize: '0.85rem',
+                                                width: '28px',
+                                                fontSize: '0.8rem',
                                                 fontWeight: 600,
                                                 color: '#9ca3af',
+                                                flexShrink: 0,
                                             }}>
                                                 #{idx + 1}
                                             </div>
 
-                                            {/* Batch Number */}
+                                            {/* Item Code - Essential */}
                                             <div style={{
                                                 fontFamily: 'monospace',
-                                                fontSize: '0.95rem',
+                                                fontSize: '0.8rem',
+                                                fontWeight: 600,
+                                                color: '#1d4ed8',
+                                                padding: '3px 8px',
+                                                background: '#dbeafe',
+                                                borderRadius: '6px',
+                                                minWidth: '90px',
+                                                flexShrink: 0,
+                                            }}>
+                                                {batch.itemCode || 'N/A'}
+                                            </div>
+
+                                            {/* Batch Number - Essential */}
+                                            <div style={{
+                                                fontFamily: 'monospace',
+                                                fontSize: '0.85rem',
                                                 fontWeight: 700,
                                                 color: '#059669',
-                                                minWidth: '140px',
+                                                minWidth: '100px',
+                                                flexShrink: 0,
                                             }}>
                                                 {batch.batchNumber}
                                             </div>
 
-                                            {/* Mfg Date */}
-                                            <div style={{ flex: '1', fontSize: '0.85rem', color: '#374151' }}>
-                                                📅 {batch.mfgDate}
+                                            {/* Item Name - Essential */}
+                                            <div style={{
+                                                flex: '1',
+                                                fontSize: '0.85rem',
+                                                fontWeight: 600,
+                                                color: '#1f2937',
+                                                minWidth: '150px',
+                                                overflow: 'hidden',
+                                                textOverflow: 'ellipsis',
+                                                whiteSpace: 'nowrap',
+                                            }}>
+                                                {batch.itemName || 'N/A'}
                                             </div>
 
-                                            {/* Expiry */}
-                                            <div style={{ flex: '1', fontSize: '0.85rem', color: '#374151' }}>
-                                                ⏰ {batch.expiryDate}
+                                            {/* Pack - Essential */}
+                                            <div style={{
+                                                fontSize: '0.8rem',
+                                                color: '#7c3aed',
+                                                fontWeight: 600,
+                                                padding: '3px 8px',
+                                                background: '#f3e8ff',
+                                                borderRadius: '6px',
+                                                flexShrink: 0,
+                                            }}>
+                                                📦 {batch.pack || 'N/A'}
                                             </div>
 
-                                            {/* Batch Size */}
-                                            <div style={{ fontSize: '0.85rem', color: '#374151', fontWeight: 500 }}>
-                                                📦 {batch.batchSize} {batch.unit}
+                                            {/* Department - Essential */}
+                                            <div style={{
+                                                fontSize: '0.8rem',
+                                                color: '#0891b2',
+                                                fontWeight: 500,
+                                                padding: '3px 8px',
+                                                background: '#ecfeff',
+                                                borderRadius: '6px',
+                                                flexShrink: 0,
+                                            }}>
+                                                🏭 {batch.department || 'N/A'}
+                                            </div>
+
+                                            {/* Item Detail - Essential */}
+                                            <div style={{
+                                                fontSize: '0.8rem',
+                                                color: '#059669',
+                                                fontWeight: 500,
+                                                padding: '3px 8px',
+                                                background: '#d1fae5',
+                                                borderRadius: '6px',
+                                                flexShrink: 0,
+                                                maxWidth: '200px',
+                                                overflow: 'hidden',
+                                                textOverflow: 'ellipsis',
+                                                whiteSpace: 'nowrap',
+                                            }}>
+                                                ℹ️ {batch.itemDetail || 'N/A'}
                                             </div>
 
                                             {/* Type Badge */}
                                             <span style={{
-                                                padding: '4px 12px',
+                                                padding: '4px 10px',
                                                 borderRadius: '20px',
-                                                fontSize: '0.75rem',
+                                                fontSize: '0.7rem',
                                                 fontWeight: 600,
                                                 background: batch.type === 'Export' ? '#d1fae5' : '#fef3c7',
                                                 color: batch.type === 'Export' ? '#059669' : '#d97706',
+                                                flexShrink: 0,
                                             }}>
                                                 {batch.type}
                                             </span>
@@ -2522,6 +2588,149 @@ export default function FormulaDataPage() {
                                 }}
                             >
                                 📊 Download Reconciliation Mismatch Report (Excel)
+                            </button>
+
+                            <button
+                                onClick={async () => {
+                                    try {
+                                        // Show loading state
+                                        const btn = document.activeElement as HTMLButtonElement;
+                                        const originalText = btn.innerHTML;
+                                        btn.innerHTML = '⏳ Exporting...';
+                                        btn.disabled = true;
+
+                                        // Fetch all matched batches
+                                        const response = await fetch('/api/batch/matched-batches');
+                                        const data = await response.json();
+
+                                        if (!data.success || !data.data || data.data.length === 0) {
+                                            alert('No matched batches found to export');
+                                            btn.innerHTML = originalText;
+                                            btn.disabled = false;
+                                            return;
+                                        }
+
+                                        // Prepare data for Excel
+                                        const excelData = data.data.map((batch: any, index: number) => ({
+                                            'Sr. No': index + 1,
+                                            'Batch Number': batch.batchNumber,
+                                            'Item Code': batch.itemCode,
+                                            'Item Name': batch.itemName,
+                                            'Item Detail': batch.itemDetail,
+                                            'Manufacturing Date': batch.mfgDate,
+                                            'Expiry Date': batch.expiryDate,
+                                            'Batch Size': batch.batchSize,
+                                            'Unit': batch.unit,
+                                            'Type': batch.type,
+                                            'Department': batch.department,
+                                            'Pack': batch.pack,
+                                            'Year': batch.year,
+                                            'Make': batch.make,
+                                            'Location ID': batch.locationId,
+                                            'MRP Value': batch.mrpValue || 'N/A',
+                                            'Conversion Ratio': batch.conversionRatio,
+                                            'Batch Completion Date': batch.batchCompletionDate || 'N/A',
+                                            'Manufacturing License No': batch.mfgLicNo,
+                                            'Company Name': batch.companyName,
+                                            'Company Address': batch.companyAddress,
+                                            'Source File': batch.fileName,
+                                            'Uploaded At': new Date(batch.uploadedAt).toLocaleDateString(),
+                                            // Formula Master Information
+                                            'MFC Number': batch.masterCardNo,
+                                            'Product Code': batch.productCode,
+                                            'Product Name': batch.productName,
+                                            'Generic Name': batch.genericName,
+                                            'Manufacturer': batch.manufacturer,
+                                            'Revision No': batch.revisionNo,
+                                            'Shelf Life': batch.shelfLife,
+                                        }));
+
+                                        // Create workbook and worksheet
+                                        const ws = XLSX.utils.json_to_sheet(excelData);
+                                        const wb = XLSX.utils.book_new();
+                                        XLSX.utils.book_append_sheet(wb, ws, 'Matched Batches');
+
+                                        // Set column widths for better readability
+                                        const colWidths = [
+                                            { wch: 8 },  // Sr. No
+                                            { wch: 15 }, // Batch Number
+                                            { wch: 12 }, // Item Code
+                                            { wch: 35 }, // Item Name
+                                            { wch: 30 }, // Item Detail
+                                            { wch: 15 }, // Manufacturing Date
+                                            { wch: 15 }, // Expiry Date
+                                            { wch: 12 }, // Batch Size
+                                            { wch: 8 },  // Unit
+                                            { wch: 10 }, // Type
+                                            { wch: 15 }, // Department
+                                            { wch: 12 }, // Pack
+                                            { wch: 8 },  // Year
+                                            { wch: 10 }, // Make
+                                            { wch: 12 }, // Location ID
+                                            { wch: 12 }, // MRP Value
+                                            { wch: 15 }, // Conversion Ratio
+                                            { wch: 18 }, // Batch Completion Date
+                                            { wch: 20 }, // Manufacturing License No
+                                            { wch: 30 }, // Company Name
+                                            { wch: 40 }, // Company Address
+                                            { wch: 30 }, // Source File
+                                            { wch: 15 }, // Uploaded At
+                                            { wch: 18 }, // MFC Number
+                                            { wch: 15 }, // Product Code
+                                            { wch: 35 }, // Product Name
+                                            { wch: 30 }, // Generic Name
+                                            { wch: 25 }, // Manufacturer
+                                            { wch: 12 }, // Revision No
+                                            { wch: 15 }, // Shelf Life
+                                        ];
+                                        ws['!cols'] = colWidths;
+
+                                        // Generate filename with timestamp
+                                        const timestamp = new Date().toISOString().split('T')[0];
+                                        const filename = `Matched_Batches_Export_${timestamp}.xlsx`;
+
+                                        // Download the file
+                                        XLSX.writeFile(wb, filename);
+
+                                        // Reset button
+                                        btn.innerHTML = originalText;
+                                        btn.disabled = false;
+
+                                        // Show success message
+                                        alert(`Successfully exported ${data.data.length} matched batches to Excel!`);
+                                    } catch (error) {
+                                        console.error('Export error:', error);
+                                        alert('Failed to export batches. Please try again.');
+                                        const btn = document.activeElement as HTMLButtonElement;
+                                        btn.disabled = false;
+                                        btn.innerHTML = '📊 Export All Matched Batches to Excel';
+                                    }
+                                }}
+                                style={{
+                                    padding: '0.75rem 1.5rem',
+                                    background: 'linear-gradient(135deg, #059669 0%, #10b981 100%)',
+                                    color: 'white',
+                                    borderRadius: '12px',
+                                    fontSize: '0.9rem',
+                                    fontWeight: '600',
+                                    border: 'none',
+                                    cursor: 'pointer',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '8px',
+                                    boxShadow: '0 4px 12px rgba(16, 185, 129, 0.3)',
+                                    transition: 'all 0.2s ease',
+                                }}
+                                onMouseEnter={(e) => {
+                                    e.currentTarget.style.transform = 'scale(1.02)';
+                                    e.currentTarget.style.boxShadow = '0 6px 16px rgba(16, 185, 129, 0.4)';
+                                }}
+                                onMouseLeave={(e) => {
+                                    e.currentTarget.style.transform = 'scale(1)';
+                                    e.currentTarget.style.boxShadow = '0 4px 12px rgba(16, 185, 129, 0.3)';
+                                }}
+                            >
+                                📊 Export All Matched Batches to Excel
                             </button>
                         </div>
 
