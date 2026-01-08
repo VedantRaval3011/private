@@ -6,7 +6,7 @@
  * Displays complete MFC data with all fields - using FormulaDisplay style
  */
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import Link from 'next/link';
 import * as XLSX from 'xlsx';
 
@@ -152,6 +152,8 @@ interface FormulaRecord {
     processes?: ProcessData[];
     packingMaterials?: PackingMaterialItem[];
     totalBatchCount?: number;  // Total batches across all product codes in this MFC
+    rmDataMatched?: number;    // Number of batches with RM (Raw Material) requisition data
+    rmDataUnmatched?: number;  // Number of batches without RM requisition data
 }
 
 interface FormulaListResponse {
@@ -162,6 +164,10 @@ interface FormulaListResponse {
     limit: number;
     batchCounts?: Record<string, number>;
     unmatchedBatches?: Array<{ itemCode: string; count: number }>;
+    // Global RM data matching for section headers (capsule indicator)
+    globalRmDataMatched?: number;
+    globalRmDataUnmatched?: number;
+    totalRmBatchesInSystem?: number;
 }
 
 // ============================================
@@ -582,6 +588,131 @@ const getManufacturerColor = (manufacturer: string): { primary: string; light: s
     };
 };
 
+// ============================================
+// Batch Status Capsule Component - Shows RM data matching status
+// Green: Batches with RM requisition data. Red: Batches without RM data
+// ============================================
+interface BatchStatusCapsuleProps {
+    matched: number;
+    unmatched: number;
+    onGreenClick?: () => void;
+    onRedClick?: () => void;
+    size?: 'small' | 'medium' | 'large';
+}
+
+function BatchStatusCapsule({ matched, unmatched, onGreenClick, onRedClick, size = 'medium' }: BatchStatusCapsuleProps) {
+    const total = matched + unmatched;
+    if (total === 0) return null;
+
+    const greenPercent = (matched / total) * 100;
+    const redPercent = (unmatched / total) * 100;
+
+    // Size configurations
+    const sizeConfig = {
+        small: { height: '20px', fontSize: '10px', padding: '2px 8px', minWidth: '60px' },
+        medium: { height: '26px', fontSize: '11px', padding: '4px 10px', minWidth: '80px' },
+        large: { height: '32px', fontSize: '12px', padding: '5px 12px', minWidth: '100px' }
+    };
+    const config = sizeConfig[size];
+
+    return (
+        <div
+            style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '4px',
+            }}
+            title={`RM (Raw Materials) Requisition Data: ${matched} found, ${unmatched} missing`}
+        >
+            {/* RM Label */}
+            <span style={{
+                fontSize: size === 'small' ? '9px' : '10px',
+                fontWeight: 700,
+                color: '#6b7280',
+                background: '#f3f4f6',
+                padding: size === 'small' ? '2px 5px' : '3px 6px',
+                borderRadius: '4px',
+                textTransform: 'uppercase',
+                letterSpacing: '0.5px',
+            }}>
+                RM
+            </span>
+            {/* Capsule */}
+            <div
+                style={{
+                    display: 'inline-flex',
+                    alignItems: 'stretch',
+                    height: config.height,
+                    borderRadius: '20px',
+                    overflow: 'hidden',
+                    boxShadow: '0 2px 6px rgba(0,0,0,0.15), inset 0 1px 0 rgba(255,255,255,0.2)',
+                    border: '1px solid rgba(255,255,255,0.3)',
+                    minWidth: config.minWidth,
+                }}
+            >
+                {/* Green Section - RM Data Found */}
+                {matched > 0 && (
+                    <button
+                        onClick={(e) => { e.stopPropagation(); onGreenClick?.(); }}
+                        style={{
+                            flex: greenPercent,
+                            minWidth: matched > 0 ? '40px' : '0',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: '3px',
+                            padding: config.padding,
+                            background: 'linear-gradient(135deg, #059669 0%, #10b981 100%)',
+                            border: 'none',
+                            cursor: onGreenClick ? 'pointer' : 'default',
+                            color: 'white',
+                            fontSize: config.fontSize,
+                            fontWeight: 700,
+                            transition: 'all 0.2s ease',
+                            whiteSpace: 'nowrap',
+                        }}
+                        onMouseEnter={(e) => { if (onGreenClick) e.currentTarget.style.filter = 'brightness(1.1)'; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.filter = 'brightness(1)'; }}
+                        title={`${matched} batches with RM requisition data - Click to view`}
+                    >
+                        <span style={{ fontSize: '0.85em' }}>✓</span>
+                        {matched}
+                    </button>
+                )}
+                {/* Red Section - RM Data Missing */}
+                {unmatched > 0 && (
+                    <button
+                        onClick={(e) => { e.stopPropagation(); onRedClick?.(); }}
+                        style={{
+                            flex: redPercent,
+                            minWidth: unmatched > 0 ? '40px' : '0',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: '3px',
+                            padding: config.padding,
+                            background: 'linear-gradient(135deg, #dc2626 0%, #ef4444 100%)',
+                            border: 'none',
+                            cursor: onRedClick ? 'pointer' : 'default',
+                            color: 'white',
+                            fontSize: config.fontSize,
+                            fontWeight: 700,
+                            transition: 'all 0.2s ease',
+                            whiteSpace: 'nowrap',
+                        }}
+                        onMouseEnter={(e) => { if (onRedClick) e.currentTarget.style.filter = 'brightness(1.1)'; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.filter = 'brightness(1)'; }}
+                        title={`${unmatched} batches without RM requisition data - Click to view`}
+                    >
+                        <span style={{ fontSize: '0.85em' }}>✗</span>
+                        {unmatched}
+                    </button>
+                )}
+            </div>
+        </div>
+    );
+}
+
 export default function FormulaDataPage() {
     const [formulas, setFormulas] = useState<FormulaRecord[]>([]);
     const [isLoading, setIsLoading] = useState(true);
@@ -590,6 +721,17 @@ export default function FormulaDataPage() {
     const [selectedManufacturer, setSelectedManufacturer] = useState<string | null>(null);
     const [batchCounts, setBatchCounts] = useState<Record<string, number>>({});
     const [unmatchedBatches, setUnmatchedBatches] = useState<{ itemCode: string; count: number }[]>([]);
+    // Global RM (Raw Material) data matching for section header capsule
+    const [globalRmDataMatched, setGlobalRmDataMatched] = useState<number>(0);
+    const [globalRmDataUnmatched, setGlobalRmDataUnmatched] = useState<number>(0);
+
+    // RM Data Modal State (for viewing RM requisition details)
+    const [showRmDataModal, setShowRmDataModal] = useState(false);
+    const [rmModalType, setRmModalType] = useState<'matched' | 'unmatched'>('matched');
+    const [rmModalData, setRmModalData] = useState<any[]>([]);
+    const [isRmModalLoading, setIsRmModalLoading] = useState(false);
+    const [rmModalError, setRmModalError] = useState<string | null>(null);
+    const [expandedRmBatches, setExpandedRmBatches] = useState<Set<string>>(new Set());
 
     // Section collapse states
     const [orphanedBatchesOpen, setOrphanedBatchesOpen] = useState(true);
@@ -740,6 +882,9 @@ export default function FormulaDataPage() {
                 setFormulas(data.data);
                 if (data.batchCounts) setBatchCounts(data.batchCounts);
                 if (data.unmatchedBatches) setUnmatchedBatches(data.unmatchedBatches);
+                // Set global RM matching data for capsule indicator
+                if (data.globalRmDataMatched !== undefined) setGlobalRmDataMatched(data.globalRmDataMatched);
+                if (data.globalRmDataUnmatched !== undefined) setGlobalRmDataUnmatched(data.globalRmDataUnmatched);
             }
         } catch (error) {
             console.error('Error fetching formulas:', error);
@@ -765,6 +910,98 @@ export default function FormulaDataPage() {
         fetchFormulas();
         fetchBatchReconciliation();
     }, [fetchFormulas, fetchBatchReconciliation]);
+
+    // Open RM Data Modal - fetch and display RM requisition data
+    // Green (matched): Show RM materials from requisition
+    // Red (unmatched): Show batches that are missing RM requisition data
+    const openRmDataModal = useCallback(async (type: 'matched' | 'unmatched') => {
+        setShowRmDataModal(true);
+        setRmModalType(type);
+        setIsRmModalLoading(true);
+        setRmModalError(null);
+        setRmModalData([]);
+
+        try {
+            if (type === 'matched') {
+                // Green: Fetch RM materials from requisition API
+                const response = await fetch('/api/requisition/materials?type=RM');
+                const data = await response.json();
+
+                if (data.success && data.materials) {
+                    setRmModalData(data.materials);
+                } else {
+                    setRmModalError(data.message || 'Failed to fetch RM materials');
+                }
+            } else {
+                // Red (unmatched): Fetch batches that are missing RM requisition data
+                // First get all batches from the batch registry
+                const batchResponse = await fetch('/api/batch?page=1&limit=10000');
+                const batchData = await batchResponse.json();
+
+                // Then get all batch numbers that have RM requisition data
+                const rmResponse = await fetch('/api/requisition/materials?type=RM');
+                const rmData = await rmResponse.json();
+
+                if (batchData.success && batchData.data) {
+                    // Get set of batch numbers that have RM data
+                    const batchesWithRm = new Set<string>();
+                    if (rmData.success && rmData.materials) {
+                        rmData.materials.forEach((m: any) => {
+                            if (m.batchNumber) batchesWithRm.add(m.batchNumber);
+                        });
+                    }
+
+                    // Find batches that DON'T have RM requisition data
+                    const unmatchedBatches: any[] = [];
+                    batchData.data.forEach((record: any) => {
+                        record.batches?.forEach((batch: any) => {
+                            if (!batchesWithRm.has(batch.batchNumber)) {
+                                unmatchedBatches.push({
+                                    batchNumber: batch.batchNumber,
+                                    itemCode: batch.itemCode,
+                                    itemName: batch.itemName,
+                                    mfgDate: batch.mfgDate,
+                                    expiryDate: batch.expiryDate,
+                                    batchSize: batch.batchSize,
+                                    department: batch.department,
+                                    make: record.companyName || batch.make,
+                                });
+                            }
+                        });
+                    });
+
+                    setRmModalData(unmatchedBatches);
+                } else {
+                    setRmModalError('Failed to fetch batch data');
+                }
+            }
+        } catch (error) {
+            console.error('Error fetching RM data:', error);
+            setRmModalError('Failed to fetch data');
+        } finally {
+            setIsRmModalLoading(false);
+        }
+    }, []);
+
+    const closeRmDataModal = useCallback(() => {
+        setShowRmDataModal(false);
+        setRmModalData([]);
+        setRmModalError(null);
+        setExpandedRmBatches(new Set());
+    }, []);
+
+    // Toggle expanded state for a batch group in RM modal
+    const toggleRmBatchExpand = (batchNumber: string) => {
+        setExpandedRmBatches(prev => {
+            const next = new Set(prev);
+            if (next.has(batchNumber)) {
+                next.delete(batchNumber);
+            } else {
+                next.add(batchNumber);
+            }
+            return next;
+        });
+    };
 
     // Group formulas by manufacturer
     const manufacturerSummary = useMemo(() => {
@@ -1079,7 +1316,11 @@ export default function FormulaDataPage() {
         onToggle,
         badgeColor,
         badgeText,
-        description
+        description,
+        rmDataMatched,
+        rmDataUnmatched,
+        onRmMatchedClick,
+        onRmUnmatchedClick
     }: {
         title: string;
         count: number;
@@ -1090,6 +1331,10 @@ export default function FormulaDataPage() {
         badgeColor: string;
         badgeText?: string;
         description?: string;
+        rmDataMatched?: number;
+        rmDataUnmatched?: number;
+        onRmMatchedClick?: () => void;
+        onRmUnmatchedClick?: () => void;
     }) => {
         // Convert dark badge colors to light background colors
         const getLightColors = (darkColor: string) => {
@@ -1114,7 +1359,7 @@ export default function FormulaDataPage() {
         const colors = getLightColors(badgeColor);
 
         return (
-            <button
+            <div
                 onClick={onToggle}
                 style={{
                     width: '100%',
@@ -1182,6 +1427,16 @@ export default function FormulaDataPage() {
                                 📦 {totalBatches.toLocaleString()} Batches
                             </span>
                         )}
+                        {/* RM Data Status Capsule */}
+                        {(rmDataMatched !== undefined || rmDataUnmatched !== undefined) && (
+                            <BatchStatusCapsule
+                                matched={rmDataMatched || 0}
+                                unmatched={rmDataUnmatched || 0}
+                                onGreenClick={onRmMatchedClick}
+                                onRedClick={onRmUnmatchedClick}
+                                size="medium"
+                            />
+                        )}
                     </div>
                     {description && (
                         <p style={{ fontSize: '0.8rem', color: 'var(--muted-foreground)', marginTop: '0.25rem' }}>
@@ -1198,7 +1453,7 @@ export default function FormulaDataPage() {
                 }}>
                     {isOpen ? 'Click to collapse' : 'Click to expand'}
                 </div>
-            </button>
+            </div>
         );
     };
 
@@ -1394,27 +1649,67 @@ export default function FormulaDataPage() {
     );
 
     // Batch List Modal Component (shows all batches for a product code with complete details)
-    const [expandedBatchIdx, setExpandedBatchIdx] = useState<number | null>(null);
+    // State for expanded product codes (file-like structure)
+    const [expandedProductCodes, setExpandedProductCodes] = useState<Set<string>>(new Set());
+    const [expandedBatchIdx, setExpandedBatchIdx] = useState<string | null>(null); // Changed to string for unique key
+    const modalScrollRef = useRef<HTMLDivElement>(null); // Ref to preserve scroll position
+
+    // Toggle expanded state for a product code "file"
+    const toggleProductCodeExpand = (productCode: string) => {
+        setExpandedProductCodes(prev => {
+            const next = new Set(prev);
+            if (next.has(productCode)) {
+                next.delete(productCode);
+            } else {
+                next.add(productCode);
+            }
+            return next;
+        });
+    };
+
+    // Group batches by item code (product code)
+    const groupBatchesByItemCode = (batches: BatchListItem[]): Map<string, { itemName: string; batches: BatchListItem[] }> => {
+        const grouped = new Map<string, { itemName: string; batches: BatchListItem[] }>();
+
+        batches.forEach(batch => {
+            const code = batch.itemCode || 'N/A';
+            if (!grouped.has(code)) {
+                grouped.set(code, {
+                    itemName: batch.itemName || 'N/A',
+                    batches: []
+                });
+            }
+            grouped.get(code)!.batches.push(batch);
+        });
+
+        return grouped;
+    };
 
     const BatchListModal = () => {
         if (!selectedProductCode) return null;
 
+        // Group batches by item code
+        const groupedBatches = batchList ? groupBatchesByItemCode(batchList) : new Map();
+        const uniqueProductCodeCount = groupedBatches.size;
+
         return (
-            <div style={{
-                position: 'fixed',
-                top: '50%',
-                left: '50%',
-                transform: 'translate(-50%, -50%)',
-                zIndex: 1000,
-                width: '95%',
-                maxWidth: '1100px',
-                maxHeight: '90vh',
-                overflowY: 'auto',
-                background: 'white',
-                borderRadius: '16px',
-                boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(0, 0, 0, 0.05)',
-                border: '2px solid #10b981',
-            }}>
+            <div
+                ref={modalScrollRef}
+                style={{
+                    position: 'fixed',
+                    top: '50%',
+                    left: '50%',
+                    transform: 'translate(-50%, -50%)',
+                    zIndex: 1000,
+                    width: '95%',
+                    maxWidth: '1100px',
+                    maxHeight: '90vh',
+                    overflowY: 'auto',
+                    background: 'white',
+                    borderRadius: '16px',
+                    boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(0, 0, 0, 0.05)',
+                    border: '2px solid #10b981',
+                }}>
                 {/* Modal Header */}
                 <div style={{
                     position: 'sticky',
@@ -1439,6 +1734,7 @@ export default function FormulaDataPage() {
                         onClick={() => {
                             closeBatchListModal();
                             setExpandedBatchIdx(null);
+                            setExpandedProductCodes(new Set());
                         }}
                         style={{
                             background: 'rgba(255,255,255,0.2)',
@@ -1481,7 +1777,7 @@ export default function FormulaDataPage() {
 
                     {batchList && batchList.length > 0 && (
                         <div>
-                            {/* Summary Header */}
+                            {/* Summary Header - Now includes Product Code count */}
                             <div style={{
                                 display: 'flex',
                                 gap: '16px',
@@ -1501,6 +1797,22 @@ export default function FormulaDataPage() {
                                     </div>
                                     <div style={{ fontSize: '0.8rem', color: '#047857', fontWeight: 500 }}>
                                         Total Batches
+                                    </div>
+                                </div>
+                                {/* New: Unique Product Codes Count */}
+                                <div style={{
+                                    padding: '12px 20px',
+                                    background: 'linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%)',
+                                    borderRadius: '12px',
+                                    border: '1px solid #93c5fd',
+                                    flex: '1',
+                                    minWidth: '140px',
+                                }}>
+                                    <div style={{ fontSize: '1.5rem', fontWeight: 700, color: '#2563eb' }}>
+                                        {uniqueProductCodeCount}
+                                    </div>
+                                    <div style={{ fontSize: '0.8rem', color: '#1d4ed8', fontWeight: 500 }}>
+                                        Product Codes
                                     </div>
                                 </div>
                                 <div style={{
@@ -1544,366 +1856,762 @@ export default function FormulaDataPage() {
                                 borderRadius: '8px',
                                 border: '1px solid #bbf7d0'
                             }}>
-                                💡 Click on any batch row to expand and view complete details.
+                                📁 Click on a <strong>Product Code</strong> to expand and view all its batches. Click on any batch row to see complete details.
                             </p>
 
-                            {/* Batch Cards with Expandable Details */}
+                            {/* Product Code Files - Grouped by Item Code */}
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                                {batchList.map((batch, idx) => (
-                                    <div
-                                        key={idx}
-                                        style={{
-                                            background: expandedBatchIdx === idx ? '#f0fdf4' : '#fff',
-                                            border: expandedBatchIdx === idx ? '2px solid #10b981' : '1px solid #e5e7eb',
-                                            borderRadius: '12px',
-                                            overflow: 'hidden',
-                                            transition: 'all 0.2s ease',
-                                        }}
-                                    >
-                                        {/* Batch Header Row - Clickable - Shows essential data */}
+                                {Array.from(groupedBatches.entries()).map(([itemCode, { itemName, batches: codeBatches }], fileIdx) => {
+                                    const isCodeExpanded = expandedProductCodes.has(itemCode);
+
+                                    return (
                                         <div
-                                            onClick={(e) => {
-                                                e.preventDefault();
-                                                e.stopPropagation();
-                                                setExpandedBatchIdx(expandedBatchIdx === idx ? null : idx);
-                                            }}
+                                            key={itemCode}
+                                            id={`productcode-${itemCode}`}
                                             style={{
-                                                padding: '14px 18px',
-                                                display: 'flex',
-                                                alignItems: 'center',
-                                                gap: '12px',
-                                                cursor: 'pointer',
-                                                transition: 'background 0.15s ease',
-                                                flexWrap: 'wrap',
+                                                background: isCodeExpanded ? '#f0fdf4' : '#fff',
+                                                border: isCodeExpanded ? '2px solid #10b981' : '1px solid #e5e7eb',
+                                                borderRadius: '12px',
+                                                overflow: 'hidden',
+                                                transition: 'all 0.2s ease',
                                             }}
                                         >
-                                            {/* Expand Icon */}
-                                            <div style={{
-                                                width: '24px',
-                                                height: '24px',
-                                                display: 'flex',
-                                                alignItems: 'center',
-                                                justifyContent: 'center',
-                                                borderRadius: '6px',
-                                                background: expandedBatchIdx === idx ? '#10b981' : '#e5e7eb',
-                                                color: expandedBatchIdx === idx ? 'white' : '#6b7280',
-                                                transition: 'all 0.2s ease',
-                                                transform: expandedBatchIdx === idx ? 'rotate(90deg)' : 'rotate(0deg)',
-                                                fontSize: '0.75rem',
-                                                fontWeight: 700,
-                                                flexShrink: 0,
-                                            }}>
-                                                ▶
-                                            </div>
-
-                                            {/* Index */}
-                                            <div style={{
-                                                width: '28px',
-                                                fontSize: '0.8rem',
-                                                fontWeight: 600,
-                                                color: '#9ca3af',
-                                                flexShrink: 0,
-                                            }}>
-                                                #{idx + 1}
-                                            </div>
-
-                                            {/* Item Code - Essential */}
-                                            <div style={{
-                                                fontFamily: 'monospace',
-                                                fontSize: '0.8rem',
-                                                fontWeight: 600,
-                                                color: '#1d4ed8',
-                                                padding: '3px 8px',
-                                                background: '#dbeafe',
-                                                borderRadius: '6px',
-                                                minWidth: '90px',
-                                                flexShrink: 0,
-                                            }}>
-                                                {batch.itemCode || 'N/A'}
-                                            </div>
-
-                                            {/* Batch Number - Essential */}
-                                            <div style={{
-                                                fontFamily: 'monospace',
-                                                fontSize: '0.85rem',
-                                                fontWeight: 700,
-                                                color: '#059669',
-                                                minWidth: '100px',
-                                                flexShrink: 0,
-                                            }}>
-                                                {batch.batchNumber}
-                                            </div>
-
-                                            {/* Item Name - Essential */}
-                                            <div style={{
-                                                flex: '1',
-                                                fontSize: '0.85rem',
-                                                fontWeight: 600,
-                                                color: '#1f2937',
-                                                minWidth: '150px',
-                                                overflow: 'hidden',
-                                                textOverflow: 'ellipsis',
-                                                whiteSpace: 'nowrap',
-                                            }}>
-                                                {batch.itemName || 'N/A'}
-                                            </div>
-
-                                            {/* Pack - Essential */}
-                                            <div style={{
-                                                fontSize: '0.8rem',
-                                                color: '#7c3aed',
-                                                fontWeight: 600,
-                                                padding: '3px 8px',
-                                                background: '#f3e8ff',
-                                                borderRadius: '6px',
-                                                flexShrink: 0,
-                                            }}>
-                                                📦 {batch.pack || 'N/A'}
-                                            </div>
-
-                                            {/* Department - Essential */}
-                                            <div style={{
-                                                fontSize: '0.8rem',
-                                                color: '#0891b2',
-                                                fontWeight: 500,
-                                                padding: '3px 8px',
-                                                background: '#ecfeff',
-                                                borderRadius: '6px',
-                                                flexShrink: 0,
-                                            }}>
-                                                🏭 {batch.department || 'N/A'}
-                                            </div>
-
-                                            {/* Item Detail - Essential */}
-                                            <div style={{
-                                                fontSize: '0.8rem',
-                                                color: '#059669',
-                                                fontWeight: 500,
-                                                padding: '3px 8px',
-                                                background: '#d1fae5',
-                                                borderRadius: '6px',
-                                                flexShrink: 0,
-                                                maxWidth: '200px',
-                                                overflow: 'hidden',
-                                                textOverflow: 'ellipsis',
-                                                whiteSpace: 'nowrap',
-                                            }}>
-                                                ℹ️ {batch.itemDetail || 'N/A'}
-                                            </div>
-
-                                            {/* Type Badge */}
-                                            <span style={{
-                                                padding: '4px 10px',
-                                                borderRadius: '20px',
-                                                fontSize: '0.7rem',
-                                                fontWeight: 600,
-                                                background: batch.type === 'Export' ? '#d1fae5' : '#fef3c7',
-                                                color: batch.type === 'Export' ? '#059669' : '#d97706',
-                                                flexShrink: 0,
-                                            }}>
-                                                {batch.type}
-                                            </span>
-                                        </div>
-
-                                        {/* Expanded Details */}
-                                        {expandedBatchIdx === idx && (
-                                            <div style={{
-                                                padding: '16px 20px',
-                                                background: 'linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%)',
-                                                borderTop: '1px solid #e5e7eb',
-                                            }}>
-                                                {/* Details Grid */}
-                                                <div style={{
-                                                    display: 'grid',
-                                                    gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+                                            {/* Product Code Header - File/Folder like */}
+                                            <div
+                                                onClick={(e) => {
+                                                    e.preventDefault();
+                                                    e.stopPropagation();
+                                                    const wasExpanded = isCodeExpanded;
+                                                    toggleProductCodeExpand(itemCode);
+                                                    // Scroll to keep the clicked element visible
+                                                    if (!wasExpanded) {
+                                                        setTimeout(() => {
+                                                            const element = document.getElementById(`productcode-${itemCode}`);
+                                                            if (element) {
+                                                                element.scrollIntoView({ behavior: 'auto', block: 'nearest' });
+                                                            }
+                                                        }, 10);
+                                                    }
+                                                }}
+                                                style={{
+                                                    padding: '14px 18px',
+                                                    display: 'flex',
+                                                    alignItems: 'center',
                                                     gap: '12px',
-                                                    marginBottom: '16px',
+                                                    cursor: 'pointer',
+                                                    background: isCodeExpanded
+                                                        ? 'linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%)'
+                                                        : 'linear-gradient(135deg, #f9fafb 0%, #f3f4f6 100%)',
+                                                    transition: 'all 0.15s ease',
+                                                }}
+                                            >
+                                                {/* Expand Icon */}
+                                                <div style={{
+                                                    width: '28px',
+                                                    height: '28px',
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    justifyContent: 'center',
+                                                    borderRadius: '8px',
+                                                    background: isCodeExpanded ? '#10b981' : '#dbeafe',
+                                                    color: isCodeExpanded ? 'white' : '#2563eb',
+                                                    transition: 'all 0.2s ease',
+                                                    fontSize: '1rem',
+                                                    flexShrink: 0,
                                                 }}>
-                                                    <div style={{
-                                                        background: 'white',
-                                                        padding: '12px 16px',
-                                                        borderRadius: '8px',
-                                                        border: '1px solid #e5e7eb',
-                                                    }}>
-                                                        <div style={{ fontSize: '0.7rem', color: '#9ca3af', fontWeight: 500, marginBottom: '4px' }}>
-                                                            Item Code
-                                                        </div>
-                                                        <div style={{ fontSize: '0.9rem', color: '#1f2937', fontWeight: 600 }}>
-                                                            {batch.itemCode || 'N/A'}
-                                                        </div>
+                                                    {isCodeExpanded ? '📂' : '📁'}
+                                                </div>
+
+                                                {/* File Index */}
+                                                <div style={{
+                                                    width: '28px',
+                                                    fontSize: '0.8rem',
+                                                    fontWeight: 600,
+                                                    color: '#9ca3af',
+                                                    flexShrink: 0,
+                                                }}>
+                                                    #{fileIdx + 1}
+                                                </div>
+
+                                                {/* Item Code - Main identifier */}
+                                                <div style={{
+                                                    fontFamily: 'monospace',
+                                                    fontSize: '0.95rem',
+                                                    fontWeight: 700,
+                                                    color: '#1d4ed8',
+                                                    padding: '4px 12px',
+                                                    background: '#dbeafe',
+                                                    borderRadius: '8px',
+                                                    minWidth: '100px',
+                                                    flexShrink: 0,
+                                                }}>
+                                                    {itemCode}
+                                                </div>
+
+                                                {/* Item Name */}
+                                                <div style={{
+                                                    flex: '1',
+                                                    fontSize: '0.9rem',
+                                                    fontWeight: 600,
+                                                    color: '#1f2937',
+                                                    overflow: 'hidden',
+                                                    textOverflow: 'ellipsis',
+                                                    whiteSpace: 'nowrap',
+                                                }}>
+                                                    {itemName}
+                                                </div>
+
+                                                {/* Batch Count Badge */}
+                                                <div style={{
+                                                    padding: '6px 14px',
+                                                    borderRadius: '20px',
+                                                    fontSize: '0.8rem',
+                                                    fontWeight: 700,
+                                                    background: isCodeExpanded
+                                                        ? 'linear-gradient(135deg, #059669 0%, #10b981 100%)'
+                                                        : 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
+                                                    color: 'white',
+                                                    flexShrink: 0,
+                                                    boxShadow: '0 2px 6px rgba(0,0,0,0.15)',
+                                                }}>
+                                                    📦 {codeBatches.length} {codeBatches.length === 1 ? 'Batch' : 'Batches'}
+                                                </div>
+
+                                                {/* Chevron */}
+                                                <div style={{
+                                                    fontSize: '0.8rem',
+                                                    color: '#6b7280',
+                                                    transform: isCodeExpanded ? 'rotate(90deg)' : 'rotate(0deg)',
+                                                    transition: 'transform 0.2s ease',
+                                                }}>
+                                                    ▶
+                                                </div>
+                                            </div>
+
+                                            {/* Expanded Batches List */}
+                                            {isCodeExpanded && (
+                                                <div style={{
+                                                    padding: '12px 18px 18px',
+                                                    background: 'linear-gradient(180deg, #f0fdf4 0%, #ffffff 100%)',
+                                                    borderTop: '1px solid #a7f3d0',
+                                                }}>
+                                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                                        {codeBatches.map((batch: BatchListItem, idx: number) => {
+                                                            const batchKey = `${itemCode}-${idx}`;
+                                                            const isBatchExpanded = expandedBatchIdx === batchKey;
+
+                                                            return (
+                                                                <div
+                                                                    key={batchKey}
+                                                                    id={`batch-${batchKey}`}
+                                                                    style={{
+                                                                        background: isBatchExpanded ? '#ecfdf5' : '#fff',
+                                                                        border: isBatchExpanded ? '2px solid #34d399' : '1px solid #d1d5db',
+                                                                        borderRadius: '10px',
+                                                                        overflow: 'hidden',
+                                                                        transition: 'all 0.2s ease',
+                                                                    }}
+                                                                >
+                                                                    {/* Batch Row Header */}
+                                                                    <div
+                                                                        onClick={(e) => {
+                                                                            e.preventDefault();
+                                                                            e.stopPropagation();
+                                                                            const newExpanded = isBatchExpanded ? null : batchKey;
+                                                                            setExpandedBatchIdx(newExpanded);
+                                                                            // Scroll to keep the clicked element visible
+                                                                            if (newExpanded) {
+                                                                                setTimeout(() => {
+                                                                                    const element = document.getElementById(`batch-${batchKey}`);
+                                                                                    if (element) {
+                                                                                        element.scrollIntoView({ behavior: 'auto', block: 'nearest' });
+                                                                                    }
+                                                                                }, 10);
+                                                                            }
+                                                                        }}
+                                                                        style={{
+                                                                            padding: '12px 14px',
+                                                                            display: 'flex',
+                                                                            alignItems: 'center',
+                                                                            gap: '10px',
+                                                                            cursor: 'pointer',
+                                                                            flexWrap: 'wrap',
+                                                                        }}
+                                                                    >
+                                                                        {/* Expand Icon */}
+                                                                        <div style={{
+                                                                            width: '22px',
+                                                                            height: '22px',
+                                                                            display: 'flex',
+                                                                            alignItems: 'center',
+                                                                            justifyContent: 'center',
+                                                                            borderRadius: '5px',
+                                                                            background: isBatchExpanded ? '#10b981' : '#e5e7eb',
+                                                                            color: isBatchExpanded ? 'white' : '#6b7280',
+                                                                            transition: 'all 0.2s ease',
+                                                                            transform: isBatchExpanded ? 'rotate(90deg)' : 'rotate(0deg)',
+                                                                            fontSize: '0.65rem',
+                                                                            fontWeight: 700,
+                                                                            flexShrink: 0,
+                                                                        }}>
+                                                                            ▶
+                                                                        </div>
+
+                                                                        {/* Index */}
+                                                                        <div style={{
+                                                                            width: '24px',
+                                                                            fontSize: '0.75rem',
+                                                                            fontWeight: 600,
+                                                                            color: '#9ca3af',
+                                                                            flexShrink: 0,
+                                                                        }}>
+                                                                            #{idx + 1}
+                                                                        </div>
+
+                                                                        {/* Batch Number */}
+                                                                        <div style={{
+                                                                            fontFamily: 'monospace',
+                                                                            fontSize: '0.85rem',
+                                                                            fontWeight: 700,
+                                                                            color: '#059669',
+                                                                            minWidth: '90px',
+                                                                            flexShrink: 0,
+                                                                        }}>
+                                                                            {batch.batchNumber}
+                                                                        </div>
+
+                                                                        {/* Item Name */}
+                                                                        <div style={{
+                                                                            flex: '1',
+                                                                            fontSize: '0.8rem',
+                                                                            fontWeight: 500,
+                                                                            color: '#374151',
+                                                                            minWidth: '120px',
+                                                                            overflow: 'hidden',
+                                                                            textOverflow: 'ellipsis',
+                                                                            whiteSpace: 'nowrap',
+                                                                        }}>
+                                                                            {batch.itemName || 'N/A'}
+                                                                        </div>
+
+                                                                        {/* Pack */}
+                                                                        <div style={{
+                                                                            fontSize: '0.75rem',
+                                                                            color: '#7c3aed',
+                                                                            fontWeight: 600,
+                                                                            padding: '2px 8px',
+                                                                            background: '#f3e8ff',
+                                                                            borderRadius: '6px',
+                                                                            flexShrink: 0,
+                                                                        }}>
+                                                                            📦 {batch.pack || 'N/A'}
+                                                                        </div>
+
+                                                                        {/* Department */}
+                                                                        <div style={{
+                                                                            fontSize: '0.75rem',
+                                                                            color: '#0891b2',
+                                                                            fontWeight: 500,
+                                                                            padding: '2px 8px',
+                                                                            background: '#ecfeff',
+                                                                            borderRadius: '6px',
+                                                                            flexShrink: 0,
+                                                                        }}>
+                                                                            🏭 {batch.department || 'N/A'}
+                                                                        </div>
+
+                                                                        {/* Type Badge */}
+                                                                        <span style={{
+                                                                            padding: '3px 10px',
+                                                                            borderRadius: '20px',
+                                                                            fontSize: '0.65rem',
+                                                                            fontWeight: 600,
+                                                                            background: batch.type === 'Export' ? '#d1fae5' : '#fef3c7',
+                                                                            color: batch.type === 'Export' ? '#059669' : '#d97706',
+                                                                            flexShrink: 0,
+                                                                        }}>
+                                                                            {batch.type}
+                                                                        </span>
+                                                                    </div>
+
+                                                                    {/* Expanded Batch Details */}
+                                                                    {isBatchExpanded && (
+                                                                        <div style={{
+                                                                            padding: '14px 16px',
+                                                                            background: 'linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%)',
+                                                                            borderTop: '1px solid #e5e7eb',
+                                                                        }}>
+                                                                            {/* Details Grid */}
+                                                                            <div style={{
+                                                                                display: 'grid',
+                                                                                gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+                                                                                gap: '10px',
+                                                                                marginBottom: '12px',
+                                                                            }}>
+                                                                                <div style={{ background: 'white', padding: '10px 12px', borderRadius: '8px', border: '1px solid #e5e7eb' }}>
+                                                                                    <div style={{ fontSize: '0.65rem', color: '#9ca3af', fontWeight: 500, marginBottom: '3px' }}>Item Code</div>
+                                                                                    <div style={{ fontSize: '0.85rem', color: '#1f2937', fontWeight: 600 }}>{batch.itemCode || 'N/A'}</div>
+                                                                                </div>
+                                                                                <div style={{ background: 'white', padding: '10px 12px', borderRadius: '8px', border: '1px solid #e5e7eb' }}>
+                                                                                    <div style={{ fontSize: '0.65rem', color: '#9ca3af', fontWeight: 500, marginBottom: '3px' }}>Item Detail</div>
+                                                                                    <div style={{ fontSize: '0.85rem', color: '#1f2937', fontWeight: 600 }}>{batch.itemDetail || 'N/A'}</div>
+                                                                                </div>
+                                                                                <div style={{ background: 'white', padding: '10px 12px', borderRadius: '8px', border: '1px solid #e5e7eb' }}>
+                                                                                    <div style={{ fontSize: '0.65rem', color: '#9ca3af', fontWeight: 500, marginBottom: '3px' }}>Manufacturing Date</div>
+                                                                                    <div style={{ fontSize: '0.85rem', color: '#1f2937', fontWeight: 600 }}>{batch.mfgDate || 'N/A'}</div>
+                                                                                </div>
+                                                                                <div style={{ background: 'white', padding: '10px 12px', borderRadius: '8px', border: '1px solid #e5e7eb' }}>
+                                                                                    <div style={{ fontSize: '0.65rem', color: '#9ca3af', fontWeight: 500, marginBottom: '3px' }}>Expiry Date</div>
+                                                                                    <div style={{ fontSize: '0.85rem', color: '#1f2937', fontWeight: 600 }}>{batch.expiryDate || 'N/A'}</div>
+                                                                                </div>
+                                                                                <div style={{ background: 'white', padding: '10px 12px', borderRadius: '8px', border: '1px solid #e5e7eb' }}>
+                                                                                    <div style={{ fontSize: '0.65rem', color: '#9ca3af', fontWeight: 500, marginBottom: '3px' }}>Batch Size</div>
+                                                                                    <div style={{ fontSize: '0.85rem', color: '#1f2937', fontWeight: 600 }}>{batch.batchSize} {batch.unit}</div>
+                                                                                </div>
+                                                                                <div style={{ background: 'white', padding: '10px 12px', borderRadius: '8px', border: '1px solid #e5e7eb' }}>
+                                                                                    <div style={{ fontSize: '0.65rem', color: '#9ca3af', fontWeight: 500, marginBottom: '3px' }}>Mfg License</div>
+                                                                                    <div style={{ fontSize: '0.85rem', color: '#1f2937', fontWeight: 600 }}>{batch.mfgLicNo || 'N/A'}</div>
+                                                                                </div>
+                                                                                <div style={{ background: 'white', padding: '10px 12px', borderRadius: '8px', border: '1px solid #e5e7eb' }}>
+                                                                                    <div style={{ fontSize: '0.65rem', color: '#9ca3af', fontWeight: 500, marginBottom: '3px' }}>Year</div>
+                                                                                    <div style={{ fontSize: '0.85rem', color: '#1f2937', fontWeight: 600 }}>{batch.year || 'N/A'}</div>
+                                                                                </div>
+                                                                                <div style={{ background: 'white', padding: '10px 12px', borderRadius: '8px', border: '1px solid #e5e7eb' }}>
+                                                                                    <div style={{ fontSize: '0.65rem', color: '#9ca3af', fontWeight: 500, marginBottom: '3px' }}>Make</div>
+                                                                                    <div style={{ fontSize: '0.85rem', color: '#1f2937', fontWeight: 600 }}>{batch.make || 'N/A'}</div>
+                                                                                </div>
+                                                                                <div style={{ background: 'white', padding: '10px 12px', borderRadius: '8px', border: '1px solid #e5e7eb' }}>
+                                                                                    <div style={{ fontSize: '0.65rem', color: '#9ca3af', fontWeight: 500, marginBottom: '3px' }}>Location ID</div>
+                                                                                    <div style={{ fontSize: '0.85rem', color: '#1f2937', fontWeight: 600 }}>{batch.locationId || 'N/A'}</div>
+                                                                                </div>
+                                                                                {batch.mrpValue && (
+                                                                                    <div style={{ background: 'white', padding: '10px 12px', borderRadius: '8px', border: '1px solid #e5e7eb' }}>
+                                                                                        <div style={{ fontSize: '0.65rem', color: '#9ca3af', fontWeight: 500, marginBottom: '3px' }}>MRP Value</div>
+                                                                                        <div style={{ fontSize: '0.85rem', color: '#1f2937', fontWeight: 600 }}>{batch.mrpValue}</div>
+                                                                                    </div>
+                                                                                )}
+                                                                                {batch.conversionRatio && (
+                                                                                    <div style={{ background: 'white', padding: '10px 12px', borderRadius: '8px', border: '1px solid #e5e7eb' }}>
+                                                                                        <div style={{ fontSize: '0.65rem', color: '#9ca3af', fontWeight: 500, marginBottom: '3px' }}>Conversion Ratio</div>
+                                                                                        <div style={{ fontSize: '0.85rem', color: '#1f2937', fontWeight: 600 }}>{batch.conversionRatio}</div>
+                                                                                    </div>
+                                                                                )}
+                                                                                {batch.batchCompletionDate && (
+                                                                                    <div style={{ background: 'white', padding: '10px 12px', borderRadius: '8px', border: '1px solid #e5e7eb' }}>
+                                                                                        <div style={{ fontSize: '0.65rem', color: '#9ca3af', fontWeight: 500, marginBottom: '3px' }}>Completion Date</div>
+                                                                                        <div style={{ fontSize: '0.85rem', color: '#1f2937', fontWeight: 600 }}>{batch.batchCompletionDate}</div>
+                                                                                    </div>
+                                                                                )}
+                                                                            </div>
+
+                                                                            {/* Company Info Footer */}
+                                                                            <div style={{
+                                                                                paddingTop: '10px',
+                                                                                borderTop: '1px solid #e5e7eb',
+                                                                                display: 'flex',
+                                                                                flexWrap: 'wrap',
+                                                                                gap: '12px',
+                                                                                fontSize: '0.75rem',
+                                                                                color: '#6b7280',
+                                                                            }}>
+                                                                                <div><strong>🏢 Company:</strong> {batch.companyName || 'N/A'}</div>
+                                                                                <div><strong>📍 Address:</strong> {batch.companyAddress || 'N/A'}</div>
+                                                                                <div><strong>📄 Source:</strong> {batch.fileName || 'N/A'}</div>
+                                                                            </div>
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+                                                            );
+                                                        })}
                                                     </div>
-                                                    <div style={{
-                                                        background: 'white',
-                                                        padding: '12px 16px',
-                                                        borderRadius: '8px',
-                                                        border: '1px solid #e5e7eb',
-                                                    }}>
-                                                        <div style={{ fontSize: '0.7rem', color: '#9ca3af', fontWeight: 500, marginBottom: '4px' }}>
-                                                            Item Name
-                                                        </div>
-                                                        <div style={{ fontSize: '0.9rem', color: '#1f2937', fontWeight: 600 }}>
-                                                            {batch.itemName || 'N/A'}
-                                                        </div>
-                                                    </div>
-                                                    <div style={{
-                                                        background: 'white',
-                                                        padding: '12px 16px',
-                                                        borderRadius: '8px',
-                                                        border: '1px solid #e5e7eb',
-                                                    }}>
-                                                        <div style={{ fontSize: '0.7rem', color: '#9ca3af', fontWeight: 500, marginBottom: '4px' }}>
-                                                            Item Detail
-                                                        </div>
-                                                        <div style={{ fontSize: '0.9rem', color: '#1f2937', fontWeight: 600 }}>
-                                                            {batch.itemDetail || 'N/A'}
-                                                        </div>
-                                                    </div>
-                                                    <div style={{
-                                                        background: 'white',
-                                                        padding: '12px 16px',
-                                                        borderRadius: '8px',
-                                                        border: '1px solid #e5e7eb',
-                                                    }}>
-                                                        <div style={{ fontSize: '0.7rem', color: '#9ca3af', fontWeight: 500, marginBottom: '4px' }}>
-                                                            Manufacturing License
-                                                        </div>
-                                                        <div style={{ fontSize: '0.9rem', color: '#1f2937', fontWeight: 600 }}>
-                                                            {batch.mfgLicNo || 'N/A'}
-                                                        </div>
-                                                    </div>
-                                                    <div style={{
-                                                        background: 'white',
-                                                        padding: '12px 16px',
-                                                        borderRadius: '8px',
-                                                        border: '1px solid #e5e7eb',
-                                                    }}>
-                                                        <div style={{ fontSize: '0.7rem', color: '#9ca3af', fontWeight: 500, marginBottom: '4px' }}>
-                                                            Department
-                                                        </div>
-                                                        <div style={{ fontSize: '0.9rem', color: '#1f2937', fontWeight: 600 }}>
-                                                            {batch.department || 'N/A'}
-                                                        </div>
-                                                    </div>
-                                                    <div style={{
-                                                        background: 'white',
-                                                        padding: '12px 16px',
-                                                        borderRadius: '8px',
-                                                        border: '1px solid #e5e7eb',
-                                                    }}>
-                                                        <div style={{ fontSize: '0.7rem', color: '#9ca3af', fontWeight: 500, marginBottom: '4px' }}>
-                                                            Pack
-                                                        </div>
-                                                        <div style={{ fontSize: '0.9rem', color: '#1f2937', fontWeight: 600 }}>
-                                                            {batch.pack || 'N/A'}
-                                                        </div>
-                                                    </div>
-                                                    <div style={{
-                                                        background: 'white',
-                                                        padding: '12px 16px',
-                                                        borderRadius: '8px',
-                                                        border: '1px solid #e5e7eb',
-                                                    }}>
-                                                        <div style={{ fontSize: '0.7rem', color: '#9ca3af', fontWeight: 500, marginBottom: '4px' }}>
-                                                            Year
-                                                        </div>
-                                                        <div style={{ fontSize: '0.9rem', color: '#1f2937', fontWeight: 600 }}>
-                                                            {batch.year || 'N/A'}
-                                                        </div>
-                                                    </div>
-                                                    <div style={{
-                                                        background: 'white',
-                                                        padding: '12px 16px',
-                                                        borderRadius: '8px',
-                                                        border: '1px solid #e5e7eb',
-                                                    }}>
-                                                        <div style={{ fontSize: '0.7rem', color: '#9ca3af', fontWeight: 500, marginBottom: '4px' }}>
-                                                            Make
-                                                        </div>
-                                                        <div style={{ fontSize: '0.9rem', color: '#1f2937', fontWeight: 600 }}>
-                                                            {batch.make || 'N/A'}
-                                                        </div>
-                                                    </div>
-                                                    <div style={{
-                                                        background: 'white',
-                                                        padding: '12px 16px',
-                                                        borderRadius: '8px',
-                                                        border: '1px solid #e5e7eb',
-                                                    }}>
-                                                        <div style={{ fontSize: '0.7rem', color: '#9ca3af', fontWeight: 500, marginBottom: '4px' }}>
-                                                            Location ID
-                                                        </div>
-                                                        <div style={{ fontSize: '0.9rem', color: '#1f2937', fontWeight: 600 }}>
-                                                            {batch.locationId || 'N/A'}
-                                                        </div>
-                                                    </div>
-                                                    <div style={{
-                                                        background: 'white',
-                                                        padding: '12px 16px',
-                                                        borderRadius: '8px',
-                                                        border: '1px solid #e5e7eb',
-                                                    }}>
-                                                        <div style={{ fontSize: '0.7rem', color: '#9ca3af', fontWeight: 500, marginBottom: '4px' }}>
-                                                            MRP Value
-                                                        </div>
-                                                        <div style={{ fontSize: '0.9rem', color: '#1f2937', fontWeight: 600 }}>
-                                                            {batch.mrpValue || 'N/A'}
-                                                        </div>
-                                                    </div>
-                                                    <div style={{
-                                                        background: 'white',
-                                                        padding: '12px 16px',
-                                                        borderRadius: '8px',
-                                                        border: '1px solid #e5e7eb',
-                                                    }}>
-                                                        <div style={{ fontSize: '0.7rem', color: '#9ca3af', fontWeight: 500, marginBottom: '4px' }}>
-                                                            Conversion Ratio
-                                                        </div>
-                                                        <div style={{ fontSize: '0.9rem', color: '#1f2937', fontWeight: 600 }}>
-                                                            {batch.conversionRatio || 'N/A'}
-                                                        </div>
-                                                    </div>
-                                                    {batch.batchCompletionDate && (
-                                                        <div style={{
-                                                            background: 'white',
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    )}
+                </div>
+            </div>
+        );
+    };
+
+    // RM Data Modal Component - Shows batches with/without RM requisition data
+    const RmDataModal = () => {
+        if (!showRmDataModal) return null;
+
+        return (
+            <div style={{
+                position: 'fixed',
+                top: '50%',
+                left: '50%',
+                transform: 'translate(-50%, -50%)',
+                zIndex: 1000,
+                width: '90%',
+                maxWidth: '900px',
+                maxHeight: '85vh',
+                overflowY: 'auto',
+                background: 'white',
+                borderRadius: '16px',
+                boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(0, 0, 0, 0.05)',
+                border: '2px solid #e5e7eb',
+            }}>
+                {/* Modal Header */}
+                <div style={{
+                    position: 'sticky',
+                    top: 0,
+                    background: rmModalType === 'matched'
+                        ? 'linear-gradient(135deg, #059669 0%, #10b981 100%)'
+                        : 'linear-gradient(135deg, #dc2626 0%, #ef4444 100%)',
+                    padding: '16px 24px',
+                    borderRadius: '14px 14px 0 0',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    zIndex: 10,
+                }}>
+                    <div>
+                        <h3 style={{ color: 'white', fontSize: '1.1rem', fontWeight: 700, margin: 0 }}>
+                            🧪 RM (Raw Materials) Requisition Data
+                        </h3>
+                        <p style={{ color: 'rgba(255,255,255,0.9)', fontSize: '0.85rem', marginTop: '4px' }}>
+                            {rmModalType === 'matched'
+                                ? `✓ ${globalRmDataMatched} batches with RM data`
+                                : `✗ ${globalRmDataUnmatched} batches without RM data`
+                            }
+                        </p>
+                    </div>
+                    <button
+                        onClick={closeRmDataModal}
+                        style={{
+                            background: 'rgba(255,255,255,0.2)',
+                            border: 'none',
+                            borderRadius: '8px',
+                            padding: '8px 12px',
+                            color: 'white',
+                            fontSize: '1rem',
+                            cursor: 'pointer',
+                            fontWeight: 600,
+                        }}
+                    >
+                        ✕ Close
+                    </button>
+                </div>
+
+                {/* Modal Body */}
+                <div style={{ padding: '20px 24px' }}>
+                    {isRmModalLoading && (
+                        <div style={{ textAlign: 'center', padding: '40px' }}>
+                            <svg className="animate-spin" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke={rmModalType === 'matched' ? '#10b981' : '#ef4444'} strokeWidth="2">
+                                <path d="M21 12a9 9 0 11-6.219-8.56" strokeLinecap="round" />
+                            </svg>
+                            <p style={{ marginTop: '12px', color: '#6b7280' }}>Loading RM requisition data...</p>
+                        </div>
+                    )}
+
+                    {rmModalError && (
+                        <div style={{
+                            background: '#fef2f2',
+                            border: '1px solid #fecaca',
+                            borderRadius: '12px',
+                            padding: '20px',
+                            textAlign: 'center',
+                        }}>
+                            <span style={{ fontSize: '2rem' }}>⚠️</span>
+                            <p style={{ color: '#dc2626', fontWeight: 600, marginTop: '8px' }}>{rmModalError}</p>
+                        </div>
+                    )}
+
+                    {rmModalData && rmModalData.length > 0 && (
+                        <div>
+                            {/* Summary */}
+                            <div style={{
+                                display: 'grid',
+                                gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
+                                gap: '12px',
+                                marginBottom: '20px',
+                            }}>
+                                <div style={{
+                                    background: rmModalType === 'matched'
+                                        ? 'linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%)'
+                                        : 'linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%)',
+                                    padding: '12px 16px',
+                                    borderRadius: '12px',
+                                    border: rmModalType === 'matched' ? '1px solid #a7f3d0' : '1px solid #fecaca',
+                                }}>
+                                    <p style={{
+                                        fontSize: '0.75rem',
+                                        color: rmModalType === 'matched' ? '#059669' : '#dc2626',
+                                        fontWeight: 600,
+                                        marginBottom: '4px'
+                                    }}>
+                                        {rmModalType === 'matched' ? 'Total RM Materials' : 'Batches Missing RM Data'}
+                                    </p>
+                                    <p style={{
+                                        fontSize: '1.5rem',
+                                        fontWeight: 700,
+                                        color: rmModalType === 'matched' ? '#047857' : '#b91c1c'
+                                    }}>
+                                        {rmModalData.length}
+                                    </p>
+                                </div>
+                                <div style={{
+                                    background: 'linear-gradient(135deg, #f3e8ff 0%, #e9d5ff 100%)',
+                                    padding: '12px 16px',
+                                    borderRadius: '12px',
+                                    border: '1px solid #c4b5fd',
+                                }}>
+                                    <p style={{ fontSize: '0.75rem', color: '#7c3aed', fontWeight: 600, marginBottom: '4px' }}>Unique Batches</p>
+                                    <p style={{ fontSize: '1.5rem', fontWeight: 700, color: '#6d28d9' }}>
+                                        {new Set(rmModalData.map((m: any) => m.batchNumber)).size}
+                                    </p>
+                                </div>
+                            </div>
+
+                            {/* Content - Different display for matched vs unmatched */}
+                            {rmModalType === 'matched' ? (
+                                /* Matched: Show table of RM materials */
+                                <div style={{
+                                    background: '#f9fafb',
+                                    borderRadius: '12px',
+                                    border: '1px solid #e5e7eb',
+                                    overflow: 'hidden',
+                                }}>
+                                    {/* Table Header */}
+                                    <div style={{
+                                        display: 'grid',
+                                        gridTemplateColumns: '100px 1fr 80px 90px 100px',
+                                        gap: '8px',
+                                        padding: '12px 16px',
+                                        background: '#f3f4f6',
+                                        fontWeight: 600,
+                                        fontSize: '0.75rem',
+                                        color: '#4b5563',
+                                        borderBottom: '1px solid #e5e7eb',
+                                    }}>
+                                        <div>Batch No</div>
+                                        <div>Material Name</div>
+                                        <div>Code</div>
+                                        <div>Qty</div>
+                                        <div>MFC No</div>
+                                    </div>
+                                    {/* Table Body */}
+                                    <div style={{ maxHeight: '400px', overflowY: 'auto' }}>
+                                        {rmModalData.slice(0, 100).map((item: any, idx: number) => (
+                                            <div
+                                                key={idx}
+                                                style={{
+                                                    display: 'grid',
+                                                    gridTemplateColumns: '100px 1fr 80px 90px 100px',
+                                                    gap: '8px',
+                                                    padding: '10px 16px',
+                                                    borderBottom: '1px solid #f3f4f6',
+                                                    fontSize: '0.8rem',
+                                                    background: idx % 2 === 0 ? 'white' : '#fafafa',
+                                                }}
+                                            >
+                                                <div style={{ fontFamily: 'monospace', fontWeight: 600, color: '#059669' }}>
+                                                    {item.batchNumber || 'N/A'}
+                                                </div>
+                                                <div style={{ color: '#374151', fontWeight: 500 }}>
+                                                    {item.materialName || 'N/A'}
+                                                </div>
+                                                <div style={{ fontFamily: 'monospace', fontSize: '0.7rem', color: '#6b7280' }}>
+                                                    {item.materialCode || 'N/A'}
+                                                </div>
+                                                <div style={{ color: '#7c3aed', fontWeight: 600 }}>
+                                                    {item.quantityRequired || 0} {item.unit || ''}
+                                                </div>
+                                                <div style={{ fontFamily: 'monospace', fontSize: '0.7rem', color: '#f97316' }}>
+                                                    {item.mfcNo || 'N/A'}
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                    {rmModalData.length > 100 && (
+                                        <div style={{
+                                            padding: '12px 16px',
+                                            textAlign: 'center',
+                                            background: '#f3f4f6',
+                                            color: '#6b7280',
+                                            fontSize: '0.8rem',
+                                        }}>
+                                            Showing first 100 of {rmModalData.length} materials
+                                        </div>
+                                    )}
+                                </div>
+                            ) : (
+                                /* Unmatched: Show file-like grouped structure by batch number */
+                                <div style={{
+                                    background: '#f9fafb',
+                                    borderRadius: '12px',
+                                    border: '1px solid #e5e7eb',
+                                    overflow: 'hidden',
+                                    maxHeight: '500px',
+                                    overflowY: 'auto',
+                                }}>
+                                    {(() => {
+                                        // Group items by batch number
+                                        const groupedByBatch = new Map<string, any[]>();
+                                        rmModalData.forEach((item: any) => {
+                                            const bn = item.batchNumber || 'Unknown';
+                                            if (!groupedByBatch.has(bn)) {
+                                                groupedByBatch.set(bn, []);
+                                            }
+                                            groupedByBatch.get(bn)!.push(item);
+                                        });
+
+                                        return Array.from(groupedByBatch.entries()).map(([batchNumber, items], groupIdx) => {
+                                            const isExpanded = expandedRmBatches.has(batchNumber);
+                                            return (
+                                                <div key={batchNumber} style={{
+                                                    borderBottom: groupIdx < groupedByBatch.size - 1 ? '1px solid #e5e7eb' : 'none',
+                                                }}>
+                                                    {/* Batch Header (Collapsible) */}
+                                                    <button
+                                                        onClick={() => toggleRmBatchExpand(batchNumber)}
+                                                        style={{
+                                                            width: '100%',
+                                                            display: 'flex',
+                                                            alignItems: 'center',
+                                                            gap: '12px',
                                                             padding: '12px 16px',
-                                                            borderRadius: '8px',
-                                                            border: '1px solid #e5e7eb',
+                                                            background: isExpanded ? '#fef2f2' : 'white',
+                                                            border: 'none',
+                                                            cursor: 'pointer',
+                                                            textAlign: 'left',
+                                                            transition: 'background 0.15s ease',
+                                                        }}
+                                                    >
+                                                        {/* Expand Icon */}
+                                                        <div style={{
+                                                            width: '22px',
+                                                            height: '22px',
+                                                            display: 'flex',
+                                                            alignItems: 'center',
+                                                            justifyContent: 'center',
+                                                            borderRadius: '5px',
+                                                            background: isExpanded ? '#dc2626' : '#e5e7eb',
+                                                            color: isExpanded ? 'white' : '#6b7280',
+                                                            transition: 'all 0.2s ease',
+                                                            transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)',
+                                                            fontSize: '0.7rem',
+                                                            fontWeight: 700,
+                                                            flexShrink: 0,
                                                         }}>
-                                                            <div style={{ fontSize: '0.7rem', color: '#9ca3af', fontWeight: 500, marginBottom: '4px' }}>
-                                                                Completion Date
+                                                            ▶
+                                                        </div>
+                                                        {/* Index Number */}
+                                                        <div style={{
+                                                            fontSize: '0.8rem',
+                                                            fontWeight: 600,
+                                                            color: '#9ca3af',
+                                                            minWidth: '28px',
+                                                        }}>
+                                                            #{groupIdx + 1}
+                                                        </div>
+                                                        {/* Batch Number */}
+                                                        <div style={{
+                                                            fontFamily: 'monospace',
+                                                            fontSize: '0.95rem',
+                                                            fontWeight: 700,
+                                                            color: '#dc2626',
+                                                        }}>
+                                                            📁 {batchNumber}
+                                                        </div>
+                                                        {/* Items Count */}
+                                                        <div style={{
+                                                            fontSize: '0.75rem',
+                                                            color: '#6b7280',
+                                                            background: '#f3f4f6',
+                                                            padding: '2px 8px',
+                                                            borderRadius: '10px',
+                                                        }}>
+                                                            {items.length} item{items.length !== 1 ? 's' : ''}
+                                                        </div>
+                                                        {/* First item preview */}
+                                                        {!isExpanded && items[0] && (
+                                                            <div style={{
+                                                                flex: 1,
+                                                                fontSize: '0.8rem',
+                                                                color: '#6b7280',
+                                                                overflow: 'hidden',
+                                                                textOverflow: 'ellipsis',
+                                                                whiteSpace: 'nowrap',
+                                                            }}>
+                                                                {items[0].itemName || 'N/A'}
                                                             </div>
-                                                            <div style={{ fontSize: '0.9rem', color: '#1f2937', fontWeight: 600 }}>
-                                                                {batch.batchCompletionDate}
-                                                            </div>
+                                                        )}
+                                                    </button>
+
+                                                    {/* Expanded Items */}
+                                                    {isExpanded && (
+                                                        <div style={{
+                                                            background: '#fafafa',
+                                                            padding: '8px 16px 12px 50px',
+                                                        }}>
+                                                            {items.map((item: any, itemIdx: number) => (
+                                                                <div
+                                                                    key={itemIdx}
+                                                                    style={{
+                                                                        display: 'grid',
+                                                                        gridTemplateColumns: '28px 100px 1fr 80px 80px',
+                                                                        gap: '10px',
+                                                                        padding: '10px 12px',
+                                                                        background: itemIdx % 2 === 0 ? 'white' : '#f9fafb',
+                                                                        borderRadius: '8px',
+                                                                        marginBottom: itemIdx < items.length - 1 ? '6px' : 0,
+                                                                        border: '1px solid #f3f4f6',
+                                                                        fontSize: '0.8rem',
+                                                                    }}
+                                                                >
+                                                                    {/* Item Index */}
+                                                                    <div style={{
+                                                                        fontSize: '0.7rem',
+                                                                        fontWeight: 600,
+                                                                        color: '#9ca3af',
+                                                                        minWidth: '20px',
+                                                                    }}>
+                                                                        {itemIdx + 1}.
+                                                                    </div>
+                                                                    <div style={{ fontFamily: 'monospace', fontSize: '0.75rem', color: '#6b7280' }}>
+                                                                        {item.itemCode || 'N/A'}
+                                                                    </div>
+                                                                    <div style={{ color: '#374151', fontWeight: 500 }}>
+                                                                        {item.itemName || 'N/A'}
+                                                                    </div>
+                                                                    <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>
+                                                                        {item.mfgDate || 'N/A'}
+                                                                    </div>
+                                                                    <div style={{ color: '#7c3aed', fontWeight: 600 }}>
+                                                                        {item.batchSize || 'N/A'}
+                                                                    </div>
+                                                                </div>
+                                                            ))}
                                                         </div>
                                                     )}
                                                 </div>
+                                            );
+                                        });
+                                    })()}
+                                </div>
+                            )}
+                        </div>
+                    )}
 
-                                                {/* Company Info Footer */}
-                                                <div style={{
-                                                    paddingTop: '12px',
-                                                    borderTop: '1px solid #e5e7eb',
-                                                    display: 'flex',
-                                                    flexWrap: 'wrap',
-                                                    gap: '16px',
-                                                    fontSize: '0.8rem',
-                                                    color: '#6b7280',
-                                                }}>
-                                                    <div>
-                                                        <strong>🏢 Company:</strong> {batch.companyName || 'N/A'}
-                                                    </div>
-                                                    <div>
-                                                        <strong>📍 Address:</strong> {batch.companyAddress || 'N/A'}
-                                                    </div>
-                                                    <div>
-                                                        <strong>📄 Source File:</strong> {batch.fileName || 'N/A'}
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        )}
-                                    </div>
-                                ))}
-                            </div>
+                    {rmModalData && rmModalData.length === 0 && !isRmModalLoading && !rmModalError && (
+                        <div style={{
+                            textAlign: 'center',
+                            padding: '40px',
+                            color: '#6b7280',
+                        }}>
+                            <span style={{ fontSize: '3rem' }}>{rmModalType === 'matched' ? '📭' : '🎉'}</span>
+                            <p style={{ marginTop: '12px', fontWeight: 500 }}>
+                                {rmModalType === 'matched'
+                                    ? 'No RM materials found'
+                                    : 'All batches have RM requisition data!'}
+                            </p>
                         </div>
                     )}
                 </div>
@@ -2386,7 +3094,7 @@ export default function FormulaDataPage() {
                                     zIndex: 1,
                                 }}>
                                     {/* Total Batches Card */}
-                                    <div style={{
+                                    <Link href="/batches" style={{
                                         flex: '1',
                                         minWidth: '160px',
                                         background: 'linear-gradient(135deg, rgba(124, 58, 237, 0.85) 0%, rgba(139, 92, 246, 0.9) 100%)',
@@ -2400,7 +3108,19 @@ export default function FormulaDataPage() {
                                         color: 'white',
                                         position: 'relative',
                                         overflow: 'hidden',
-                                    }}>
+                                        textDecoration: 'none',
+                                        cursor: 'pointer',
+                                        transition: 'transform 0.2s ease, box-shadow 0.2s ease',
+                                    }}
+                                        onMouseEnter={(e) => {
+                                            e.currentTarget.style.transform = 'translateY(-2px)';
+                                            e.currentTarget.style.boxShadow = '0 12px 40px rgba(139, 92, 246, 0.45), inset 0 1px 1px rgba(255,255,255,0.2)';
+                                        }}
+                                        onMouseLeave={(e) => {
+                                            e.currentTarget.style.transform = 'translateY(0)';
+                                            e.currentTarget.style.boxShadow = '0 8px 32px rgba(139, 92, 246, 0.35), inset 0 1px 1px rgba(255,255,255,0.2)';
+                                        }}
+                                    >
                                         <div style={{
                                             position: 'absolute',
                                             top: '-10px',
@@ -2417,9 +3137,9 @@ export default function FormulaDataPage() {
                                             Total Batches
                                         </div>
                                         <div style={{ fontSize: '10px', opacity: 0.7, marginTop: '2px' }}>
-                                            Batch Creation
+                                            Click to view all →
                                         </div>
-                                    </div>
+                                    </Link>
 
                                     {/* Equals Sign */}
                                     <div style={{
@@ -2599,7 +3319,7 @@ export default function FormulaDataPage() {
                                         btn.innerHTML = '⏳ Exporting...';
                                         btn.disabled = true;
 
-                                        // Fetch all matched batches
+                                        // Fetch all matched batches (now grouped by MFC)
                                         const response = await fetch('/api/batch/matched-batches');
                                         const data = await response.json();
 
@@ -2610,84 +3330,93 @@ export default function FormulaDataPage() {
                                             return;
                                         }
 
-                                        // Prepare data for Excel
-                                        const excelData = data.data.map((batch: any, index: number) => ({
-                                            'Sr. No': index + 1,
-                                            'Batch Number': batch.batchNumber,
-                                            'Item Code': batch.itemCode,
-                                            'Item Name': batch.itemName,
-                                            'Item Detail': batch.itemDetail,
-                                            'Manufacturing Date': batch.mfgDate,
-                                            'Expiry Date': batch.expiryDate,
-                                            'Batch Size': batch.batchSize,
-                                            'Unit': batch.unit,
-                                            'Type': batch.type,
-                                            'Department': batch.department,
-                                            'Pack': batch.pack,
-                                            'Year': batch.year,
-                                            'Make': batch.make,
-                                            'Location ID': batch.locationId,
-                                            'MRP Value': batch.mrpValue || 'N/A',
-                                            'Conversion Ratio': batch.conversionRatio,
-                                            'Batch Completion Date': batch.batchCompletionDate || 'N/A',
-                                            'Manufacturing License No': batch.mfgLicNo,
-                                            'Company Name': batch.companyName,
-                                            'Company Address': batch.companyAddress,
-                                            'Source File': batch.fileName,
-                                            'Uploaded At': new Date(batch.uploadedAt).toLocaleDateString(),
-                                            // Formula Master Information
-                                            'MFC Number': batch.masterCardNo,
-                                            'Product Code': batch.productCode,
-                                            'Product Name': batch.productName,
-                                            'Generic Name': batch.genericName,
-                                            'Manufacturer': batch.manufacturer,
-                                            'Revision No': batch.revisionNo,
-                                            'Shelf Life': batch.shelfLife,
-                                        }));
+                                        // Prepare data for Excel - Only unique MFC + Item Code combinations
+                                        const excelData: any[] = [];
+                                        let rowNumber = 1;
+                                        const merges: any[] = [];
+                                        let currentRow = 2; // Row 1 is header in Excel
+
+                                        // Iterate through each MFC group
+                                        data.data.forEach((mfcGroup: any) => {
+                                            const mfcStartRow = currentRow;
+                                            const productCodeCount = mfcGroup.productCodes.length;
+
+                                            // Iterate through each product code in this MFC (unique only)
+                                            mfcGroup.productCodes.forEach((productCodeGroup: any, pcIndex: number) => {
+                                                excelData.push({
+                                                    'Sr. No': rowNumber++,
+                                                    'MFC Number': mfcGroup.masterCardNo,
+                                                    'Item Code': productCodeGroup.productCode,
+                                                    'Product Name': mfcGroup.productName,
+                                                    'Generic Name': mfcGroup.genericName,
+                                                    'Manufacturer': mfcGroup.manufacturer,
+                                                    'Revision No': mfcGroup.revisionNo,
+                                                    'Shelf Life': mfcGroup.shelfLife,
+                                                    'Batch Count': productCodeGroup.batchCount,
+                                                });
+                                                currentRow++;
+                                            });
+
+                                            // Add merge for MFC Number column (column B, index 1) if multiple product codes
+                                            if (productCodeCount > 1) {
+                                                merges.push({
+                                                    s: { r: mfcStartRow - 1, c: 1 }, // Start: row, col (0-indexed)
+                                                    e: { r: mfcStartRow - 1 + productCodeCount - 1, c: 1 } // End
+                                                });
+                                                // Also merge Product Name (column D, index 3)
+                                                merges.push({
+                                                    s: { r: mfcStartRow - 1, c: 3 },
+                                                    e: { r: mfcStartRow - 1 + productCodeCount - 1, c: 3 }
+                                                });
+                                                // Also merge Generic Name (column E, index 4)
+                                                merges.push({
+                                                    s: { r: mfcStartRow - 1, c: 4 },
+                                                    e: { r: mfcStartRow - 1 + productCodeCount - 1, c: 4 }
+                                                });
+                                                // Also merge Manufacturer (column F, index 5)
+                                                merges.push({
+                                                    s: { r: mfcStartRow - 1, c: 5 },
+                                                    e: { r: mfcStartRow - 1 + productCodeCount - 1, c: 5 }
+                                                });
+                                                // Also merge Revision No (column G, index 6)
+                                                merges.push({
+                                                    s: { r: mfcStartRow - 1, c: 6 },
+                                                    e: { r: mfcStartRow - 1 + productCodeCount - 1, c: 6 }
+                                                });
+                                                // Also merge Shelf Life (column H, index 7)
+                                                merges.push({
+                                                    s: { r: mfcStartRow - 1, c: 7 },
+                                                    e: { r: mfcStartRow - 1 + productCodeCount - 1, c: 7 }
+                                                });
+                                            }
+                                        });
 
                                         // Create workbook and worksheet
                                         const ws = XLSX.utils.json_to_sheet(excelData);
                                         const wb = XLSX.utils.book_new();
-                                        XLSX.utils.book_append_sheet(wb, ws, 'Matched Batches');
+
+                                        // Apply cell merges
+                                        ws['!merges'] = merges;
+
+                                        XLSX.utils.book_append_sheet(wb, ws, 'MFC Product Codes');
 
                                         // Set column widths for better readability
                                         const colWidths = [
                                             { wch: 8 },  // Sr. No
-                                            { wch: 15 }, // Batch Number
-                                            { wch: 12 }, // Item Code
-                                            { wch: 35 }, // Item Name
-                                            { wch: 30 }, // Item Detail
-                                            { wch: 15 }, // Manufacturing Date
-                                            { wch: 15 }, // Expiry Date
-                                            { wch: 12 }, // Batch Size
-                                            { wch: 8 },  // Unit
-                                            { wch: 10 }, // Type
-                                            { wch: 15 }, // Department
-                                            { wch: 12 }, // Pack
-                                            { wch: 8 },  // Year
-                                            { wch: 10 }, // Make
-                                            { wch: 12 }, // Location ID
-                                            { wch: 12 }, // MRP Value
-                                            { wch: 15 }, // Conversion Ratio
-                                            { wch: 18 }, // Batch Completion Date
-                                            { wch: 20 }, // Manufacturing License No
-                                            { wch: 30 }, // Company Name
-                                            { wch: 40 }, // Company Address
-                                            { wch: 30 }, // Source File
-                                            { wch: 15 }, // Uploaded At
-                                            { wch: 18 }, // MFC Number
-                                            { wch: 15 }, // Product Code
-                                            { wch: 35 }, // Product Name
-                                            { wch: 30 }, // Generic Name
-                                            { wch: 25 }, // Manufacturer
+                                            { wch: 22 }, // MFC Number
+                                            { wch: 14 }, // Item Code
+                                            { wch: 40 }, // Product Name
+                                            { wch: 35 }, // Generic Name
+                                            { wch: 28 }, // Manufacturer
                                             { wch: 12 }, // Revision No
                                             { wch: 15 }, // Shelf Life
+                                            { wch: 12 }, // Batch Count
                                         ];
                                         ws['!cols'] = colWidths;
 
                                         // Generate filename with timestamp
                                         const timestamp = new Date().toISOString().split('T')[0];
-                                        const filename = `Matched_Batches_Export_${timestamp}.xlsx`;
+                                        const filename = `MFC_Product_Codes_${timestamp}.xlsx`;
 
                                         // Download the file
                                         XLSX.writeFile(wb, filename);
@@ -2697,13 +3426,13 @@ export default function FormulaDataPage() {
                                         btn.disabled = false;
 
                                         // Show success message
-                                        alert(`Successfully exported ${data.data.length} matched batches to Excel!`);
+                                        alert(`Successfully exported ${excelData.length} unique MFC-Product Code combinations from ${data.total} MFCs to Excel!`);
                                     } catch (error) {
                                         console.error('Export error:', error);
-                                        alert('Failed to export batches. Please try again.');
+                                        alert('Failed to export. Please try again.');
                                         const btn = document.activeElement as HTMLButtonElement;
                                         btn.disabled = false;
-                                        btn.innerHTML = '📊 Export All Matched Batches to Excel';
+                                        btn.innerHTML = '📊 Export MFC Product Codes to Excel';
                                     }
                                 }}
                                 style={{
@@ -2730,7 +3459,7 @@ export default function FormulaDataPage() {
                                     e.currentTarget.style.boxShadow = '0 4px 12px rgba(16, 185, 129, 0.3)';
                                 }}
                             >
-                                📊 Export All Matched Batches to Excel
+                                📊 Export MFC Product Codes to Excel
                             </button>
                         </div>
 
@@ -2980,6 +3709,10 @@ export default function FormulaDataPage() {
                                 badgeColor="#10b981"
                                 badgeText="Primary"
                                 description="MFCs with significant production volume"
+                                rmDataMatched={globalRmDataMatched}
+                                rmDataUnmatched={globalRmDataUnmatched}
+                                onRmMatchedClick={() => openRmDataModal('matched')}
+                                onRmUnmatchedClick={() => openRmDataModal('unmatched')}
                             />
                         </div>
 
@@ -3082,6 +3815,14 @@ export default function FormulaDataPage() {
                                                         }}>
                                                             📦 {formula.totalBatchCount} Batches
                                                         </span>
+                                                    )}
+                                                    {/* Per-formula RM Data Status Capsule */}
+                                                    {(formula.rmDataMatched !== undefined || formula.rmDataUnmatched !== undefined) && (
+                                                        <BatchStatusCapsule
+                                                            matched={formula.rmDataMatched || 0}
+                                                            unmatched={formula.rmDataUnmatched || 0}
+                                                            size="small"
+                                                        />
                                                     )}
                                                 </div>
 
@@ -4270,6 +5011,8 @@ export default function FormulaDataPage() {
                     sr: number;
                     mfc: string;
                     product: string;
+                    productName: string; // Product name from filling details or master formula
+                    packingSize: string; // Packing size from filling details
                     batches: number;
                     formulaId: string;
                     isFirstRow: boolean;
@@ -4282,9 +5025,29 @@ export default function FormulaDataPage() {
 
                 formulas.forEach((formula) => {
                     const mfcNo = formula.masterFormulaDetails?.masterCardNo?.trim() || 'N/A';
+
+                    // Build product info map from filling details
+                    const productInfoMap = new Map<string, { productName: string; packingSize: string }>();
+
+                    // Get product info from filling details
+                    formula.fillingDetails?.forEach(fd => {
+                        if (fd.productCode && fd.productCode !== 'N/A') {
+                            productInfoMap.set(fd.productCode, {
+                                productName: fd.productName || 'N/A',
+                                packingSize: fd.packingSize || 'N/A',
+                            });
+                        }
+                    });
+
                     const productCodes = formula.fillingDetails?.map(fd => fd.productCode) || [];
                     if (productCodes.length === 0) {
-                        productCodes.push(formula.masterFormulaDetails?.productCode || 'N/A');
+                        const mainCode = formula.masterFormulaDetails?.productCode || 'N/A';
+                        productCodes.push(mainCode);
+                        // Use master formula details for main product code
+                        productInfoMap.set(mainCode, {
+                            productName: formula.masterFormulaDetails?.productName || 'N/A',
+                            packingSize: 'N/A',
+                        });
                     }
                     const uniqueProductCodes = [...new Set(productCodes)];
                     const rowCount = uniqueProductCodes.length;
@@ -4292,10 +5055,16 @@ export default function FormulaDataPage() {
 
                     uniqueProductCodes.forEach((productCode, pcIndex) => {
                         srCounter++;
+                        const productInfo = productInfoMap.get(productCode) || {
+                            productName: formula.masterFormulaDetails?.productName || 'N/A',
+                            packingSize: 'N/A',
+                        };
                         tableData.push({
                             sr: srCounter,
                             mfc: mfcNo,
                             product: productCode,
+                            productName: productInfo.productName,
+                            packingSize: productInfo.packingSize,
                             batches: batchCounts[productCode] || 0,
                             formulaId: formula._id,
                             isFirstRow: pcIndex === 0,
@@ -4387,7 +5156,7 @@ export default function FormulaDataPage() {
                 const downloadExcel = () => {
                     // Build data array for Excel
                     const excelData: (string | number)[][] = [
-                        ['Sr Number', 'MFC Number', 'Product Code', 'Number of Batches']
+                        ['Sr Number', 'MFC Number', 'Product Code', 'Product Name', 'Packing Size', 'Number of Batches']
                     ];
 
                     // Track merge ranges for merged cells
@@ -4399,7 +5168,7 @@ export default function FormulaDataPage() {
 
                         if (mergeInfo.isFirstInGroup) {
                             // First row of group - add full data
-                            excelData.push([row.mfcIndex, row.mfc, row.product, row.batches]);
+                            excelData.push([row.mfcIndex, row.mfc, row.product, row.productName, row.packingSize, row.batches]);
 
                             // Add merge ranges if group has multiple rows
                             if (mergeInfo.groupSize > 1) {
@@ -4409,23 +5178,25 @@ export default function FormulaDataPage() {
                                     merges.push({ s: { r: excelRow, c: 0 }, e: { r: excelRow + mergeInfo.groupSize - 1, c: 0 } });
                                     merges.push({ s: { r: excelRow, c: 1 }, e: { r: excelRow + mergeInfo.groupSize - 1, c: 1 } });
                                 } else if (mfcTableSortColumn === 'product') {
-                                    // Merge Product Code column
+                                    // Merge Product Code, Product Name, and Packing Size columns
                                     merges.push({ s: { r: excelRow, c: 2 }, e: { r: excelRow + mergeInfo.groupSize - 1, c: 2 } });
+                                    merges.push({ s: { r: excelRow, c: 3 }, e: { r: excelRow + mergeInfo.groupSize - 1, c: 3 } });
+                                    merges.push({ s: { r: excelRow, c: 4 }, e: { r: excelRow + mergeInfo.groupSize - 1, c: 4 } });
                                 } else if (mfcTableSortColumn === 'batches') {
                                     // Merge Batches column
-                                    merges.push({ s: { r: excelRow, c: 3 }, e: { r: excelRow + mergeInfo.groupSize - 1, c: 3 } });
+                                    merges.push({ s: { r: excelRow, c: 5 }, e: { r: excelRow + mergeInfo.groupSize - 1, c: 5 } });
                                 }
                             }
                         } else {
                             // Subsequent rows in group - hide grouped column values
                             if (mfcTableSortColumn === 'sr' || mfcTableSortColumn === 'mfc') {
-                                excelData.push(['', '', row.product, row.batches]);
+                                excelData.push(['', '', row.product, row.productName, row.packingSize, row.batches]);
                             } else if (mfcTableSortColumn === 'product') {
-                                excelData.push([row.mfcIndex, row.mfc, '', row.batches]);
+                                excelData.push([row.mfcIndex, row.mfc, '', '', '', row.batches]);
                             } else if (mfcTableSortColumn === 'batches') {
-                                excelData.push([row.mfcIndex, row.mfc, row.product, '']);
+                                excelData.push([row.mfcIndex, row.mfc, row.product, row.productName, row.packingSize, '']);
                             } else {
-                                excelData.push([row.mfcIndex, row.mfc, row.product, row.batches]);
+                                excelData.push([row.mfcIndex, row.mfc, row.product, row.productName, row.packingSize, row.batches]);
                             }
                         }
                     });
@@ -4443,6 +5214,8 @@ export default function FormulaDataPage() {
                         { wch: 12 }, // Sr Number
                         { wch: 20 }, // MFC Number
                         { wch: 18 }, // Product Code
+                        { wch: 35 }, // Product Name
+                        { wch: 15 }, // Packing Size
                         { wch: 18 }, // Number of Batches
                     ];
 
@@ -4497,7 +5270,7 @@ export default function FormulaDataPage() {
                                 background: 'white',
                                 borderRadius: '8px',
                                 width: '100%',
-                                maxWidth: '1000px',
+                                maxWidth: '1300px',
                                 maxHeight: '95vh',
                                 display: 'flex',
                                 flexDirection: 'column',
@@ -4673,6 +5446,30 @@ export default function FormulaDataPage() {
                                                 Product Code <SortIndicator column="product" />
                                             </th>
                                             <th
+                                                style={{
+                                                    padding: '0.5rem 0.6rem',
+                                                    textAlign: 'left',
+                                                    fontWeight: '600',
+                                                    color: '#334155',
+                                                    borderBottom: '2px solid #e2e8f0',
+                                                    whiteSpace: 'nowrap',
+                                                }}
+                                            >
+                                                Product Name
+                                            </th>
+                                            <th
+                                                style={{
+                                                    padding: '0.5rem 0.6rem',
+                                                    textAlign: 'left',
+                                                    fontWeight: '600',
+                                                    color: '#334155',
+                                                    borderBottom: '2px solid #e2e8f0',
+                                                    whiteSpace: 'nowrap',
+                                                }}
+                                            >
+                                                Packing Size
+                                            </th>
+                                            <th
                                                 onClick={() => toggleSort('batches')}
                                                 style={{
                                                     padding: '0.5rem 0.6rem',
@@ -4762,6 +5559,37 @@ export default function FormulaDataPage() {
                                                             {row.product}
                                                         </td>
                                                     )}
+                                                    {/* Product Name - always shown */}
+                                                    <td
+                                                        style={{
+                                                            padding: '0.35rem 0.5rem',
+                                                            borderBottom: '1px solid #e2e8f0',
+                                                            color: '#374151',
+                                                            fontWeight: '400',
+                                                            verticalAlign: 'middle',
+                                                            background: groupBgColor,
+                                                            maxWidth: '200px',
+                                                            overflow: 'hidden',
+                                                            textOverflow: 'ellipsis',
+                                                            whiteSpace: 'nowrap',
+                                                        }}
+                                                        title={row.productName}
+                                                    >
+                                                        {row.productName}
+                                                    </td>
+                                                    {/* Packing Size - always shown */}
+                                                    <td
+                                                        style={{
+                                                            padding: '0.35rem 0.5rem',
+                                                            borderBottom: '1px solid #e2e8f0',
+                                                            color: '#64748b',
+                                                            fontWeight: '400',
+                                                            verticalAlign: 'middle',
+                                                            background: groupBgColor,
+                                                        }}
+                                                    >
+                                                        {row.packingSize}
+                                                    </td>
                                                     {/* Batches - merge when sorted by batches */}
                                                     {(!mergeBatches || mergeInfo.isFirstInGroup) && (
                                                         <td
@@ -4826,6 +5654,9 @@ export default function FormulaDataPage() {
                     </div>
                 );
             })()}
+
+            {/* RM Data Modal */}
+            <RmDataModal />
         </div>
     );
 }

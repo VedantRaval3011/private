@@ -170,31 +170,31 @@ export interface ProcessData {
 export interface FormulaMasterData {
   // Header Information
   companyInfo: CompanyInfo;
-  
+
   // Master Formula Details
   masterFormulaDetails: MasterFormulaDetails;
-  
+
   // Batch Information
   batchInfo: BatchInfo;
-  
+
   // Composition / Label Claim
   composition: CompositionItem[];
-  
+
   // Aseptic Mixing Materials
   materials: MaterialItem[];
-  
+
   // Excipients
   excipients?: ExcipientItem[];
-  
+
   // Packing Materials (MATTYPE=PM)
   packingMaterials?: PackingMaterialItem[];
-  
+
   // Aseptic Filling Details
   fillingDetails: FillingDetail[];
-  
+
   // Summary / Totals
   summary: SummaryTotals;
-  
+
   // Process-based data (MIXING, ASEPTIC FILLING, etc.)
   processes?: ProcessData[];
 }
@@ -213,6 +213,8 @@ export interface FormulaRecord extends FormulaMasterData {
   parsingStatus: 'success' | 'partial' | 'failed';
   parsingErrors?: string[];
   totalBatchCount?: number; // Total batches across all product codes in this MFC
+  rmDataMatched?: number;   // Number of batches with RM (Raw Material) requisition data
+  rmDataUnmatched?: number; // Number of batches without RM requisition data
 }
 
 // ============================================
@@ -232,7 +234,11 @@ export interface FormulasListResponse {
   page: number;
   limit: number;
   batchCounts?: Record<string, number>;
-  unmatchedBatches?: Array<{itemCode: string; count: number}>;
+  unmatchedBatches?: Array<{ itemCode: string; count: number }>;
+  // Global RM data matching for section headers (capsule indicator)
+  globalRmDataMatched?: number;
+  globalRmDataUnmatched?: number;
+  totalRmBatchesInSystem?: number;
 }
 
 export interface FormulaDetailResponse {
@@ -247,61 +253,61 @@ export interface FormulaDetailResponse {
 export interface BatchRecordItem {
   // Serial Number
   srNo: number;
-  
+
   // Batch UOM (LTR/KG)
   batchUom: string;
-  
+
   // Item/Product Code
   itemCode: string;
-  
+
   // Manufacturing License Number
   mfgLicNo: string;
-  
+
   // Department
   department: string;
-  
+
   // Pack Size (e.g., "10ML", "5 GM")
   pack: string;
-  
+
   // Item Detail (Generic/Brand name)
   itemDetail: string;
-  
+
   // Item Name
   itemName: string;
-  
+
   // Manufacturing Date
   mfgDate: string;
-  
+
   // Location ID (Building)
   locationId: string;
-  
+
   // MRP Value (null if empty)
   mrpValue: string | null;
-  
+
   // Type: "Export" if MRP is empty, "Import" if MRP has value
   type: 'Export' | 'Import';
-  
+
   // Batch Number
   batchNumber: string;
-  
+
   // Year (e.g., "202425")
   year: string;
-  
+
   // Make/Manufacturer (e.g., "INDIANA", "AJANTA")
   make: string;
-  
+
   // Expiry Date
   expiryDate: string;
-  
+
   // Batch Size
   batchSize: string;
-  
+
   // Unit (e.g., "BOT", "TUBE", "SYRIN")
   unit: string;
-  
+
   // Conversion Ratio (e.g., "20098 BOT")
   conversionRatio: string;
-  
+
   // Batch Completion Date
   batchCompletionDate?: string;
 }
@@ -310,10 +316,10 @@ export interface BatchRegistryData {
   // Company Information
   companyName: string;
   companyAddress: string;
-  
+
   // All batch records
   batches: BatchRecordItem[];
-  
+
   // Summary counts
   totalBatches: number;
   exportCount: number;

@@ -1,6 +1,6 @@
 /**
  * Matched Batches API - Get all batches matched to formulas
- * Returns complete batch information for all batches that have matching formulas
+ * Returns MFC-wise grouped batch information
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -8,7 +8,7 @@ import { connectToDatabase } from '@/lib/mongodb';
 import Formula from '@/models/Formula';
 import Batch from '@/models/Batch';
 
-interface MatchedBatchItem {
+interface BatchInfo {
     batchNumber: string;
     itemCode: string;
     itemName: string;
@@ -31,26 +31,37 @@ interface MatchedBatchItem {
     companyAddress: string;
     fileName: string;
     uploadedAt: Date;
-    // Formula information
-    masterCardNo: string;
+}
+
+interface ProductCodeGroup {
     productCode: string;
+    productName: string;
+    batches: BatchInfo[];
+    batchCount: number;
+}
+
+interface MFCGroup {
+    masterCardNo: string;
     productName: string;
     genericName: string;
     manufacturer: string;
     revisionNo: string;
     shelfLife: string;
+    productCodes: ProductCodeGroup[];
+    totalBatches: number;
 }
 
 interface MatchedBatchesResponse {
     success: boolean;
-    data: MatchedBatchItem[];
+    data: MFCGroup[];
     total: number;
+    totalBatches: number;
     message?: string;
 }
 
 /**
  * GET /api/batch/matched-batches
- * Get all batches that are matched to formulas
+ * Get all batches grouped by MFC and product codes
  */
 export async function GET(request: NextRequest): Promise<NextResponse<MatchedBatchesResponse>> {
     try {
@@ -104,6 +115,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<MatchedBat
                 success: true,
                 data: [],
                 total: 0,
+                totalBatches: 0,
                 message: 'No matched product codes found'
             });
         }
@@ -115,8 +127,9 @@ export async function GET(request: NextRequest): Promise<NextResponse<MatchedBat
             .select('batches companyName companyAddress fileName uploadedAt')
             .lean();
 
-        // Extract and flatten all matching batch items with formula information
-        const matchedBatches: MatchedBatchItem[] = [];
+        // Group batches by MFC
+        const mfcGroups = new Map<string, MFCGroup>();
+        let totalBatchCount = 0;
 
         batchDocuments.forEach(doc => {
             if (doc.batches && Array.isArray(doc.batches)) {
@@ -124,8 +137,38 @@ export async function GET(request: NextRequest): Promise<NextResponse<MatchedBat
                     // Only include batches that have matching formulas
                     const formula = productCodeToFormula.get(batch.itemCode);
                     if (formula) {
-                        matchedBatches.push({
-                            // Batch information
+                        const mfcNo = formula.masterFormulaDetails?.masterCardNo || 'N/A';
+
+                        // Initialize MFC group if not exists
+                        if (!mfcGroups.has(mfcNo)) {
+                            mfcGroups.set(mfcNo, {
+                                masterCardNo: mfcNo,
+                                productName: formula.masterFormulaDetails?.productName || 'N/A',
+                                genericName: formula.masterFormulaDetails?.genericName || 'N/A',
+                                manufacturer: formula.masterFormulaDetails?.manufacturer || 'N/A',
+                                revisionNo: formula.masterFormulaDetails?.revisionNo || 'N/A',
+                                shelfLife: formula.masterFormulaDetails?.shelfLife || 'N/A',
+                                productCodes: [],
+                                totalBatches: 0
+                            });
+                        }
+
+                        const mfcGroup = mfcGroups.get(mfcNo)!;
+
+                        // Find or create product code group within this MFC
+                        let productCodeGroup = mfcGroup.productCodes.find(pc => pc.productCode === batch.itemCode);
+                        if (!productCodeGroup) {
+                            productCodeGroup = {
+                                productCode: batch.itemCode,
+                                productName: batch.itemName || 'N/A',
+                                batches: [],
+                                batchCount: 0
+                            };
+                            mfcGroup.productCodes.push(productCodeGroup);
+                        }
+
+                        // Add batch to product code group
+                        productCodeGroup.batches.push({
                             batchNumber: batch.batchNumber || 'N/A',
                             itemCode: batch.itemCode || 'N/A',
                             itemName: batch.itemName || 'N/A',
@@ -148,31 +191,26 @@ export async function GET(request: NextRequest): Promise<NextResponse<MatchedBat
                             companyAddress: doc.companyAddress || 'N/A',
                             fileName: doc.fileName || 'N/A',
                             uploadedAt: doc.uploadedAt || new Date(),
-                            // Formula information
-                            masterCardNo: formula.masterFormulaDetails?.masterCardNo || 'N/A',
-                            productCode: formula.masterFormulaDetails?.productCode || 'N/A',
-                            productName: formula.masterFormulaDetails?.productName || 'N/A',
-                            genericName: formula.masterFormulaDetails?.genericName || 'N/A',
-                            manufacturer: formula.masterFormulaDetails?.manufacturer || 'N/A',
-                            revisionNo: formula.masterFormulaDetails?.revisionNo || 'N/A',
-                            shelfLife: formula.masterFormulaDetails?.shelfLife || 'N/A',
                         });
+
+                        productCodeGroup.batchCount++;
+                        mfcGroup.totalBatches++;
+                        totalBatchCount++;
                     }
                 });
             }
         });
 
-        // Sort by manufacturing date (newest first)
-        matchedBatches.sort((a, b) => {
-            const dateA = new Date(a.mfgDate);
-            const dateB = new Date(b.mfgDate);
-            return dateB.getTime() - dateA.getTime();
+        // Convert map to array and sort by MFC number
+        const mfcGroupsArray = Array.from(mfcGroups.values()).sort((a, b) => {
+            return a.masterCardNo.localeCompare(b.masterCardNo, undefined, { numeric: true, sensitivity: 'base' });
         });
 
         return NextResponse.json({
             success: true,
-            data: matchedBatches,
-            total: matchedBatches.length,
+            data: mfcGroupsArray,
+            total: mfcGroupsArray.length,
+            totalBatches: totalBatchCount,
         });
 
     } catch (error) {
@@ -182,6 +220,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<MatchedBat
                 success: false,
                 data: [],
                 total: 0,
+                totalBatches: 0,
                 message: error instanceof Error ? error.message : 'Unknown error occurred'
             },
             { status: 500 }
