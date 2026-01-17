@@ -131,13 +131,13 @@ export interface ProcessMaterialItem {
   potencyCorrection: 'Y' | 'N' | string;
   // Label Claim Per 1 ML columns  
   reqQty: string;        // Req. Qty
-  ovgPercent: string;    // Ovg %
-  qtyPerUnit: string;    // = Qty per Unit
+  ovgPercent?: string;    // Ovg %
+  qtyPerUnit?: string;    // = Qty per Unit
   // Standard Batch column
-  reqAsPerStdBatchSize: string;  // Req. As Per Std. Batch Size
+  reqAsPerStdBatchSize?: string;  // Req. As Per Std. Batch Size
   unit: string;          // Unit (GM, KG, ML, etc.)
-  materialType: string;  // RM, PM, etc.
-  subMaterialType: string; // ACTIVE, INACTIVE, PRIMARY, SECONDARY
+  materialType?: string;  // RM, PM, etc.
+  subMaterialType?: string; // ACTIVE, INACTIVE, PRIMARY, SECONDARY
 }
 
 // ============================================
@@ -148,6 +148,7 @@ export interface AsepticFillingProduct {
   productName: string;       // Product Name: FRINZY-PLUS EYE DROPS 10ML
   packingSize: string;       // Packing: 10 ML (renamed from packing to match parser)
   actualFillingQty: string;  // Actual Filling Qty: 9803 BOT
+  actualFillingQuantity?: string; // Alternative field name
   actualFillingMl: string;   // Actual Filling: 10.2 ML
   numberOfSyringes?: string; // ACTFILLING2
   syringeType?: string;      // UNIT (SYRIN, etc.)
@@ -215,6 +216,10 @@ export interface FormulaRecord extends FormulaMasterData {
   totalBatchCount?: number; // Total batches across all product codes in this MFC
   rmDataMatched?: number;   // Number of batches with RM (Raw Material) requisition data
   rmDataUnmatched?: number; // Number of batches without RM requisition data
+  ppmDataMatched?: number;  // Number of batches with PPM (Primary Packing Material) requisition data
+  ppmDataUnmatched?: number; // Number of batches without PPM requisition data
+  pmDataMatched?: number;   // Number of batches with PM (Packing Material) requisition data
+  pmDataUnmatched?: number; // Number of batches without PM requisition data
 }
 
 // ============================================

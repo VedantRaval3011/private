@@ -1,0 +1,10 @@
+﻿src/app/formula-data/page.tsx(4755,77): error TS2339: Property 'highlight' does not exist on type '{ id: string; label: string; }'.
+src/app/formula-data/page.tsx(5071,77): error TS2339: Property 'highlight' does not exist on type '{ id: string; label: string; }'.
+src/app/formula-data/page.tsx(6830,84): error TS2551: Property 'ppmDataMatched' does not exist on type 'FormulaRecord'. Did you mean 'rmDataMatched'?
+src/app/formula-data/page.tsx(6831,86): error TS2551: Property 'ppmDataUnmatched' does not exist on type 'FormulaRecord'. Did you mean 'rmDataUnmatched'?
+src/app/formula-data/page.tsx(6832,83): error TS2551: Property 'pmDataMatched' does not exist on type 'FormulaRecord'. Did you mean 'rmDataMatched'?
+src/app/formula-data/page.tsx(6833,85): error TS2551: Property 'pmDataUnmatched' does not exist on type 'FormulaRecord'. Did you mean 'rmDataUnmatched'?
+src/app/formula-data/page.tsx(6838,66): error TS2741: Property 'type' is missing in type '{ matched: number; unmatched: number; onGreenClick: () => Promise<void>; onRedClick: () => Promise<void>; size: "small"; }' but required in type 'BatchStatusCapsuleProps'.
+src/lib/xmlParser.ts(745,12): error TS2561: Object literal may only specify known properties, but 'actualFillingQuantity' does not exist in type 'AsepticFillingProduct'. Did you mean to write 'actualFillingQty'?
+src/lib/xmlParser.ts(774,34): error TS2345: Argument of type '{ srNo: number; materialCode: string; materialName: string; potencyCorrection: string; reqQty: string; unit: string; }' is not assignable to parameter of type 'ProcessMaterialItem'.
+  Type '{ srNo: number; materialCode: string; materialName: string; potencyCorrection: string; reqQty: string; unit: string; }' is missing the following properties from type 'ProcessMaterialItem': ovgPercent, qtyPerUnit, reqAsPerStdBatchSize, materialType, subMaterialType

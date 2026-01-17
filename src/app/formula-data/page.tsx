@@ -154,6 +154,19 @@ interface FormulaRecord {
     totalBatchCount?: number;  // Total batches across all product codes in this MFC
     rmDataMatched?: number;    // Number of batches with RM (Raw Material) requisition data
     rmDataUnmatched?: number;  // Number of batches without RM requisition data
+    ppmDataMatched?: number;
+    ppmDataUnmatched?: number;
+    pmDataMatched?: number;
+    pmDataUnmatched?: number;
+    materialQualified?: number;    // Number of batches with all materials qualified
+    materialUnqualified?: number;  // Number of batches with missing materials
+    formulaMaterialCount?: number; // Total unique material codes in formula
+}
+
+interface ColumnDef {
+    id: string;
+    label: string;
+    highlight?: boolean;
 }
 
 interface FormulaListResponse {
@@ -164,10 +177,19 @@ interface FormulaListResponse {
     limit: number;
     batchCounts?: Record<string, number>;
     unmatchedBatches?: Array<{ itemCode: string; count: number }>;
-    // Global RM data matching for section headers (capsule indicator)
     globalRmDataMatched?: number;
     globalRmDataUnmatched?: number;
     totalRmBatchesInSystem?: number;
+    globalPpmDataMatched?: number;
+    globalPpmDataUnmatched?: number;
+    globalPmDataMatched?: number;
+    globalPmDataUnmatched?: number;
+    rmBatchNumbersList?: string[];
+    ppmBatchNumbersList?: string[];
+    pmBatchNumbersList?: string[];
+    materialQualifiedBatchNumbersList?: string[];
+    globalMaterialQualified?: number;
+    globalMaterialUnqualified?: number;
 }
 
 // ============================================
@@ -595,12 +617,13 @@ const getManufacturerColor = (manufacturer: string): { primary: string; light: s
 interface BatchStatusCapsuleProps {
     matched: number;
     unmatched: number;
-    onGreenClick?: () => void;
-    onRedClick?: () => void;
+    onGreenClick?: () => void | Promise<void>;
+    onRedClick?: () => void | Promise<void>;
     size?: 'small' | 'medium' | 'large';
+    type: 'RM' | 'PPM' | 'PM' | 'MAT';
 }
 
-function BatchStatusCapsule({ matched, unmatched, onGreenClick, onRedClick, size = 'medium' }: BatchStatusCapsuleProps) {
+function BatchStatusCapsule({ matched, unmatched, onGreenClick, onRedClick, size = 'medium', type }: BatchStatusCapsuleProps) {
     const total = matched + unmatched;
     if (total === 0) return null;
 
@@ -622,20 +645,20 @@ function BatchStatusCapsule({ matched, unmatched, onGreenClick, onRedClick, size
                 alignItems: 'center',
                 gap: '4px',
             }}
-            title={`RM (Raw Materials) Requisition Data: ${matched} found, ${unmatched} missing`}
+            title={`${type} Requisition Data: ${matched} found, ${unmatched} missing`}
         >
             {/* RM Label */}
             <span style={{
                 fontSize: size === 'small' ? '9px' : '10px',
                 fontWeight: 700,
-                color: '#6b7280',
-                background: '#f3f4f6',
+                color: type === 'RM' ? '#6b7280' : type === 'PPM' ? '#3b82f6' : type === 'PM' ? '#7c3aed' : '#0891b2',
+                background: type === 'RM' ? '#f3f4f6' : type === 'PPM' ? '#eff6ff' : type === 'PM' ? '#f5f3ff' : '#ecfeff',
                 padding: size === 'small' ? '2px 5px' : '3px 6px',
                 borderRadius: '4px',
                 textTransform: 'uppercase',
                 letterSpacing: '0.5px',
             }}>
-                RM
+                {type}
             </span>
             {/* Capsule */}
             <div
@@ -652,61 +675,67 @@ function BatchStatusCapsule({ matched, unmatched, onGreenClick, onRedClick, size
             >
                 {/* Green Section - RM Data Found */}
                 {matched > 0 && (
-                    <button
-                        onClick={(e) => { e.stopPropagation(); onGreenClick?.(); }}
-                        style={{
-                            flex: greenPercent,
-                            minWidth: matched > 0 ? '40px' : '0',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            gap: '3px',
-                            padding: config.padding,
-                            background: 'linear-gradient(135deg, #059669 0%, #10b981 100%)',
-                            border: 'none',
-                            cursor: onGreenClick ? 'pointer' : 'default',
-                            color: 'white',
-                            fontSize: config.fontSize,
-                            fontWeight: 700,
-                            transition: 'all 0.2s ease',
-                            whiteSpace: 'nowrap',
-                        }}
-                        onMouseEnter={(e) => { if (onGreenClick) e.currentTarget.style.filter = 'brightness(1.1)'; }}
-                        onMouseLeave={(e) => { e.currentTarget.style.filter = 'brightness(1)'; }}
-                        title={`${matched} batches with RM requisition data - Click to view`}
-                    >
-                        <span style={{ fontSize: '0.85em' }}>✓</span>
-                        {matched}
-                    </button>
+                        <button
+                            onClick={(e) => { e.stopPropagation(); onGreenClick?.(); }}
+                            style={{
+                                flex: greenPercent,
+                                minWidth: matched > 0 ? '40px' : '0',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                gap: '3px',
+                                padding: config.padding,
+                                background: type === 'RM' 
+                                    ? 'linear-gradient(135deg, #059669 0%, #10b981 100%)' 
+                                    : type === 'PPM'
+                                    ? 'linear-gradient(135deg, #2563eb 0%, #3b82f6 100%)'
+                                    : type === 'PM'
+                                    ? 'linear-gradient(135deg, #6d28d9 0%, #7c3aed 100%)'
+                                    : 'linear-gradient(135deg, #0891b2 0%, #06b6d4 100%)',
+                                border: 'none',
+                                cursor: onGreenClick ? 'pointer' : 'default',
+                                color: 'white',
+                                fontSize: config.fontSize,
+                                fontWeight: 700,
+                                transition: 'all 0.2s ease',
+                                whiteSpace: 'nowrap',
+                            }}
+                            onMouseEnter={(e) => { if (onGreenClick) e.currentTarget.style.filter = 'brightness(1.1)'; }}
+                            onMouseLeave={(e) => { e.currentTarget.style.filter = 'brightness(1)'; }}
+                            title={`${matched} batches with ${type} requisition data - Click to view`}
+                        >
+                            <span style={{ fontSize: '0.85em' }}>✓</span>
+                            {matched}
+                        </button>
                 )}
                 {/* Red Section - RM Data Missing */}
                 {unmatched > 0 && (
-                    <button
-                        onClick={(e) => { e.stopPropagation(); onRedClick?.(); }}
-                        style={{
-                            flex: redPercent,
-                            minWidth: unmatched > 0 ? '40px' : '0',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            gap: '3px',
-                            padding: config.padding,
-                            background: 'linear-gradient(135deg, #dc2626 0%, #ef4444 100%)',
-                            border: 'none',
-                            cursor: onRedClick ? 'pointer' : 'default',
-                            color: 'white',
-                            fontSize: config.fontSize,
-                            fontWeight: 700,
-                            transition: 'all 0.2s ease',
-                            whiteSpace: 'nowrap',
-                        }}
-                        onMouseEnter={(e) => { if (onRedClick) e.currentTarget.style.filter = 'brightness(1.1)'; }}
-                        onMouseLeave={(e) => { e.currentTarget.style.filter = 'brightness(1)'; }}
-                        title={`${unmatched} batches without RM requisition data - Click to view`}
-                    >
-                        <span style={{ fontSize: '0.85em' }}>✗</span>
-                        {unmatched}
-                    </button>
+                        <button
+                            onClick={(e) => { e.stopPropagation(); onRedClick?.(); }}
+                            style={{
+                                flex: redPercent,
+                                minWidth: unmatched > 0 ? '40px' : '0',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                gap: '3px',
+                                padding: config.padding,
+                                background: 'linear-gradient(135deg, #dc2626 0%, #ef4444 100%)',
+                                border: 'none',
+                                cursor: onRedClick ? 'pointer' : 'default',
+                                color: 'white',
+                                fontSize: config.fontSize,
+                                fontWeight: 700,
+                                transition: 'all 0.2s ease',
+                                whiteSpace: 'nowrap',
+                            }}
+                            onMouseEnter={(e) => { if (onRedClick) e.currentTarget.style.filter = 'brightness(1.1)'; }}
+                            onMouseLeave={(e) => { e.currentTarget.style.filter = 'brightness(1)'; }}
+                            title={`${unmatched} batches without ${type} requisition data - Click to view`}
+                        >
+                            <span style={{ fontSize: '0.85em' }}>✗</span>
+                            {unmatched}
+                        </button>
                 )}
             </div>
         </div>
@@ -724,6 +753,22 @@ export default function FormulaDataPage() {
     // Global RM (Raw Material) data matching for section header capsule
     const [globalRmDataMatched, setGlobalRmDataMatched] = useState<number>(0);
     const [globalRmDataUnmatched, setGlobalRmDataUnmatched] = useState<number>(0);
+    // Global PPM and PM data matching for section header capsules
+    const [globalPpmDataMatched, setGlobalPpmDataMatched] = useState<number>(0);
+    const [globalPpmDataUnmatched, setGlobalPpmDataUnmatched] = useState<number>(0);
+    const [globalPmDataMatched, setGlobalPmDataMatched] = useState<number>(0);
+    const [globalPmDataUnmatched, setGlobalPmDataUnmatched] = useState<number>(0);
+    // Set of batch numbers that have RM requisition data (for per-section RM calculation)
+    const [rmBatchNumbers, setRmBatchNumbers] = useState<Set<string>>(new Set());
+    // Set of batch numbers that have PPM requisition data
+    const [ppmBatchNumbers, setPpmBatchNumbers] = useState<Set<string>>(new Set());
+    // Set of batch numbers that have PM requisition data
+    const [pmBatchNumbers, setPmBatchNumbers] = useState<Set<string>>(new Set());
+    // Set of batch numbers that are material-qualified (all formula materials found in requisition)
+    const [materialQualifiedBatchNumbers, setMaterialQualifiedBatchNumbers] = useState<Set<string>>(new Set());
+    // Global Material Qualification data for section header capsule
+    const [globalMaterialQualified, setGlobalMaterialQualified] = useState<number>(0);
+    const [globalMaterialUnqualified, setGlobalMaterialUnqualified] = useState<number>(0);
 
     // RM Data Modal State (for viewing RM requisition details)
     const [showRmDataModal, setShowRmDataModal] = useState(false);
@@ -732,6 +777,73 @@ export default function FormulaDataPage() {
     const [isRmModalLoading, setIsRmModalLoading] = useState(false);
     const [rmModalError, setRmModalError] = useState<string | null>(null);
     const [expandedRmBatches, setExpandedRmBatches] = useState<Set<string>>(new Set());
+    // RM Modal Sorting State
+    const [rmSortColumn, setRmSortColumn] = useState<string>('batchNumber');
+    const [rmSortDirection, setRmSortDirection] = useState<'asc' | 'desc'>('asc');
+    // RM Modal View Mode State (table or file)
+    const [rmViewMode, setRmViewMode] = useState<'table' | 'file'>('table');
+
+    // PPM Data Modal State (for viewing PPM requisition details)
+    const [showPpmDataModal, setShowPpmDataModal] = useState(false);
+    const [ppmModalType, setPpmModalType] = useState<'matched' | 'unmatched'>('matched');
+    const [ppmModalData, setPpmModalData] = useState<any[]>([]);
+    const [isPpmModalLoading, setIsPpmModalLoading] = useState(false);
+    const [ppmModalError, setPpmModalError] = useState<string | null>(null);
+    const [ppmSortColumn, setPpmSortColumn] = useState<string>('batchNumber');
+    const [ppmSortDirection, setPpmSortDirection] = useState<'asc' | 'desc'>('asc');
+    const [ppmViewMode, setPpmViewMode] = useState<'table' | 'file'>('table');
+
+    // PM Data Modal State (for viewing PM requisition details)
+    const [showPmDataModal, setShowPmDataModal] = useState(false);
+    const [pmModalType, setPmModalType] = useState<'matched' | 'unmatched'>('matched');
+    const [pmModalData, setPmModalData] = useState<any[]>([]);
+    const [isPmModalLoading, setIsPmModalLoading] = useState(false);
+    const [pmModalError, setPmModalError] = useState<string | null>(null);
+    const [pmSortColumn, setPmSortColumn] = useState<string>('batchNumber');
+    const [pmSortDirection, setPmSortDirection] = useState<'asc' | 'desc'>('asc');
+    const [pmViewMode, setPmViewMode] = useState<'table' | 'file'>('table');
+
+    // Material Qualification Modal State (for viewing material qualification details)
+    const [showMatDataModal, setShowMatDataModal] = useState(false);
+    const [matModalType, setMatModalType] = useState<'qualified' | 'unqualified'>('qualified');
+    const [matModalData, setMatModalData] = useState<any[]>([]);
+    const [isMatModalLoading, setIsMatModalLoading] = useState(false);
+    const [matModalError, setMatModalError] = useState<string | null>(null);
+    const [matSortColumn, setMatSortColumn] = useState<string>('arNo');
+    const [matSortDirection, setMatSortDirection] = useState<'asc' | 'desc'>('asc');
+    const [matViewMode, setMatViewMode] = useState<'table' | 'file'>('file');
+    const [expandedMatArNumbers, setExpandedMatArNumbers] = useState<Set<string>>(new Set());
+
+    // Per-Formula RM Modal State (for viewing RM data specific to one formula/MFC)
+    const [perFormulaRmModalOpen, setPerFormulaRmModalOpen] = useState(false);
+    const [perFormulaRmMfc, setPerFormulaRmMfc] = useState<string | null>(null);
+    const [perFormulaRmType, setPerFormulaRmType] = useState<'matched' | 'unmatched'>('matched');
+    const [perFormulaRmData, setPerFormulaRmData] = useState<any[]>([]);
+    const [perFormulaRmLoading, setPerFormulaRmLoading] = useState(false);
+    const [perFormulaRmError, setPerFormulaRmError] = useState<string | null>(null);
+    const [perFormulaRmFormulaName, setPerFormulaRmFormulaName] = useState<string>('');
+
+    // Per-Formula PPM Modal State (for viewing PPM data specific to one formula/MFC)
+    const [perFormulaPpmModalOpen, setPerFormulaPpmModalOpen] = useState(false);
+    const [perFormulaPpmMfc, setPerFormulaPpmMfc] = useState<string | null>(null);
+    const [perFormulaPpmType, setPerFormulaPpmType] = useState<'matched' | 'unmatched'>('matched');
+    const [perFormulaPpmData, setPerFormulaPpmData] = useState<any[]>([]);
+    const [perFormulaPpmLoading, setPerFormulaPpmLoading] = useState(false);
+    const [perFormulaPpmError, setPerFormulaPpmError] = useState<string | null>(null);
+    const [perFormulaPpmFormulaName, setPerFormulaPpmFormulaName] = useState<string>('');
+
+    // Per-Formula PM Modal State (for viewing PM data specific to one formula/MFC)
+    const [perFormulaPmModalOpen, setPerFormulaPmModalOpen] = useState(false);
+    const [perFormulaPmMfc, setPerFormulaPmMfc] = useState<string | null>(null);
+    const [perFormulaPmType, setPerFormulaPmType] = useState<'matched' | 'unmatched'>('matched');
+    const [perFormulaPmData, setPerFormulaPmData] = useState<any[]>([]);
+    const [perFormulaPmLoading, setPerFormulaPmLoading] = useState(false);
+    const [perFormulaPmError, setPerFormulaPmError] = useState<string | null>(null);
+    const [perFormulaPmFormulaName, setPerFormulaPmFormulaName] = useState<string>('');
+
+
+    const [expandedPpmBatches, setExpandedPpmBatches] = useState<Set<string>>(new Set());
+    const [expandedPmBatches, setExpandedPmBatches] = useState<Set<string>>(new Set());
 
     // Section collapse states
     const [orphanedBatchesOpen, setOrphanedBatchesOpen] = useState(true);
@@ -748,7 +860,80 @@ export default function FormulaDataPage() {
     const [showMfcSummaryTable, setShowMfcSummaryTable] = useState(false);
     const [mfcTableSortColumn, setMfcTableSortColumn] = useState<'sr' | 'mfc' | 'product' | 'batches'>('sr');
     const [mfcTableSortDirection, setMfcTableSortDirection] = useState<'asc' | 'desc'>('asc');
+
+    // Batch Section State (for viewing all batches at bottom of page)
+    const [showBatchSection, setShowBatchSection] = useState(false);
+    const [batchViewMode, setBatchViewMode] = useState<'unique' | 'all'>('unique');
+    // Type for batch items used in the batch section display
+    interface BatchItem {
+        batchNumber?: string;
+        itemCode?: string;
+        itemName?: string;
+        mfgDate?: string;
+        batchSize?: string;
+        batchUom?: string;
+        pack?: string;
+        sourceFileName?: string;
+        expiryDate?: string;
+        mrpValue?: string | null;
+        type?: 'Export' | 'Import';
+        department?: string;
+        locationId?: string;
+        make?: string;
+    }
+    const [allBatches, setAllBatches] = useState<BatchItem[]>([]);
+    const [isBatchesLoading, setIsBatchesLoading] = useState(false);
+    const [batchSearchTerm, setBatchSearchTerm] = useState('');
+    const [expandedBatchGroups, setExpandedBatchGroups] = useState<Set<string>>(new Set());
+    const batchSectionRef = useRef<HTMLDivElement>(null);
     const [hideZeroBatches, setHideZeroBatches] = useState(false);
+    const [batchSortColumn, setBatchSortColumn] = useState<keyof BatchItem>('batchNumber');
+    const [batchSortDirection, setBatchSortDirection] = useState<'asc' | 'desc'>('asc');
+
+    // Helper to calculate date difference (shelf life)
+    const calculateShelfLife = (mfg: string | undefined, exp: string | undefined) => {
+        if (!mfg || !exp || mfg === 'N/A' || exp === 'N/A') return 'N/A';
+        try {
+            // Check if dates are in 'DD-MMM-YY' or similar format that JS Date can't parse directly
+            // common format in pharma: 13-APR-25
+            const parsePharmaDate = (dateStr: string) => {
+                const parts = dateStr.split('-');
+                if (parts.length === 3) {
+                    const months = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+                    const monthIdx = months.indexOf(parts[1].toUpperCase());
+                    if (monthIdx !== -1) {
+                        const year = parseInt(parts[2]);
+                        const fullYear = year < 50 ? 2000 + year : 1900 + year;
+                        return new Date(fullYear, monthIdx, parseInt(parts[0]));
+                    }
+                }
+                return new Date(dateStr);
+            };
+
+            const mfgDate = parsePharmaDate(mfg);
+            const expDate = parsePharmaDate(exp);
+            
+            if (isNaN(mfgDate.getTime()) || isNaN(expDate.getTime())) return 'N/A';
+            
+            const diffTime = expDate.getTime() - mfgDate.getTime();
+            if (diffTime < 0) return 'Expired';
+            
+            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+            const months = Math.floor(diffDays / 30.44);
+            return `${months} months`;
+        } catch (e) {
+            return 'N/A';
+        }
+    };
+
+    const toggleBatchSort = (column: any) => {
+        if (batchSortColumn === column) {
+            setBatchSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
+        } else {
+            setBatchSortColumn(column);
+            setBatchSortDirection('asc');
+        }
+    };
 
     // Batch Detail Modal State
     interface BatchDetailInfo {
@@ -873,6 +1058,72 @@ export default function FormulaDataPage() {
     };
     const [sectionBatchListTitle, setSectionBatchListTitle] = useState<string>('');
 
+    // Track which MFC has batch data visible (show batch data on top of MFC data)
+    const [mfcBatchDataVisible, setMfcBatchDataVisible] = useState<Set<string>>(new Set());
+    // Store batch data for each MFC
+    const [mfcBatchData, setMfcBatchData] = useState<Record<string, BatchListItem[]>>({});
+    const [mfcBatchDataLoading, setMfcBatchDataLoading] = useState<Set<string>>(new Set());
+
+    const toggleMfcBatchData = async (formulaId: string, formula: FormulaRecord) => {
+        const isCurrentlyVisible = mfcBatchDataVisible.has(formulaId);
+        
+        if (isCurrentlyVisible) {
+            // Hide the batch data
+            setMfcBatchDataVisible(prev => {
+                const next = new Set(prev);
+                next.delete(formulaId);
+                return next;
+            });
+        } else {
+            // Show the batch data - fetch if not already loaded
+            setMfcBatchDataVisible(prev => new Set(prev).add(formulaId));
+            
+            if (!mfcBatchData[formulaId]) {
+                // Fetch batch data for this formula
+                setMfcBatchDataLoading(prev => new Set(prev).add(formulaId));
+                
+                try {
+                    const productCodes = getFormulaAllProductCodes(formula);
+                    const validCodes = productCodes.filter(code => code && code !== 'N/A');
+                    
+                    if (validCodes.length > 0) {
+                        const response = await fetch('/api/batch/by-codes', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({ productCodes: validCodes }),
+                        });
+                        const data = await response.json();
+                        
+                        if (data.success && data.data && data.data.length > 0) {
+                            setMfcBatchData(prev => ({
+                                ...prev,
+                                [formulaId]: data.data
+                            }));
+                        }
+                    }
+                } catch (error) {
+                    console.error('Error fetching batch data for MFC:', error);
+                } finally {
+                    setMfcBatchDataLoading(prev => {
+                        const next = new Set(prev);
+                        next.delete(formulaId);
+                        return next;
+                    });
+                }
+            }
+        }
+    };
+
+    const isMfcBatchDataVisible = (formulaId: string) => {
+        return mfcBatchDataVisible.has(formulaId);
+    };
+
+    const isMfcBatchDataLoading = (formulaId: string) => {
+        return mfcBatchDataLoading.has(formulaId);
+    };
+
     const fetchFormulas = useCallback(async () => {
         setIsLoading(true);
         try {
@@ -885,6 +1136,21 @@ export default function FormulaDataPage() {
                 // Set global RM matching data for capsule indicator
                 if (data.globalRmDataMatched !== undefined) setGlobalRmDataMatched(data.globalRmDataMatched);
                 if (data.globalRmDataUnmatched !== undefined) setGlobalRmDataUnmatched(data.globalRmDataUnmatched);
+                // Set global PPM and PM matching data
+                if (data.globalPpmDataMatched !== undefined) setGlobalPpmDataMatched(data.globalPpmDataMatched);
+                if (data.globalPpmDataUnmatched !== undefined) setGlobalPpmDataUnmatched(data.globalPpmDataUnmatched);
+                if (data.globalPmDataMatched !== undefined) setGlobalPmDataMatched(data.globalPmDataMatched);
+                if (data.globalPmDataUnmatched !== undefined) setGlobalPmDataUnmatched(data.globalPmDataUnmatched);
+                // Store batch numbers with RM data for per-section RM calculation
+                if (data.rmBatchNumbersList) setRmBatchNumbers(new Set(data.rmBatchNumbersList));
+                // Store batch numbers with PPM and PM data for per-section capsule calculation
+                if (data.ppmBatchNumbersList) setPpmBatchNumbers(new Set(data.ppmBatchNumbersList));
+                if (data.pmBatchNumbersList) setPmBatchNumbers(new Set(data.pmBatchNumbersList));
+                // Store batch numbers that are material-qualified for per-section MAT calculation
+                if (data.materialQualifiedBatchNumbersList) setMaterialQualifiedBatchNumbers(new Set(data.materialQualifiedBatchNumbersList));
+                // Set global Material Qualification data for capsule indicator
+                if (data.globalMaterialQualified !== undefined) setGlobalMaterialQualified(data.globalMaterialQualified);
+                if (data.globalMaterialUnqualified !== undefined) setGlobalMaterialUnqualified(data.globalMaterialUnqualified);
             }
         } catch (error) {
             console.error('Error fetching formulas:', error);
@@ -894,6 +1160,33 @@ export default function FormulaDataPage() {
     }, []);
 
     // Fetch batch reconciliation summary
+    // Fetch all batches for batch section
+    const fetchAllBatches = useCallback(async () => {
+        setIsBatchesLoading(true);
+        try {
+            const response = await fetch('/api/batch?page=1&limit=10000');
+            const data = await response.json();
+            if (data.success && data.data) {
+                const items: any[] = [];
+                data.data.forEach((record: any) => {
+                    record.batches.forEach((batch: any) => {
+                        items.push({
+                            ...batch,
+                            sourceFileName: record.fileName,
+                            sourceCompanyName: record.companyName,
+                            uploadedAt: record.uploadedAt,
+                        });
+                    });
+                });
+                setAllBatches(items);
+            }
+        } catch (error) {
+            console.error('Error fetching batches:', error);
+        } finally {
+            setIsBatchesLoading(false);
+        }
+    }, []);
+
     const fetchBatchReconciliation = useCallback(async () => {
         try {
             const response = await fetch('/api/reconciliation');
@@ -909,11 +1202,25 @@ export default function FormulaDataPage() {
     useEffect(() => {
         fetchFormulas();
         fetchBatchReconciliation();
-    }, [fetchFormulas, fetchBatchReconciliation]);
+        fetchAllBatches();
+    }, [fetchFormulas, fetchBatchReconciliation, fetchAllBatches]);
+
+    // Toggle batch section and scroll to it
+    const toggleBatchSection = (viewMode: 'unique' | 'all' = 'unique') => {
+        if (showBatchSection && batchViewMode === viewMode) {
+            setShowBatchSection(false);
+        } else {
+            setShowBatchSection(true);
+            setBatchViewMode(viewMode);
+            setTimeout(() => {
+                batchSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }, 100);
+        }
+    };
 
     // Open RM Data Modal - fetch and display RM requisition data
-    // Green (matched): Show RM materials from requisition
-    // Red (unmatched): Show batches that are missing RM requisition data
+    // Green (matched): Show RM materials from requisition (filtered by MFC-linked batches)
+    // Red (unmatched): Show batches that are missing RM requisition data (filtered by MFC-linked batches)
     const openRmDataModal = useCallback(async (type: 'matched' | 'unmatched') => {
         setShowRmDataModal(true);
         setRmModalType(type);
@@ -922,24 +1229,52 @@ export default function FormulaDataPage() {
         setRmModalData([]);
 
         try {
+            // Get the set of product codes that are linked to MFCs (from Formula Master)
+            // These are the keys in batchCounts that have counts > 0
+            const mfcLinkedProductCodes = new Set<string>(Object.keys(batchCounts));
+
             if (type === 'matched') {
                 // Green: Fetch RM materials from requisition API
-                const response = await fetch('/api/requisition/materials?type=RM');
+                // Then filter to only show materials for batches linked to MFCs
+                const response = await fetch('/api/requisition/materials?type=RM&pageSize=100000');
                 const data = await response.json();
 
                 if (data.success && data.materials) {
-                    setRmModalData(data.materials);
+                    // We need to get the itemCode for each batch to filter by MFC linkage
+                    // First fetch batch data to map batchNumber -> itemCode
+                    const batchResponse = await fetch('/api/batch?page=1&limit=10000');
+                    const batchData = await batchResponse.json();
+                    
+                    // Build a map of batchNumber -> itemCode
+                    const batchToItemCode: Record<string, string> = {};
+                    if (batchData.success && batchData.data) {
+                        batchData.data.forEach((record: any) => {
+                            record.batches?.forEach((batch: any) => {
+                                if (batch.batchNumber && batch.itemCode) {
+                                    batchToItemCode[batch.batchNumber] = batch.itemCode;
+                                }
+                            });
+                        });
+                    }
+
+                    // Filter materials to only those whose batch is linked to an MFC product code
+                    const filteredMaterials = data.materials.filter((m: any) => {
+                        const itemCode = batchToItemCode[m.batchNumber];
+                        return itemCode && mfcLinkedProductCodes.has(itemCode);
+                    });
+
+                    setRmModalData(filteredMaterials);
                 } else {
                     setRmModalError(data.message || 'Failed to fetch RM materials');
                 }
             } else {
                 // Red (unmatched): Fetch batches that are missing RM requisition data
-                // First get all batches from the batch registry
+                // Only include batches that are linked to MFCs
                 const batchResponse = await fetch('/api/batch?page=1&limit=10000');
                 const batchData = await batchResponse.json();
 
-                // Then get all batch numbers that have RM requisition data
-                const rmResponse = await fetch('/api/requisition/materials?type=RM');
+                // Get all batch numbers that have RM requisition data
+                const rmResponse = await fetch('/api/requisition/materials?type=RM&pageSize=100000');
                 const rmData = await rmResponse.json();
 
                 if (batchData.success && batchData.data) {
@@ -951,21 +1286,26 @@ export default function FormulaDataPage() {
                         });
                     }
 
-                    // Find batches that DON'T have RM requisition data
+                    // Find batches that:
+                    // 1. Are linked to an MFC (itemCode is in batchCounts)
+                    // 2. DON'T have RM requisition data
                     const unmatchedBatches: any[] = [];
                     batchData.data.forEach((record: any) => {
                         record.batches?.forEach((batch: any) => {
-                            if (!batchesWithRm.has(batch.batchNumber)) {
-                                unmatchedBatches.push({
-                                    batchNumber: batch.batchNumber,
-                                    itemCode: batch.itemCode,
-                                    itemName: batch.itemName,
-                                    mfgDate: batch.mfgDate,
-                                    expiryDate: batch.expiryDate,
-                                    batchSize: batch.batchSize,
-                                    department: batch.department,
-                                    make: record.companyName || batch.make,
-                                });
+                            // Only include if linked to an MFC
+                            if (batch.itemCode && mfcLinkedProductCodes.has(batch.itemCode)) {
+                                if (!batchesWithRm.has(batch.batchNumber)) {
+                                    unmatchedBatches.push({
+                                        batchNumber: batch.batchNumber,
+                                        itemCode: batch.itemCode,
+                                        itemName: batch.itemName,
+                                        mfgDate: batch.mfgDate,
+                                        expiryDate: batch.expiryDate,
+                                        batchSize: batch.batchSize,
+                                        department: batch.department,
+                                        make: record.companyName || batch.make,
+                                    });
+                                }
                             }
                         });
                     });
@@ -981,7 +1321,7 @@ export default function FormulaDataPage() {
         } finally {
             setIsRmModalLoading(false);
         }
-    }, []);
+    }, [batchCounts]);
 
     const closeRmDataModal = useCallback(() => {
         setShowRmDataModal(false);
@@ -1002,6 +1342,588 @@ export default function FormulaDataPage() {
             return next;
         });
     };
+
+    // Toggle expanded state for a batch group in PPM modal
+    const togglePpmBatchExpand = (batchNumber: string) => {
+        setExpandedPpmBatches(prev => {
+            const next = new Set(prev);
+            if (next.has(batchNumber)) {
+                next.delete(batchNumber);
+            } else {
+                next.add(batchNumber);
+            }
+            return next;
+        });
+    };
+
+    // Toggle expanded state for a batch group in PM modal
+    const togglePmBatchExpand = (batchNumber: string) => {
+        setExpandedPmBatches(prev => {
+            const next = new Set(prev);
+            if (next.has(batchNumber)) {
+                next.delete(batchNumber);
+            } else {
+                next.add(batchNumber);
+            }
+            return next;
+        });
+    };
+
+    // Open PPM Data Modal - fetch and display PPM requisition data
+    const openPpmDataModal = useCallback(async (type: 'matched' | 'unmatched') => {
+        setShowPpmDataModal(true);
+        setPpmModalType(type);
+        setIsPpmModalLoading(true);
+        setPpmModalError(null);
+        setPpmModalData([]);
+
+        try {
+            const mfcLinkedProductCodes = new Set<string>(Object.keys(batchCounts));
+
+            if (type === 'matched') {
+                // Green: Fetch PPM materials from requisition API
+                const response = await fetch('/api/requisition/materials?type=PPM&pageSize=100000');
+                const data = await response.json();
+
+                if (data.success && data.materials) {
+                    const batchResponse = await fetch('/api/batch?page=1&limit=10000');
+                    const batchData = await batchResponse.json();
+                    
+                    const batchToItemCode: Record<string, string> = {};
+                    if (batchData.success && batchData.data) {
+                        batchData.data.forEach((record: any) => {
+                            record.batches?.forEach((batch: any) => {
+                                if (batch.batchNumber && batch.itemCode) {
+                                    batchToItemCode[batch.batchNumber] = batch.itemCode;
+                                }
+                            });
+                        });
+                    }
+
+                    const filteredMaterials = data.materials.filter((m: any) => {
+                        const itemCode = batchToItemCode[m.batchNumber];
+                        return itemCode && mfcLinkedProductCodes.has(itemCode);
+                    });
+
+                    setPpmModalData(filteredMaterials);
+                } else {
+                    setPpmModalError(data.message || 'Failed to fetch PPM materials');
+                }
+            } else {
+                // Red (unmatched): Show batches missing PPM requisition data
+                const batchResponse = await fetch('/api/batch?page=1&limit=10000');
+                const batchData = await batchResponse.json();
+
+                const ppmResponse = await fetch('/api/requisition/materials?type=PPM&pageSize=100000');
+                const ppmData = await ppmResponse.json();
+
+                if (batchData.success && batchData.data) {
+                    const batchesWithPpm = new Set<string>();
+                    if (ppmData.success && ppmData.materials) {
+                        ppmData.materials.forEach((m: any) => {
+                            if (m.batchNumber) batchesWithPpm.add(m.batchNumber);
+                        });
+                    }
+
+                    const unmatchedBatches: any[] = [];
+                    batchData.data.forEach((record: any) => {
+                        record.batches?.forEach((batch: any) => {
+                            if (batch.itemCode && mfcLinkedProductCodes.has(batch.itemCode)) {
+                                if (!batchesWithPpm.has(batch.batchNumber)) {
+                                    unmatchedBatches.push({
+                                        batchNumber: batch.batchNumber,
+                                        itemCode: batch.itemCode,
+                                        itemName: batch.itemName,
+                                        mfgDate: batch.mfgDate,
+                                        expiryDate: batch.expiryDate,
+                                        batchSize: batch.batchSize,
+                                        department: batch.department,
+                                        make: record.companyName || batch.make,
+                                    });
+                                }
+                            }
+                        });
+                    });
+
+                    setPpmModalData(unmatchedBatches);
+                } else {
+                    setPpmModalError('Failed to fetch batch data');
+                }
+            }
+        } catch (error) {
+            console.error('Error fetching PPM data:', error);
+            setPpmModalError('Failed to fetch data');
+        } finally {
+            setIsPpmModalLoading(false);
+        }
+    }, [batchCounts]);
+
+    const closePpmDataModal = useCallback(() => {
+        setShowPpmDataModal(false);
+        setPpmModalData([]);
+        setPpmModalError(null);
+    }, []);
+
+    // Open PM Data Modal - fetch and display PM requisition data
+    const openPmDataModal = useCallback(async (type: 'matched' | 'unmatched') => {
+        setShowPmDataModal(true);
+        setPmModalType(type);
+        setIsPmModalLoading(true);
+        setPmModalError(null);
+        setPmModalData([]);
+
+        try {
+            const mfcLinkedProductCodes = new Set<string>(Object.keys(batchCounts));
+
+            if (type === 'matched') {
+                // Green: Fetch PM materials from requisition API
+                const response = await fetch('/api/requisition/materials?type=PM&pageSize=100000');
+                const data = await response.json();
+
+                if (data.success && data.materials) {
+                    const batchResponse = await fetch('/api/batch?page=1&limit=10000');
+                    const batchData = await batchResponse.json();
+                    
+                    const batchToItemCode: Record<string, string> = {};
+                    if (batchData.success && batchData.data) {
+                        batchData.data.forEach((record: any) => {
+                            record.batches?.forEach((batch: any) => {
+                                if (batch.batchNumber && batch.itemCode) {
+                                    batchToItemCode[batch.batchNumber] = batch.itemCode;
+                                }
+                            });
+                        });
+                    }
+
+                    const filteredMaterials = data.materials.filter((m: any) => {
+                        const itemCode = batchToItemCode[m.batchNumber];
+                        return itemCode && mfcLinkedProductCodes.has(itemCode);
+                    });
+
+                    setPmModalData(filteredMaterials);
+                } else {
+                    setPmModalError(data.message || 'Failed to fetch PM materials');
+                }
+            } else {
+                // Red (unmatched): Show batches missing PM requisition data
+                const batchResponse = await fetch('/api/batch?page=1&limit=10000');
+                const batchData = await batchResponse.json();
+
+                const pmResponse = await fetch('/api/requisition/materials?type=PM&pageSize=100000');
+                const pmData = await pmResponse.json();
+
+                if (batchData.success && batchData.data) {
+                    const batchesWithPm = new Set<string>();
+                    if (pmData.success && pmData.materials) {
+                        pmData.materials.forEach((m: any) => {
+                            if (m.batchNumber) batchesWithPm.add(m.batchNumber);
+                        });
+                    }
+
+                    const unmatchedBatches: any[] = [];
+                    batchData.data.forEach((record: any) => {
+                        record.batches?.forEach((batch: any) => {
+                            if (batch.itemCode && mfcLinkedProductCodes.has(batch.itemCode)) {
+                                if (!batchesWithPm.has(batch.batchNumber)) {
+                                    unmatchedBatches.push({
+                                        batchNumber: batch.batchNumber,
+                                        itemCode: batch.itemCode,
+                                        itemName: batch.itemName,
+                                        mfgDate: batch.mfgDate,
+                                        expiryDate: batch.expiryDate,
+                                        batchSize: batch.batchSize,
+                                        department: batch.department,
+                                        make: record.companyName || batch.make,
+                                    });
+                                }
+                            }
+                        });
+                    });
+
+                    setPmModalData(unmatchedBatches);
+                } else {
+                    setPmModalError('Failed to fetch batch data');
+                }
+            }
+        } catch (error) {
+            console.error('Error fetching PM data:', error);
+            setPmModalError('Failed to fetch data');
+        } finally {
+            setIsPmModalLoading(false);
+        }
+    }, [batchCounts]);
+
+    const closePmDataModal = useCallback(() => {
+        setShowPmDataModal(false);
+        setPmModalData([]);
+        setPmModalError(null);
+    }, []);
+
+    // Open Material Qualification Modal - fetch and display material data for qualified/unqualified batches
+    const openMatDataModal = useCallback(async (type: 'qualified' | 'unqualified') => {
+        setShowMatDataModal(true);
+        setMatModalType(type);
+        setIsMatModalLoading(true);
+        setMatModalError(null);
+        setMatModalData([]);
+        setExpandedMatArNumbers(new Set());
+
+        try {
+            // Get the batch numbers to query based on type
+            const batchNumbersToQuery = type === 'qualified' 
+                ? [...materialQualifiedBatchNumbers]
+                : [...allBatches]
+                    .filter(b => b.batchNumber && !materialQualifiedBatchNumbers.has(b.batchNumber))
+                    .map(b => b.batchNumber)
+                    .filter((bn, i, arr) => arr.indexOf(bn) === i); // Unique
+
+            if (batchNumbersToQuery.length === 0) {
+                setMatModalData([]);
+                setIsMatModalLoading(false);
+                return;
+            }
+
+            // Limit to first 500 batches to avoid URL length issues
+            const limitedBatches = batchNumbersToQuery.slice(0, 500);
+            
+            const response = await fetch(
+                `/api/formula/material-qualification?type=${type}&batchNumbers=${encodeURIComponent(limitedBatches.join(','))}`
+            );
+            const data = await response.json();
+
+            if (data.success) {
+                setMatModalData(data.materials || []);
+            } else {
+                setMatModalError(data.message || 'Failed to fetch material qualification data');
+            }
+        } catch (error) {
+            console.error('Error fetching material qualification data:', error);
+            setMatModalError('Failed to fetch data');
+        } finally {
+            setIsMatModalLoading(false);
+        }
+    }, [materialQualifiedBatchNumbers, allBatches]);
+
+    const closeMatDataModal = useCallback(() => {
+        setShowMatDataModal(false);
+        setMatModalData([]);
+        setMatModalError(null);
+        setExpandedMatArNumbers(new Set());
+    }, []);
+
+    // Per-Formula RM Modal - Opens modal showing RM data for a specific MFC
+    const openPerFormulaRmModal = useCallback(async (
+        mfcNo: string,
+        productCodes: string[], // Array of all product codes for this formula
+        formulaName: string,
+        type: 'matched' | 'unmatched'
+    ) => {
+        setPerFormulaRmModalOpen(true);
+        setPerFormulaRmMfc(mfcNo);
+        setPerFormulaRmType(type);
+        setPerFormulaRmFormulaName(formulaName);
+        setPerFormulaRmLoading(true);
+        setPerFormulaRmError(null);
+        setPerFormulaRmData([]);
+
+        // Create a Set of product codes for efficient lookup
+        const productCodeSet = new Set(productCodes.filter(pc => pc && pc !== 'N/A'));
+
+        try {
+            if (type === 'matched') {
+                // Fetch RM materials and filter by batches with any of these product codes
+                const response = await fetch('/api/requisition/materials?type=RM&pageSize=100000');
+                const data = await response.json();
+
+                if (data.success && data.materials) {
+                    // Get batch data to map batchNumber -> itemCode
+                    const batchResponse = await fetch('/api/batch?page=1&limit=10000');
+                    const batchData = await batchResponse.json();
+
+                    const batchToItemCode: Record<string, string> = {};
+                    if (batchData.success && batchData.data) {
+                        batchData.data.forEach((record: any) => {
+                            record.batches?.forEach((batch: any) => {
+                                if (batch.batchNumber && batch.itemCode) {
+                                    batchToItemCode[batch.batchNumber] = batch.itemCode;
+                                }
+                            });
+                        });
+                    }
+
+                    // Filter materials to only those whose batch has one of the product codes
+                    const filteredMaterials = data.materials.filter((m: any) => {
+                        const itemCode = batchToItemCode[m.batchNumber];
+                        return itemCode && productCodeSet.has(itemCode);
+                    });
+
+                    setPerFormulaRmData(filteredMaterials);
+                } else {
+                    setPerFormulaRmError(data.message || 'Failed to fetch RM materials');
+                }
+            } else {
+                // Unmatched: Fetch batches with this product code that don't have RM data
+                const batchResponse = await fetch('/api/batch?page=1&limit=10000');
+                const batchData = await batchResponse.json();
+
+                const rmResponse = await fetch('/api/requisition/materials?type=RM&pageSize=100000');
+                const rmData = await rmResponse.json();
+
+                if (batchData.success && batchData.data) {
+                    const batchesWithRm = new Set<string>();
+                    if (rmData.success && rmData.materials) {
+                        rmData.materials.forEach((m: any) => {
+                            if (m.batchNumber) batchesWithRm.add(m.batchNumber);
+                        });
+                    }
+
+                    const unmatchedBatches: any[] = [];
+                    batchData.data.forEach((record: any) => {
+                        record.batches?.forEach((batch: any) => {
+                            // Only include if this batch has one of the formula's product codes
+                            if (batch.itemCode && productCodeSet.has(batch.itemCode)) {
+                                if (!batchesWithRm.has(batch.batchNumber)) {
+                                    unmatchedBatches.push({
+                                        batchNumber: batch.batchNumber,
+                                        itemCode: batch.itemCode,
+                                        itemName: batch.itemName,
+                                        mfgDate: batch.mfgDate,
+                                        expiryDate: batch.expiryDate,
+                                        batchSize: batch.batchSize,
+                                        department: batch.department,
+                                        make: record.companyName || batch.make,
+                                    });
+                                }
+                            }
+                        });
+                    });
+
+                    setPerFormulaRmData(unmatchedBatches);
+                } else {
+                    setPerFormulaRmError('Failed to fetch batch data');
+                }
+            }
+        } catch (error) {
+            console.error('Error fetching per-formula RM data:', error);
+            setPerFormulaRmError('Failed to fetch data');
+        } finally {
+            setPerFormulaRmLoading(false);
+        }
+    }, []);
+
+    const closePerFormulaRmModal = useCallback(() => {
+        setPerFormulaRmModalOpen(false);
+        setPerFormulaRmData([]);
+        setPerFormulaRmError(null);
+        setPerFormulaRmMfc(null);
+    }, []);
+
+    // Per-Formula PPM Modal - Opens modal showing PPM data for a specific MFC
+    const openPerFormulaPpmModal = useCallback(async (
+        mfcNo: string,
+        productCodes: string[],
+        formulaName: string,
+        type: 'matched' | 'unmatched'
+    ) => {
+        setPerFormulaPpmModalOpen(true);
+        setPerFormulaPpmMfc(mfcNo);
+        setPerFormulaPpmType(type);
+        setPerFormulaPpmFormulaName(formulaName);
+        setPerFormulaPpmLoading(true);
+        setPerFormulaPpmError(null);
+        setPerFormulaPpmData([]);
+
+        const productCodeSet = new Set(productCodes.filter(pc => pc && pc !== 'N/A'));
+
+        try {
+            if (type === 'matched') {
+                // Fetch PPM materials and filter by batches with any of these product codes
+                const response = await fetch('/api/requisition/materials?type=PPM&pageSize=100000');
+                const data = await response.json();
+
+                if (data.success && data.materials) {
+                    const batchResponse = await fetch('/api/batch?page=1&limit=10000');
+                    const batchData = await batchResponse.json();
+
+                    const batchToItemCode: Record<string, string> = {};
+                    if (batchData.success && batchData.data) {
+                        batchData.data.forEach((record: any) => {
+                            record.batches?.forEach((batch: any) => {
+                                if (batch.batchNumber && batch.itemCode) {
+                                    batchToItemCode[batch.batchNumber] = batch.itemCode;
+                                }
+                            });
+                        });
+                    }
+
+                    const filteredMaterials = data.materials.filter((m: any) => {
+                        const itemCode = batchToItemCode[m.batchNumber];
+                        return itemCode && productCodeSet.has(itemCode);
+                    });
+
+                    setPerFormulaPpmData(filteredMaterials);
+                } else {
+                    setPerFormulaPpmError(data.message || 'Failed to fetch PPM materials');
+                }
+            } else {
+                // Unmatched: Fetch batches with this product code that don't have PPM data
+                const batchResponse = await fetch('/api/batch?page=1&limit=10000');
+                const batchData = await batchResponse.json();
+
+                const ppmResponse = await fetch('/api/requisition/materials?type=PPM&pageSize=100000');
+                const ppmData = await ppmResponse.json();
+
+                if (batchData.success && batchData.data) {
+                    const batchesWithPpm = new Set<string>();
+                    if (ppmData.success && ppmData.materials) {
+                        ppmData.materials.forEach((m: any) => {
+                            if (m.batchNumber) batchesWithPpm.add(m.batchNumber);
+                        });
+                    }
+
+                    const unmatchedBatches: any[] = [];
+                    batchData.data.forEach((record: any) => {
+                        record.batches?.forEach((batch: any) => {
+                            if (batch.itemCode && productCodeSet.has(batch.itemCode)) {
+                                if (!batchesWithPpm.has(batch.batchNumber)) {
+                                    unmatchedBatches.push({
+                                        batchNumber: batch.batchNumber,
+                                        itemCode: batch.itemCode,
+                                        itemName: batch.itemName,
+                                        mfgDate: batch.mfgDate,
+                                        expiryDate: batch.expiryDate,
+                                        batchSize: batch.batchSize,
+                                        department: batch.department,
+                                        make: record.companyName || batch.make,
+                                    });
+                                }
+                            }
+                        });
+                    });
+
+                    setPerFormulaPpmData(unmatchedBatches);
+                } else {
+                    setPerFormulaPpmError('Failed to fetch batch data');
+                }
+            }
+        } catch (error) {
+            console.error('Error fetching per-formula PPM data:', error);
+            setPerFormulaPpmError('Failed to fetch data');
+        } finally {
+            setPerFormulaPpmLoading(false);
+        }
+    }, []);
+
+    const closePerFormulaPpmModal = useCallback(() => {
+        setPerFormulaPpmModalOpen(false);
+        setPerFormulaPpmData([]);
+        setPerFormulaPpmError(null);
+        setPerFormulaPpmMfc(null);
+    }, []);
+
+    // Per-Formula PM Modal - Opens modal showing PM data for a specific MFC
+    const openPerFormulaPmModal = useCallback(async (
+        mfcNo: string,
+        productCodes: string[],
+        formulaName: string,
+        type: 'matched' | 'unmatched'
+    ) => {
+        setPerFormulaPmModalOpen(true);
+        setPerFormulaPmMfc(mfcNo);
+        setPerFormulaPmType(type);
+        setPerFormulaPmFormulaName(formulaName);
+        setPerFormulaPmLoading(true);
+        setPerFormulaPmError(null);
+        setPerFormulaPmData([]);
+
+        const productCodeSet = new Set(productCodes.filter(pc => pc && pc !== 'N/A'));
+
+        try {
+            if (type === 'matched') {
+                // Fetch PM materials and filter by batches with any of these product codes
+                const response = await fetch('/api/requisition/materials?type=PM&pageSize=100000');
+                const data = await response.json();
+
+                if (data.success && data.materials) {
+                    const batchResponse = await fetch('/api/batch?page=1&limit=10000');
+                    const batchData = await batchResponse.json();
+
+                    const batchToItemCode: Record<string, string> = {};
+                    if (batchData.success && batchData.data) {
+                        batchData.data.forEach((record: any) => {
+                            record.batches?.forEach((batch: any) => {
+                                if (batch.batchNumber && batch.itemCode) {
+                                    batchToItemCode[batch.batchNumber] = batch.itemCode;
+                                }
+                            });
+                        });
+                    }
+
+                    const filteredMaterials = data.materials.filter((m: any) => {
+                        const itemCode = batchToItemCode[m.batchNumber];
+                        return itemCode && productCodeSet.has(itemCode);
+                    });
+
+                    setPerFormulaPmData(filteredMaterials);
+                } else {
+                    setPerFormulaPmError(data.message || 'Failed to fetch PM materials');
+                }
+            } else {
+                // Unmatched: Fetch batches with this product code that don't have PM data
+                const batchResponse = await fetch('/api/batch?page=1&limit=10000');
+                const batchData = await batchResponse.json();
+
+                const pmResponse = await fetch('/api/requisition/materials?type=PM&pageSize=100000');
+                const pmData = await pmResponse.json();
+
+                if (batchData.success && batchData.data) {
+                    const batchesWithPm = new Set<string>();
+                    if (pmData.success && pmData.materials) {
+                        pmData.materials.forEach((m: any) => {
+                            if (m.batchNumber) batchesWithPm.add(m.batchNumber);
+                        });
+                    }
+
+                    const unmatchedBatches: any[] = [];
+                    batchData.data.forEach((record: any) => {
+                        record.batches?.forEach((batch: any) => {
+                            if (batch.itemCode && productCodeSet.has(batch.itemCode)) {
+                                if (!batchesWithPm.has(batch.batchNumber)) {
+                                    unmatchedBatches.push({
+                                        batchNumber: batch.batchNumber,
+                                        itemCode: batch.itemCode,
+                                        itemName: batch.itemName,
+                                        mfgDate: batch.mfgDate,
+                                        expiryDate: batch.expiryDate,
+                                        batchSize: batch.batchSize,
+                                        department: batch.department,
+                                        make: record.companyName || batch.make,
+                                    });
+                                }
+                            }
+                        });
+                    });
+
+                    setPerFormulaPmData(unmatchedBatches);
+                } else {
+                    setPerFormulaPmError('Failed to fetch batch data');
+                }
+            }
+        } catch (error) {
+            console.error('Error fetching per-formula PM data:', error);
+            setPerFormulaPmError('Failed to fetch data');
+        } finally {
+            setPerFormulaPmLoading(false);
+        }
+    }, []);
+
+    const closePerFormulaPmModal = useCallback(() => {
+        setPerFormulaPmModalOpen(false);
+        setPerFormulaPmData([]);
+        setPerFormulaPmError(null);
+        setPerFormulaPmMfc(null);
+    }, []);
+
 
     // Group formulas by manufacturer
     const manufacturerSummary = useMemo(() => {
@@ -1302,6 +2224,420 @@ export default function FormulaDataPage() {
         };
     }, [filteredFormulas, batchCounts]);
 
+    // Calculate unique batch reconciliation - how unique batches are distributed across MFC categories
+    const uniqueBatchReconciliation = useMemo(() => {
+        if (!allBatches || allBatches.length === 0) {
+            return null;
+        }
+
+        // Get unique batches by batch number
+        const uniqueBatchMap = new Map<string, BatchItem>();
+        allBatches.forEach(batch => {
+            if (batch.batchNumber && !uniqueBatchMap.has(batch.batchNumber)) {
+                uniqueBatchMap.set(batch.batchNumber, batch);
+            }
+        });
+
+        const uniqueBatches = Array.from(uniqueBatchMap.values());
+        const totalUniqueBatches = uniqueBatches.length;
+
+        // Build a map of product codes to their MFC category
+        const productCodeToCategory = new Map<string, 'main' | 'lowBatch' | 'noBatch' | 'placebo'>();
+
+        // Helper to get all product codes from a formula
+        const getFormulaProductCodes = (f: FormulaRecord): string[] => {
+            const codes: string[] = [];
+            const mainCode = f.masterFormulaDetails?.productCode;
+            if (mainCode && mainCode !== 'N/A') codes.push(mainCode);
+            if (f.fillingDetails && Array.isArray(f.fillingDetails)) {
+                f.fillingDetails.forEach((fd: FillingDetail) => {
+                    if (fd.productCode && fd.productCode !== 'N/A' && !codes.includes(fd.productCode)) {
+                        codes.push(fd.productCode);
+                    }
+                });
+            }
+            if (f.processes && Array.isArray(f.processes)) {
+                f.processes.forEach((p: ProcessData) => {
+                    if (p.fillingProducts && Array.isArray(p.fillingProducts)) {
+                        p.fillingProducts.forEach((fp: AsepticFillingProduct) => {
+                            if (fp.productCode && !codes.includes(fp.productCode)) {
+                                codes.push(fp.productCode);
+                            }
+                        });
+                    }
+                });
+            }
+            return codes;
+        };
+
+        // Map product codes to their category
+        mainFormulas.forEach(f => {
+            getFormulaProductCodes(f).forEach(code => {
+                if (!productCodeToCategory.has(code)) {
+                    productCodeToCategory.set(code, 'main');
+                }
+            });
+        });
+        lowBatchFormulas.forEach(f => {
+            getFormulaProductCodes(f).forEach(code => {
+                if (!productCodeToCategory.has(code)) {
+                    productCodeToCategory.set(code, 'lowBatch');
+                }
+            });
+        });
+        noBatchFormulas.forEach(f => {
+            getFormulaProductCodes(f).forEach(code => {
+                if (!productCodeToCategory.has(code)) {
+                    productCodeToCategory.set(code, 'noBatch');
+                }
+            });
+        });
+        placeboFormulas.forEach(f => {
+            getFormulaProductCodes(f).forEach(code => {
+                if (!productCodeToCategory.has(code)) {
+                    productCodeToCategory.set(code, 'placebo');
+                }
+            });
+        });
+
+        // Count unique batches per category
+        let mainUniqueBatches = 0;
+        let lowBatchUniqueBatches = 0;
+        let noBatchUniqueBatches = 0;
+        let placeboUniqueBatches = 0;
+        let unmatchedUniqueBatches = 0;
+
+        uniqueBatches.forEach(batch => {
+            const itemCode = batch.itemCode;
+            if (!itemCode) {
+                unmatchedUniqueBatches++;
+                return;
+            }
+
+            const category = productCodeToCategory.get(itemCode);
+            switch (category) {
+                case 'main':
+                    mainUniqueBatches++;
+                    break;
+                case 'lowBatch':
+                    lowBatchUniqueBatches++;
+                    break;
+                case 'noBatch':
+                    noBatchUniqueBatches++;
+                    break;
+                case 'placebo':
+                    placeboUniqueBatches++;
+                    break;
+                default:
+                    unmatchedUniqueBatches++;
+            }
+        });
+
+        return {
+            totalUniqueBatches,
+            mainUniqueBatches,
+            lowBatchUniqueBatches,
+            noBatchUniqueBatches,
+            placeboUniqueBatches,
+            unmatchedUniqueBatches,
+            // MFC counts for display
+            mainMfcCount: mainFormulas.length,
+            lowBatchMfcCount: lowBatchFormulas.length,
+            noBatchMfcCount: noBatchFormulas.length,
+            placeboMfcCount: placeboFormulas.length,
+            // Calculated total for reconciliation check
+            reconciledTotal: mainUniqueBatches + lowBatchUniqueBatches + noBatchUniqueBatches + placeboUniqueBatches,
+            isReconciled: (mainUniqueBatches + lowBatchUniqueBatches + noBatchUniqueBatches + placeboUniqueBatches + unmatchedUniqueBatches) === totalUniqueBatches
+        };
+    }, [allBatches, mainFormulas, lowBatchFormulas, noBatchFormulas, placeboFormulas]);
+
+    // Calculate per-section RM data based on UNIQUE batches per section
+    // This matches the unique batch counts by checking which unique batches have RM data
+    const sectionRmData = useMemo(() => {
+        if (!allBatches || allBatches.length === 0 || rmBatchNumbers.size === 0) {
+            return {
+                main: { matched: 0, unmatched: 0 },
+                lowBatch: { matched: 0, unmatched: 0 },
+                noBatch: { matched: 0, unmatched: 0 },
+                placebo: { matched: 0, unmatched: 0 },
+            };
+        }
+
+        // Get unique batches by batch number
+        const uniqueBatchMap = new Map<string, { batchNumber: string; itemCode?: string }>();
+        allBatches.forEach(batch => {
+            if (batch.batchNumber && !uniqueBatchMap.has(batch.batchNumber)) {
+                uniqueBatchMap.set(batch.batchNumber, { batchNumber: batch.batchNumber, itemCode: batch.itemCode });
+            }
+        });
+
+        const uniqueBatches = Array.from(uniqueBatchMap.values());
+
+        // Build a map of product codes to their MFC category (same as uniqueBatchReconciliation)
+        const productCodeToCategory = new Map<string, 'main' | 'lowBatch' | 'noBatch' | 'placebo'>();
+        const getFormulaProductCodes = (f: FormulaRecord): string[] => {
+            const codes: string[] = [];
+            const mainCode = f.masterFormulaDetails?.productCode;
+            if (mainCode && mainCode !== 'N/A') codes.push(mainCode);
+            if (f.fillingDetails && Array.isArray(f.fillingDetails)) {
+                f.fillingDetails.forEach((fd: FillingDetail) => {
+                    if (fd.productCode && fd.productCode !== 'N/A' && !codes.includes(fd.productCode)) {
+                        codes.push(fd.productCode);
+                    }
+                });
+            }
+            if (f.processes && Array.isArray(f.processes)) {
+                f.processes.forEach((p: ProcessData) => {
+                    if (p.fillingProducts && Array.isArray(p.fillingProducts)) {
+                        p.fillingProducts.forEach((fp: AsepticFillingProduct) => {
+                            if (fp.productCode && !codes.includes(fp.productCode)) {
+                                codes.push(fp.productCode);
+                            }
+                        });
+                    }
+                });
+            }
+            return codes;
+        };
+
+        mainFormulas.forEach(f => {
+            getFormulaProductCodes(f).forEach(code => {
+                if (!productCodeToCategory.has(code)) productCodeToCategory.set(code, 'main');
+            });
+        });
+        lowBatchFormulas.forEach(f => {
+            getFormulaProductCodes(f).forEach(code => {
+                if (!productCodeToCategory.has(code)) productCodeToCategory.set(code, 'lowBatch');
+            });
+        });
+        noBatchFormulas.forEach(f => {
+            getFormulaProductCodes(f).forEach(code => {
+                if (!productCodeToCategory.has(code)) productCodeToCategory.set(code, 'noBatch');
+            });
+        });
+        placeboFormulas.forEach(f => {
+            getFormulaProductCodes(f).forEach(code => {
+                if (!productCodeToCategory.has(code)) productCodeToCategory.set(code, 'placebo');
+            });
+        });
+
+        // Count RM matched/unmatched per category
+        const counts = {
+            main: { matched: 0, unmatched: 0 },
+            lowBatch: { matched: 0, unmatched: 0 },
+            noBatch: { matched: 0, unmatched: 0 },
+            placebo: { matched: 0, unmatched: 0 },
+        };
+
+        uniqueBatches.forEach(batch => {
+            const itemCode = batch.itemCode;
+            if (!itemCode) return;
+
+            const category = productCodeToCategory.get(itemCode);
+            if (!category) return;
+
+            // Check if this batch has RM data
+            const hasRmData = rmBatchNumbers.has(batch.batchNumber);
+            if (hasRmData) {
+                counts[category].matched++;
+            } else {
+                counts[category].unmatched++;
+            }
+        });
+
+        return counts;
+    }, [allBatches, rmBatchNumbers, mainFormulas, lowBatchFormulas, noBatchFormulas, placeboFormulas]);
+
+    // Calculate per-section PPM and PM data based on TOTAL batches (not unique)
+    // PPM and PM should each reconcile to total batch count (e.g., 1796 for main section)
+    const sectionPpmPmData = useMemo(() => {
+        if (!allBatches || allBatches.length === 0) {
+            return {
+                main: { ppmMatched: 0, ppmUnmatched: 0, pmMatched: 0, pmUnmatched: 0 },
+                lowBatch: { ppmMatched: 0, ppmUnmatched: 0, pmMatched: 0, pmUnmatched: 0 },
+                noBatch: { ppmMatched: 0, ppmUnmatched: 0, pmMatched: 0, pmUnmatched: 0 },
+                placebo: { ppmMatched: 0, ppmUnmatched: 0, pmMatched: 0, pmUnmatched: 0 },
+            };
+        }
+
+        // Build a map of product codes to their MFC category
+        const productCodeToCategory = new Map<string, 'main' | 'lowBatch' | 'noBatch' | 'placebo'>();
+        const getFormulaProductCodes = (f: FormulaRecord): string[] => {
+            const codes: string[] = [];
+            const mainCode = f.masterFormulaDetails?.productCode;
+            if (mainCode && mainCode !== 'N/A') codes.push(mainCode);
+            if (f.fillingDetails && Array.isArray(f.fillingDetails)) {
+                f.fillingDetails.forEach((fd: FillingDetail) => {
+                    if (fd.productCode && fd.productCode !== 'N/A' && !codes.includes(fd.productCode)) {
+                        codes.push(fd.productCode);
+                    }
+                });
+            }
+            if (f.processes && Array.isArray(f.processes)) {
+                f.processes.forEach((p: ProcessData) => {
+                    if (p.fillingProducts && Array.isArray(p.fillingProducts)) {
+                        p.fillingProducts.forEach((fp: AsepticFillingProduct) => {
+                            if (fp.productCode && !codes.includes(fp.productCode)) {
+                                codes.push(fp.productCode);
+                            }
+                        });
+                    }
+                });
+            }
+            return codes;
+        };
+
+        mainFormulas.forEach(f => {
+            getFormulaProductCodes(f).forEach(code => {
+                if (!productCodeToCategory.has(code)) productCodeToCategory.set(code, 'main');
+            });
+        });
+        lowBatchFormulas.forEach(f => {
+            getFormulaProductCodes(f).forEach(code => {
+                if (!productCodeToCategory.has(code)) productCodeToCategory.set(code, 'lowBatch');
+            });
+        });
+        noBatchFormulas.forEach(f => {
+            getFormulaProductCodes(f).forEach(code => {
+                if (!productCodeToCategory.has(code)) productCodeToCategory.set(code, 'noBatch');
+            });
+        });
+        placeboFormulas.forEach(f => {
+            getFormulaProductCodes(f).forEach(code => {
+                if (!productCodeToCategory.has(code)) productCodeToCategory.set(code, 'placebo');
+            });
+        });
+
+        // Count PPM and PM matched/unmatched per category based on TOTAL batches (all records)
+        const counts = {
+            main: { ppmMatched: 0, ppmUnmatched: 0, pmMatched: 0, pmUnmatched: 0 },
+            lowBatch: { ppmMatched: 0, ppmUnmatched: 0, pmMatched: 0, pmUnmatched: 0 },
+            noBatch: { ppmMatched: 0, ppmUnmatched: 0, pmMatched: 0, pmUnmatched: 0 },
+            placebo: { ppmMatched: 0, ppmUnmatched: 0, pmMatched: 0, pmUnmatched: 0 },
+        };
+
+        // Iterate over ALL batches (total records) for PPM+PM to reconcile to total batch count
+        allBatches.forEach(batch => {
+            const itemCode = batch.itemCode;
+            if (!itemCode) return;
+
+            const category = productCodeToCategory.get(itemCode);
+            if (!category) return;
+
+            // Check if this batch has PPM data
+            if (batch.batchNumber && ppmBatchNumbers.has(batch.batchNumber)) {
+                counts[category].ppmMatched++;
+            } else {
+                counts[category].ppmUnmatched++;
+            }
+
+            // Check if this batch has PM data
+            if (batch.batchNumber && pmBatchNumbers.has(batch.batchNumber)) {
+                counts[category].pmMatched++;
+            } else {
+                counts[category].pmUnmatched++;
+            }
+        });
+
+        return counts;
+    }, [allBatches, ppmBatchNumbers, pmBatchNumbers, mainFormulas, lowBatchFormulas, noBatchFormulas, placeboFormulas]);
+
+    // Calculate per-section Material Qualification data based on UNIQUE batches (like sectionRmData)
+    const sectionMaterialQualData = useMemo(() => {
+        if (!allBatches || allBatches.length === 0 || materialQualifiedBatchNumbers.size === 0) {
+            return {
+                main: { qualified: 0, unqualified: 0 },
+                lowBatch: { qualified: 0, unqualified: 0 },
+                noBatch: { qualified: 0, unqualified: 0 },
+                placebo: { qualified: 0, unqualified: 0 },
+            };
+        }
+
+        // Get unique batches by batch number
+        const uniqueBatchMap = new Map<string, { batchNumber: string; itemCode?: string }>();
+        allBatches.forEach(batch => {
+            if (batch.batchNumber && !uniqueBatchMap.has(batch.batchNumber)) {
+                uniqueBatchMap.set(batch.batchNumber, { batchNumber: batch.batchNumber, itemCode: batch.itemCode });
+            }
+        });
+
+        const uniqueBatches = Array.from(uniqueBatchMap.values());
+
+        // Build a map of product codes to their MFC category
+        const productCodeToCategory = new Map<string, 'main' | 'lowBatch' | 'noBatch' | 'placebo'>();
+        const getFormulaProductCodes = (f: FormulaRecord): string[] => {
+            const codes: string[] = [];
+            const mainCode = f.masterFormulaDetails?.productCode;
+            if (mainCode && mainCode !== 'N/A') codes.push(mainCode);
+            if (f.fillingDetails && Array.isArray(f.fillingDetails)) {
+                f.fillingDetails.forEach((fd: FillingDetail) => {
+                    if (fd.productCode && fd.productCode !== 'N/A' && !codes.includes(fd.productCode)) {
+                        codes.push(fd.productCode);
+                    }
+                });
+            }
+            if (f.processes && Array.isArray(f.processes)) {
+                f.processes.forEach((p: ProcessData) => {
+                    if (p.fillingProducts && Array.isArray(p.fillingProducts)) {
+                        p.fillingProducts.forEach((fp: AsepticFillingProduct) => {
+                            if (fp.productCode && !codes.includes(fp.productCode)) {
+                                codes.push(fp.productCode);
+                            }
+                        });
+                    }
+                });
+            }
+            return codes;
+        };
+
+        mainFormulas.forEach(f => {
+            getFormulaProductCodes(f).forEach(code => {
+                if (!productCodeToCategory.has(code)) productCodeToCategory.set(code, 'main');
+            });
+        });
+        lowBatchFormulas.forEach(f => {
+            getFormulaProductCodes(f).forEach(code => {
+                if (!productCodeToCategory.has(code)) productCodeToCategory.set(code, 'lowBatch');
+            });
+        });
+        noBatchFormulas.forEach(f => {
+            getFormulaProductCodes(f).forEach(code => {
+                if (!productCodeToCategory.has(code)) productCodeToCategory.set(code, 'noBatch');
+            });
+        });
+        placeboFormulas.forEach(f => {
+            getFormulaProductCodes(f).forEach(code => {
+                if (!productCodeToCategory.has(code)) productCodeToCategory.set(code, 'placebo');
+            });
+        });
+
+        // Count material qualified/unqualified per category
+        const counts = {
+            main: { qualified: 0, unqualified: 0 },
+            lowBatch: { qualified: 0, unqualified: 0 },
+            noBatch: { qualified: 0, unqualified: 0 },
+            placebo: { qualified: 0, unqualified: 0 },
+        };
+
+        uniqueBatches.forEach(batch => {
+            const itemCode = batch.itemCode;
+            if (!itemCode) return;
+
+            const category = productCodeToCategory.get(itemCode);
+            if (!category) return;
+
+            // Check if this batch is material-qualified
+            const isQualified = materialQualifiedBatchNumbers.has(batch.batchNumber);
+            if (isQualified) {
+                counts[category].qualified++;
+            } else {
+                counts[category].unqualified++;
+            }
+        });
+
+        return counts;
+    }, [allBatches, materialQualifiedBatchNumbers, mainFormulas, lowBatchFormulas, noBatchFormulas, placeboFormulas]);
+
     const toggleMfc = (mfcId: string) => {
         setExpandedMfc(expandedMfc === mfcId ? null : mfcId);
     };
@@ -1311,6 +2647,7 @@ export default function FormulaDataPage() {
         title,
         count,
         totalBatches,
+        uniqueBatches,
         icon,
         isOpen,
         onToggle,
@@ -1320,11 +2657,24 @@ export default function FormulaDataPage() {
         rmDataMatched,
         rmDataUnmatched,
         onRmMatchedClick,
-        onRmUnmatchedClick
+        onRmUnmatchedClick,
+        ppmDataMatched,
+        ppmDataUnmatched,
+        pmDataMatched,
+        pmDataUnmatched,
+        onPpmMatchedClick,
+        onPpmUnmatchedClick,
+        onPmMatchedClick,
+        onPmUnmatchedClick,
+        materialQualified,
+        materialUnqualified,
+        onMaterialQualifiedClick,
+        onMaterialUnqualifiedClick
     }: {
         title: string;
         count: number;
         totalBatches?: number;
+        uniqueBatches?: number;
         icon: string;
         isOpen: boolean;
         onToggle: () => void;
@@ -1335,6 +2685,18 @@ export default function FormulaDataPage() {
         rmDataUnmatched?: number;
         onRmMatchedClick?: () => void;
         onRmUnmatchedClick?: () => void;
+        ppmDataMatched?: number;
+        ppmDataUnmatched?: number;
+        pmDataMatched?: number;
+        pmDataUnmatched?: number;
+        onPpmMatchedClick?: () => void;
+        onPpmUnmatchedClick?: () => void;
+        onPmMatchedClick?: () => void;
+        onPmUnmatchedClick?: () => void;
+        materialQualified?: number;
+        materialUnqualified?: number;
+        onMaterialQualifiedClick?: () => void;
+        onMaterialUnqualifiedClick?: () => void;
     }) => {
         // Convert dark badge colors to light background colors
         const getLightColors = (darkColor: string) => {
@@ -1357,6 +2719,10 @@ export default function FormulaDataPage() {
         };
 
         const colors = getLightColors(badgeColor);
+        
+        // Calculate if RM reconciliation matches unique batches
+        const rmTotal = (rmDataMatched || 0) + (rmDataUnmatched || 0);
+        const rmMatchesUnique = uniqueBatches !== undefined && rmTotal === uniqueBatches;
 
         return (
             <div
@@ -1410,32 +2776,112 @@ export default function FormulaDataPage() {
                                 {badgeText}
                             </span>
                         )}
-                        {/* Total Batches Display */}
+                        {/* Total Batches Display with Unique Batches below */}
                         {totalBatches !== undefined && (
-                            <span style={{
-                                padding: '0.3rem 0.75rem',
-                                background: 'linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%)',
-                                color: 'white',
-                                borderRadius: '12px',
-                                fontSize: '0.8rem',
-                                fontWeight: '700',
-                                boxShadow: '0 2px 4px rgba(59, 130, 246, 0.3)',
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: '4px',
-                            }}>
-                                📦 {totalBatches.toLocaleString()} Batches
-                            </span>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                <span style={{
+                                    padding: '0.3rem 0.75rem',
+                                    background: 'linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%)',
+                                    color: 'white',
+                                    borderRadius: '12px',
+                                    fontSize: '0.8rem',
+                                    fontWeight: '700',
+                                    boxShadow: '0 2px 4px rgba(59, 130, 246, 0.3)',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '4px',
+                                }}>
+                                    📦 {totalBatches.toLocaleString()} Batches
+                                </span>
+                                {uniqueBatches !== undefined && (
+                                    <span style={{
+                                        padding: '0.2rem 0.6rem',
+                                        background: 'linear-gradient(135deg, #10b981 0%, #06b6d4 100%)',
+                                        color: 'white',
+                                        borderRadius: '10px',
+                                        fontSize: '0.7rem',
+                                        fontWeight: '600',
+                                        boxShadow: '0 2px 4px rgba(16, 185, 129, 0.3)',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '3px',
+                                    }}>
+                                        🎯 {uniqueBatches.toLocaleString()} Unique
+                                    </span>
+                                )}
+                            </div>
                         )}
                         {/* RM Data Status Capsule */}
                         {(rmDataMatched !== undefined || rmDataUnmatched !== undefined) && (
-                            <BatchStatusCapsule
-                                matched={rmDataMatched || 0}
-                                unmatched={rmDataUnmatched || 0}
-                                onGreenClick={onRmMatchedClick}
-                                onRedClick={onRmUnmatchedClick}
-                                size="medium"
-                            />
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'flex-start' }}>
+                                <BatchStatusCapsule
+                                    matched={rmDataMatched || 0}
+                                    unmatched={rmDataUnmatched || 0}
+                                    onGreenClick={onRmMatchedClick}
+                                    onRedClick={onRmUnmatchedClick}
+                                    size="medium"
+                                    type="RM"
+                                />
+                                {/* RM Total indicator (global across all MFCs) */}
+                                <div style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '4px',
+                                    fontSize: '0.65rem',
+                                    fontWeight: '600',
+                                    color: '#059669',
+                                    background: 'rgba(16, 185, 129, 0.1)',
+                                    padding: '2px 8px',
+                                    borderRadius: '6px',
+                                    border: '1px solid rgba(16, 185, 129, 0.3)',
+                                }}>
+                                    <span>{rmDataMatched || 0}</span>
+                                    <span>+</span>
+                                    <span>{rmDataUnmatched || 0}</span>
+                                    <span>=</span>
+                                    <span style={{ fontWeight: '700' }}>{rmTotal}</span>
+                                    <span style={{ marginLeft: '4px', opacity: 0.8 }}>total</span>
+                                </div>
+                            </div>
+                        )}
+                        {/* PPM Data Status Capsule */}
+                        {(ppmDataMatched !== undefined || ppmDataUnmatched !== undefined) && (ppmDataMatched! + ppmDataUnmatched!) > 0 && (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'flex-start' }}>
+                                <BatchStatusCapsule
+                                    matched={ppmDataMatched || 0}
+                                    unmatched={ppmDataUnmatched || 0}
+                                    onGreenClick={onPpmMatchedClick}
+                                    onRedClick={onPpmUnmatchedClick}
+                                    size="medium"
+                                    type="PPM"
+                                />
+                            </div>
+                        )}
+                        {/* PM Data Status Capsule */}
+                        {(pmDataMatched !== undefined || pmDataUnmatched !== undefined) && (pmDataMatched! + pmDataUnmatched!) > 0 && (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'flex-start' }}>
+                                <BatchStatusCapsule
+                                    matched={pmDataMatched || 0}
+                                    unmatched={pmDataUnmatched || 0}
+                                    onGreenClick={onPmMatchedClick}
+                                    onRedClick={onPmUnmatchedClick}
+                                    size="medium"
+                                    type="PM"
+                                />
+                            </div>
+                        )}
+                        {/* Material Qualification Status Capsule */}
+                        {(materialQualified !== undefined || materialUnqualified !== undefined) && (materialQualified! + materialUnqualified!) > 0 && (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'flex-start' }}>
+                                <BatchStatusCapsule
+                                    matched={materialQualified || 0}
+                                    unmatched={materialUnqualified || 0}
+                                    onGreenClick={onMaterialQualifiedClick}
+                                    onRedClick={onMaterialUnqualifiedClick}
+                                    size="medium"
+                                    type="MAT"
+                                />
+                            </div>
                         )}
                     </div>
                     {description && (
@@ -1689,7 +3135,7 @@ export default function FormulaDataPage() {
         if (!selectedProductCode) return null;
 
         // Group batches by item code
-        const groupedBatches = batchList ? groupBatchesByItemCode(batchList) : new Map();
+        const groupedBatches = batchList ? groupBatchesByItemCode(batchList) : new Map<string, { itemName: string; batches: BatchListItem[] }>();
         const uniqueProductCodeCount = groupedBatches.size;
 
         return (
@@ -2248,9 +3694,9 @@ export default function FormulaDataPage() {
                 left: '50%',
                 transform: 'translate(-50%, -50%)',
                 zIndex: 1000,
-                width: '90%',
-                maxWidth: '900px',
-                maxHeight: '85vh',
+                width: '95%',
+                maxWidth: '1200px',
+                maxHeight: '90vh',
                 overflowY: 'auto',
                 background: 'white',
                 borderRadius: '16px',
@@ -2282,21 +3728,63 @@ export default function FormulaDataPage() {
                             }
                         </p>
                     </div>
-                    <button
-                        onClick={closeRmDataModal}
-                        style={{
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                        {/* View Mode Toggle */}
+                        <div style={{
+                            display: 'flex',
                             background: 'rgba(255,255,255,0.2)',
-                            border: 'none',
                             borderRadius: '8px',
-                            padding: '8px 12px',
-                            color: 'white',
-                            fontSize: '1rem',
-                            cursor: 'pointer',
-                            fontWeight: 600,
-                        }}
-                    >
-                        ✕ Close
-                    </button>
+                            padding: '3px',
+                        }}>
+                            <button
+                                onClick={() => setRmViewMode('table')}
+                                style={{
+                                    padding: '6px 12px',
+                                    border: 'none',
+                                    borderRadius: '6px',
+                                    fontSize: '0.8rem',
+                                    fontWeight: 600,
+                                    cursor: 'pointer',
+                                    background: rmViewMode === 'table' ? 'white' : 'transparent',
+                                    color: rmViewMode === 'table' ? (rmModalType === 'matched' ? '#059669' : '#dc2626') : 'white',
+                                    transition: 'all 0.2s',
+                                }}
+                            >
+                                📊 Table
+                            </button>
+                            <button
+                                onClick={() => setRmViewMode('file')}
+                                style={{
+                                    padding: '6px 12px',
+                                    border: 'none',
+                                    borderRadius: '6px',
+                                    fontSize: '0.8rem',
+                                    fontWeight: 600,
+                                    cursor: 'pointer',
+                                    background: rmViewMode === 'file' ? 'white' : 'transparent',
+                                    color: rmViewMode === 'file' ? (rmModalType === 'matched' ? '#059669' : '#dc2626') : 'white',
+                                    transition: 'all 0.2s',
+                                }}
+                            >
+                                📁 File
+                            </button>
+                        </div>
+                        <button
+                            onClick={closeRmDataModal}
+                            style={{
+                                background: 'rgba(255,255,255,0.2)',
+                                border: 'none',
+                                borderRadius: '8px',
+                                padding: '8px 12px',
+                                color: 'white',
+                                fontSize: '1rem',
+                                cursor: 'pointer',
+                                fontWeight: 600,
+                            }}
+                        >
+                            ✕ Close
+                        </button>
+                    </div>
                 </div>
 
                 {/* Modal Body */}
@@ -2371,231 +3859,505 @@ export default function FormulaDataPage() {
 
                             {/* Content - Different display for matched vs unmatched */}
                             {rmModalType === 'matched' ? (
-                                /* Matched: Show table of RM materials */
-                                <div style={{
-                                    background: '#f9fafb',
-                                    borderRadius: '12px',
-                                    border: '1px solid #e5e7eb',
-                                    overflow: 'hidden',
-                                }}>
-                                    {/* Table Header */}
-                                    <div style={{
-                                        display: 'grid',
-                                        gridTemplateColumns: '100px 1fr 80px 90px 100px',
-                                        gap: '8px',
-                                        padding: '12px 16px',
-                                        background: '#f3f4f6',
-                                        fontWeight: 600,
-                                        fontSize: '0.75rem',
-                                        color: '#4b5563',
-                                        borderBottom: '1px solid #e5e7eb',
-                                    }}>
-                                        <div>Batch No</div>
-                                        <div>Material Name</div>
-                                        <div>Code</div>
-                                        <div>Qty</div>
-                                        <div>MFC No</div>
-                                    </div>
-                                    {/* Table Body */}
-                                    <div style={{ maxHeight: '400px', overflowY: 'auto' }}>
-                                        {rmModalData.slice(0, 100).map((item: any, idx: number) => (
-                                            <div
-                                                key={idx}
-                                                style={{
-                                                    display: 'grid',
-                                                    gridTemplateColumns: '100px 1fr 80px 90px 100px',
-                                                    gap: '8px',
-                                                    padding: '10px 16px',
-                                                    borderBottom: '1px solid #f3f4f6',
-                                                    fontSize: '0.8rem',
-                                                    background: idx % 2 === 0 ? 'white' : '#fafafa',
-                                                }}
-                                            >
-                                                <div style={{ fontFamily: 'monospace', fontWeight: 600, color: '#059669' }}>
-                                                    {item.batchNumber || 'N/A'}
-                                                </div>
-                                                <div style={{ color: '#374151', fontWeight: 500 }}>
-                                                    {item.materialName || 'N/A'}
-                                                </div>
-                                                <div style={{ fontFamily: 'monospace', fontSize: '0.7rem', color: '#6b7280' }}>
-                                                    {item.materialCode || 'N/A'}
-                                                </div>
-                                                <div style={{ color: '#7c3aed', fontWeight: 600 }}>
-                                                    {item.quantityRequired || 0} {item.unit || ''}
-                                                </div>
-                                                <div style={{ fontFamily: 'monospace', fontSize: '0.7rem', color: '#f97316' }}>
-                                                    {item.mfcNo || 'N/A'}
-                                                </div>
-                                            </div>
-                                        ))}
-                                    </div>
-                                    {rmModalData.length > 100 && (
+                                /* Matched: Show RM materials - Table or File view */
+                                (() => {
+                                    // Toggle sorting function
+                                    const toggleRmSort = (column: string) => {
+                                        if (rmSortColumn === column) {
+                                            setRmSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
+                                        } else {
+                                            setRmSortColumn(column);
+                                            setRmSortDirection('asc');
+                                        }
+                                    };
+
+                                    // Sort the data
+                                    const sortedRmData = [...rmModalData].sort((a, b) => {
+                                        const valA = a[rmSortColumn] ?? '';
+                                        const valB = b[rmSortColumn] ?? '';
+                                        
+                                        // Handle numeric fields
+                                        if (typeof valA === 'number' && typeof valB === 'number') {
+                                            return rmSortDirection === 'asc' ? valA - valB : valB - valA;
+                                        }
+                                        
+                                        // String comparison
+                                        const strA = String(valA).toLowerCase();
+                                        const strB = String(valB).toLowerCase();
+                                        if (strA < strB) return rmSortDirection === 'asc' ? -1 : 1;
+                                        if (strA > strB) return rmSortDirection === 'asc' ? 1 : -1;
+                                        return 0;
+                                    });
+
+                                    // Define columns with their properties
+                                    const columns: { id: string; label: string; width?: string; highlight?: boolean }[] = [
+                                        { id: 'matReqNo', label: 'Slip No', width: '85px' },
+                                        { id: 'batchNumber', label: 'Batch No', width: '90px' },
+                                        { id: 'mfcNo', label: 'MFC No', width: '100px' },
+                                        { id: 'materialName', label: 'Material Name', width: '1fr' },
+                                        { id: 'materialCode', label: 'Code', width: '80px' },
+                                        { id: 'arNo', label: 'AR No', width: '95px', highlight: true },
+                                        { id: 'quantityRequired', label: 'Qty Req', width: '75px' },
+                                        { id: 'quantityToIssue', label: 'Qty Issue', width: '75px' },
+                                        { id: 'labelClaim', label: 'Label', width: '60px' },
+                                        { id: 'ovgPercent', label: 'OVG%', width: '55px' },
+                                    ];
+
+                                    // Group by batch for file view
+                                    const groupedByBatch = new Map<string, any[]>();
+                                    sortedRmData.forEach((item: any) => {
+                                        const bn = item.batchNumber || 'Unknown';
+                                        if (!groupedByBatch.has(bn)) {
+                                            groupedByBatch.set(bn, []);
+                                        }
+                                        groupedByBatch.get(bn)!.push(item);
+                                    });
+
+                                    // Sort batch groups by the sort column
+                                    const sortedBatchGroups = Array.from(groupedByBatch.entries()).sort((a, b) => {
+                                        const valA = a[1][0]?.[rmSortColumn] ?? '';
+                                        const valB = b[1][0]?.[rmSortColumn] ?? '';
+                                        const strA = String(valA).toLowerCase();
+                                        const strB = String(valB).toLowerCase();
+                                        if (strA < strB) return rmSortDirection === 'asc' ? -1 : 1;
+                                        if (strA > strB) return rmSortDirection === 'asc' ? 1 : -1;
+                                        return 0;
+                                    });
+
+                                    return rmViewMode === 'table' ? (
+                                        // TABLE VIEW
                                         <div style={{
-                                            padding: '12px 16px',
-                                            textAlign: 'center',
-                                            background: '#f3f4f6',
-                                            color: '#6b7280',
-                                            fontSize: '0.8rem',
+                                            background: '#f9fafb',
+                                            borderRadius: '12px',
+                                            border: '1px solid #e5e7eb',
+                                            overflow: 'hidden',
                                         }}>
-                                            Showing first 100 of {rmModalData.length} materials
-                                        </div>
-                                    )}
-                                </div>
-                            ) : (
-                                /* Unmatched: Show file-like grouped structure by batch number */
-                                <div style={{
-                                    background: '#f9fafb',
-                                    borderRadius: '12px',
-                                    border: '1px solid #e5e7eb',
-                                    overflow: 'hidden',
-                                    maxHeight: '500px',
-                                    overflowY: 'auto',
-                                }}>
-                                    {(() => {
-                                        // Group items by batch number
-                                        const groupedByBatch = new Map<string, any[]>();
-                                        rmModalData.forEach((item: any) => {
-                                            const bn = item.batchNumber || 'Unknown';
-                                            if (!groupedByBatch.has(bn)) {
-                                                groupedByBatch.set(bn, []);
-                                            }
-                                            groupedByBatch.get(bn)!.push(item);
-                                        });
-
-                                        return Array.from(groupedByBatch.entries()).map(([batchNumber, items], groupIdx) => {
-                                            const isExpanded = expandedRmBatches.has(batchNumber);
-                                            return (
-                                                <div key={batchNumber} style={{
-                                                    borderBottom: groupIdx < groupedByBatch.size - 1 ? '1px solid #e5e7eb' : 'none',
-                                                }}>
-                                                    {/* Batch Header (Collapsible) */}
-                                                    <button
-                                                        onClick={() => toggleRmBatchExpand(batchNumber)}
-                                                        style={{
-                                                            width: '100%',
-                                                            display: 'flex',
-                                                            alignItems: 'center',
-                                                            gap: '12px',
-                                                            padding: '12px 16px',
-                                                            background: isExpanded ? '#fef2f2' : 'white',
-                                                            border: 'none',
-                                                            cursor: 'pointer',
-                                                            textAlign: 'left',
-                                                            transition: 'background 0.15s ease',
-                                                        }}
-                                                    >
-                                                        {/* Expand Icon */}
-                                                        <div style={{
-                                                            width: '22px',
-                                                            height: '22px',
-                                                            display: 'flex',
-                                                            alignItems: 'center',
-                                                            justifyContent: 'center',
-                                                            borderRadius: '5px',
-                                                            background: isExpanded ? '#dc2626' : '#e5e7eb',
-                                                            color: isExpanded ? 'white' : '#6b7280',
-                                                            transition: 'all 0.2s ease',
-                                                            transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)',
-                                                            fontSize: '0.7rem',
-                                                            fontWeight: 700,
-                                                            flexShrink: 0,
-                                                        }}>
-                                                            ▶
-                                                        </div>
-                                                        {/* Index Number */}
-                                                        <div style={{
-                                                            fontSize: '0.8rem',
-                                                            fontWeight: 600,
-                                                            color: '#9ca3af',
-                                                            minWidth: '28px',
-                                                        }}>
-                                                            #{groupIdx + 1}
-                                                        </div>
-                                                        {/* Batch Number */}
-                                                        <div style={{
-                                                            fontFamily: 'monospace',
-                                                            fontSize: '0.95rem',
-                                                            fontWeight: 700,
-                                                            color: '#dc2626',
-                                                        }}>
-                                                            📁 {batchNumber}
-                                                        </div>
-                                                        {/* Items Count */}
-                                                        <div style={{
-                                                            fontSize: '0.75rem',
-                                                            color: '#6b7280',
+                                            {/* Scrollable Table Container */}
+                                            <div style={{ overflowX: 'auto', maxHeight: '500px', overflowY: 'auto' }}>
+                                                <table style={{ width: '100%', minWidth: '1100px', borderCollapse: 'collapse' }}>
+                                                    <thead style={{ position: 'sticky', top: 0, zIndex: 5 }}>
+                                                        <tr style={{
                                                             background: '#f3f4f6',
-                                                            padding: '2px 8px',
-                                                            borderRadius: '10px',
+                                                            borderBottom: '2px solid #e5e7eb',
                                                         }}>
-                                                            {items.length} item{items.length !== 1 ? 's' : ''}
-                                                        </div>
-                                                        {/* First item preview */}
-                                                        {!isExpanded && items[0] && (
-                                                            <div style={{
-                                                                flex: 1,
-                                                                fontSize: '0.8rem',
-                                                                color: '#6b7280',
-                                                                overflow: 'hidden',
-                                                                textOverflow: 'ellipsis',
-                                                                whiteSpace: 'nowrap',
-                                                            }}>
-                                                                {items[0].itemName || 'N/A'}
-                                                            </div>
-                                                        )}
-                                                    </button>
-
-                                                    {/* Expanded Items */}
-                                                    {isExpanded && (
-                                                        <div style={{
-                                                            background: '#fafafa',
-                                                            padding: '8px 16px 12px 50px',
-                                                        }}>
-                                                            {items.map((item: any, itemIdx: number) => (
-                                                                <div
-                                                                    key={itemIdx}
+                                                            {columns.map(col => (
+                                                                <th
+                                                                    key={col.id}
+                                                                    onClick={() => toggleRmSort(col.id)}
                                                                     style={{
-                                                                        display: 'grid',
-                                                                        gridTemplateColumns: '28px 100px 1fr 80px 80px',
-                                                                        gap: '10px',
-                                                                        padding: '10px 12px',
-                                                                        background: itemIdx % 2 === 0 ? 'white' : '#f9fafb',
-                                                                        borderRadius: '8px',
-                                                                        marginBottom: itemIdx < items.length - 1 ? '6px' : 0,
-                                                                        border: '1px solid #f3f4f6',
-                                                                        fontSize: '0.8rem',
+                                                                        padding: '10px 8px',
+                                                                        textAlign: 'left',
+                                                                        fontWeight: 600,
+                                                                        fontSize: '0.75rem',
+                                                                        color: rmSortColumn === col.id ? '#7c3aed' : '#4b5563',
+                                                                        cursor: 'pointer',
+                                                                        whiteSpace: 'nowrap',
+                                                                        background: col.highlight ? '#fef3c7' : '#f3f4f6',
+                                                                        transition: 'all 0.2s',
+                                                                        userSelect: 'none',
                                                                     }}
                                                                 >
-                                                                    {/* Item Index */}
-                                                                    <div style={{
-                                                                        fontSize: '0.7rem',
-                                                                        fontWeight: 600,
-                                                                        color: '#9ca3af',
-                                                                        minWidth: '20px',
-                                                                    }}>
-                                                                        {itemIdx + 1}.
+                                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                                        {col.label}
+                                                                        <span style={{ fontSize: '0.7rem', opacity: rmSortColumn === col.id ? 1 : 0.3 }}>
+                                                                            {rmSortColumn === col.id ? (rmSortDirection === 'asc' ? '↑' : '↓') : '↕'}
+                                                                        </span>
                                                                     </div>
-                                                                    <div style={{ fontFamily: 'monospace', fontSize: '0.75rem', color: '#6b7280' }}>
-                                                                        {item.itemCode || 'N/A'}
-                                                                    </div>
-                                                                    <div style={{ color: '#374151', fontWeight: 500 }}>
-                                                                        {item.itemName || 'N/A'}
-                                                                    </div>
-                                                                    <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>
-                                                                        {item.mfgDate || 'N/A'}
-                                                                    </div>
-                                                                    <div style={{ color: '#7c3aed', fontWeight: 600 }}>
-                                                                        {item.batchSize || 'N/A'}
-                                                                    </div>
-                                                                </div>
+                                                                </th>
                                                             ))}
-                                                        </div>
-                                                    )}
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        {sortedRmData.slice(0, 500).map((item: any, idx: number) => (
+                                                            <tr
+                                                                key={idx}
+                                                                style={{
+                                                                    background: idx % 2 === 0 ? 'white' : '#fafafa',
+                                                                    borderBottom: '1px solid #f3f4f6',
+                                                                    transition: 'background 0.15s',
+                                                                }}
+                                                                onMouseEnter={e => e.currentTarget.style.background = '#f0fdf4'}
+                                                                onMouseLeave={e => e.currentTarget.style.background = idx % 2 === 0 ? 'white' : '#fafafa'}
+                                                            >
+                                                                <td style={{ padding: '8px', fontSize: '0.75rem', fontFamily: 'monospace', color: '#6b7280' }}>{item.matReqNo || 'N/A'}</td>
+                                                                <td style={{ padding: '8px', fontFamily: 'monospace', fontWeight: 600, color: '#059669', fontSize: '0.8rem' }}>{item.batchNumber || 'N/A'}</td>
+                                                                <td style={{ padding: '8px', fontFamily: 'monospace', fontSize: '0.7rem', color: '#f97316', fontWeight: 600 }}>{item.mfcNo || 'N/A'}</td>
+                                                                <td style={{ padding: '8px', color: '#374151', fontWeight: 500, fontSize: '0.8rem', maxWidth: '220px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item.materialName}>{item.materialName || 'N/A'}</td>
+                                                                <td style={{ padding: '8px', fontFamily: 'monospace', fontSize: '0.7rem', color: '#6b7280' }}>{item.materialCode || 'N/A'}</td>
+                                                                <td style={{ padding: '8px', background: '#fef3c7', fontFamily: 'monospace', fontWeight: 700, color: '#d97706', fontSize: '0.75rem' }}>{item.arNo || 'N/A'}</td>
+                                                                <td style={{ padding: '8px', color: '#7c3aed', fontWeight: 600, fontSize: '0.8rem' }}>{item.quantityRequired || 0}</td>
+                                                                <td style={{ padding: '8px', color: '#0891b2', fontWeight: 600, fontSize: '0.8rem' }}>{item.quantityToIssue || 0}</td>
+                                                                <td style={{ padding: '8px', fontSize: '0.7rem', color: '#6b7280' }}>{item.labelClaim || 'N/A'}</td>
+                                                                <td style={{ padding: '8px', fontSize: '0.75rem', color: '#059669', fontWeight: 600 }}>{item.ovgPercent ? `${item.ovgPercent}%` : 'N/A'}</td>
+                                                            </tr>
+                                                        ))}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                            {sortedRmData.length > 500 && (
+                                                <div style={{ padding: '12px 16px', textAlign: 'center', background: '#f3f4f6', color: '#6b7280', fontSize: '0.8rem' }}>
+                                                    Showing first 500 of {sortedRmData.length} materials
                                                 </div>
-                                            );
-                                        });
-                                    })()}
-                                </div>
+                                            )}
+                                        </div>
+                                    ) : (
+                                        // FILE VIEW - Grouped by batch
+                                        <div style={{
+                                            background: '#f9fafb',
+                                            borderRadius: '12px',
+                                            border: '1px solid #e5e7eb',
+                                            overflow: 'hidden',
+                                        }}>
+                                            {/* Sort controls for file view */}
+                                            <div style={{
+                                                display: 'flex',
+                                                gap: '8px',
+                                                padding: '12px 16px',
+                                                background: '#f3f4f6',
+                                                borderBottom: '1px solid #e5e7eb',
+                                                flexWrap: 'wrap',
+                                                alignItems: 'center',
+                                            }}>
+                                                <span style={{ fontSize: '0.75rem', color: '#6b7280', fontWeight: 600 }}>Sort by:</span>
+                                                {[
+                                                    { id: 'batchNumber', label: 'Batch No' },
+                                                    { id: 'mfcNo', label: 'MFC No' },
+                                                    { id: 'materialName', label: 'Material' },
+                                                ].map(opt => (
+                                                    <button
+                                                        key={opt.id}
+                                                        onClick={() => toggleRmSort(opt.id)}
+                                                        style={{
+                                                            padding: '4px 10px',
+                                                            border: '1px solid',
+                                                            borderColor: rmSortColumn === opt.id ? '#10b981' : '#d1d5db',
+                                                            borderRadius: '6px',
+                                                            fontSize: '0.75rem',
+                                                            fontWeight: 600,
+                                                            cursor: 'pointer',
+                                                            background: rmSortColumn === opt.id ? '#d1fae5' : 'white',
+                                                            color: rmSortColumn === opt.id ? '#059669' : '#6b7280',
+                                                            transition: 'all 0.2s',
+                                                        }}
+                                                    >
+                                                        {opt.label} {rmSortColumn === opt.id ? (rmSortDirection === 'asc' ? '↑' : '↓') : ''}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                            {/* Batch Groups */}
+                                            <div style={{ maxHeight: '500px', overflowY: 'auto' }}>
+                                                {sortedBatchGroups.slice(0, 100).map(([batchNumber, items], groupIdx) => {
+                                                    const isExpanded = expandedRmBatches.has(batchNumber);
+                                                    const firstItem = items[0];
+                                                    return (
+                                                        <div key={batchNumber} style={{ borderBottom: groupIdx < sortedBatchGroups.length - 1 ? '1px solid #e5e7eb' : 'none' }}>
+                                                            {/* Batch Header */}
+                                                            <button
+                                                                onClick={() => toggleRmBatchExpand(batchNumber)}
+                                                                style={{
+                                                                    width: '100%',
+                                                                    display: 'flex',
+                                                                    alignItems: 'center',
+                                                                    gap: '12px',
+                                                                    padding: '12px 16px',
+                                                                    background: isExpanded ? '#ecfdf5' : 'white',
+                                                                    border: 'none',
+                                                                    cursor: 'pointer',
+                                                                    textAlign: 'left',
+                                                                    transition: 'background 0.15s ease',
+                                                                }}
+                                                            >
+                                                                <div style={{
+                                                                    width: '22px', height: '22px', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                                                    borderRadius: '5px', background: isExpanded ? '#10b981' : '#e5e7eb', color: isExpanded ? 'white' : '#6b7280',
+                                                                    transition: 'all 0.2s ease', transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)',
+                                                                    fontSize: '0.7rem', fontWeight: 700, flexShrink: 0,
+                                                                }}>▶</div>
+                                                                <div style={{ fontSize: '0.8rem', fontWeight: 600, color: '#9ca3af', minWidth: '28px' }}>#{groupIdx + 1}</div>
+                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                                                    <span style={{ fontSize: '1rem' }}>📁</span>
+                                                                    <span style={{ fontFamily: 'monospace', fontSize: '0.95rem', fontWeight: 700, color: '#059669' }}>{batchNumber}</span>
+                                                                </div>
+                                                                <div style={{ fontSize: '0.75rem', color: '#6b7280', background: '#f3f4f6', padding: '2px 8px', borderRadius: '10px' }}>
+                                                                    {items.length} material{items.length !== 1 ? 's' : ''}
+                                                                </div>
+                                                                <div style={{ fontSize: '0.7rem', color: '#f97316', fontWeight: 600 }}>MFC: {firstItem?.mfcNo || 'N/A'}</div>
+                                                                {!isExpanded && <div style={{ flex: 1, fontSize: '0.8rem', color: '#6b7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{firstItem?.itemName || ''}</div>}
+                                                            </button>
+                                                            {/* Expanded Materials */}
+                                                            {isExpanded && (
+                                                                <div style={{ background: '#fafafa', padding: '8px 16px 12px 50px' }}>
+                                                                    {items.map((item: any, itemIdx: number) => (
+                                                                        <div key={itemIdx} style={{
+                                                                            display: 'grid',
+                                                                            gridTemplateColumns: '28px 1fr 100px 90px 90px',
+                                                                            gap: '10px',
+                                                                            padding: '10px 12px',
+                                                                            background: itemIdx % 2 === 0 ? 'white' : '#f9fafb',
+                                                                            borderRadius: '8px',
+                                                                            marginBottom: itemIdx < items.length - 1 ? '6px' : 0,
+                                                                            border: '1px solid #f3f4f6',
+                                                                            fontSize: '0.8rem',
+                                                                        }}>
+                                                                            <div style={{ fontSize: '0.7rem', fontWeight: 600, color: '#9ca3af' }}>{itemIdx + 1}.</div>
+                                                                            <div style={{ color: '#374151', fontWeight: 500 }}>{item.materialName || 'N/A'}</div>
+                                                                            <div style={{ background: '#fef3c7', padding: '2px 6px', borderRadius: '4px', fontFamily: 'monospace', fontWeight: 700, color: '#d97706', fontSize: '0.7rem', textAlign: 'center' }}>{item.arNo || 'N/A'}</div>
+                                                                            <div style={{ color: '#7c3aed', fontWeight: 600, textAlign: 'right' }}>{item.quantityRequired || 0}</div>
+                                                                            <div style={{ color: '#0891b2', fontWeight: 600, textAlign: 'right' }}>{item.quantityToIssue || 0}</div>
+                                                                        </div>
+                                                                    ))}
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                            {sortedBatchGroups.length > 100 && (
+                                                <div style={{ padding: '12px 16px', textAlign: 'center', background: '#f3f4f6', color: '#6b7280', fontSize: '0.8rem' }}>
+                                                    Showing first 100 of {sortedBatchGroups.length} batches
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })()
+                            ) : (
+                                /* Unmatched: Show batches missing RM data - Table or File view */
+                                (() => {
+                                    // Toggle sorting function
+                                    const toggleRmSort = (column: string) => {
+                                        if (rmSortColumn === column) {
+                                            setRmSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
+                                        } else {
+                                            setRmSortColumn(column);
+                                            setRmSortDirection('asc');
+                                        }
+                                    };
+
+                                    // Sort the data
+                                    const sortedRmData = [...rmModalData].sort((a, b) => {
+                                        const valA = a[rmSortColumn] ?? '';
+                                        const valB = b[rmSortColumn] ?? '';
+                                        
+                                        if (typeof valA === 'number' && typeof valB === 'number') {
+                                            return rmSortDirection === 'asc' ? valA - valB : valB - valA;
+                                        }
+                                        
+                                        const strA = String(valA).toLowerCase();
+                                        const strB = String(valB).toLowerCase();
+                                        if (strA < strB) return rmSortDirection === 'asc' ? -1 : 1;
+                                        if (strA > strB) return rmSortDirection === 'asc' ? 1 : -1;
+                                        return 0;
+                                    });
+
+                                    // Group by batch for file view (for unmatched, each entry is already one batch)
+                                    const groupedByBatch = new Map<string, any[]>();
+                                    sortedRmData.forEach((item: any) => {
+                                        const bn = item.batchNumber || 'Unknown';
+                                        if (!groupedByBatch.has(bn)) {
+                                            groupedByBatch.set(bn, []);
+                                        }
+                                        groupedByBatch.get(bn)!.push(item);
+                                    });
+
+                                    // Columns for unmatched table
+                                    const columns = [
+                                        { id: 'batchNumber', label: 'Batch No' },
+                                        { id: 'itemCode', label: 'Item Code' },
+                                        { id: 'itemName', label: 'Item Name' },
+                                        { id: 'mfgDate', label: 'Mfg Date' },
+                                        { id: 'expiryDate', label: 'Expiry' },
+                                        { id: 'batchSize', label: 'Batch Size' },
+                                        { id: 'department', label: 'Dept' },
+                                        { id: 'make', label: 'Make' },
+                                    ];
+
+                                    return rmViewMode === 'table' ? (
+                                        // TABLE VIEW for unmatched
+                                        <div style={{
+                                            background: '#f9fafb',
+                                            borderRadius: '12px',
+                                            border: '1px solid #e5e7eb',
+                                            overflow: 'hidden',
+                                        }}>
+                                            <div style={{ overflowX: 'auto', maxHeight: '500px', overflowY: 'auto' }}>
+                                                <table style={{ width: '100%', minWidth: '1000px', borderCollapse: 'collapse' }}>
+                                                    <thead style={{ position: 'sticky', top: 0, zIndex: 5 }}>
+                                                        <tr style={{ background: '#fef2f2', borderBottom: '2px solid #fecaca' }}>
+                                                            {columns.map(col => (
+                                                                <th
+                                                                    key={col.id}
+                                                                    onClick={() => toggleRmSort(col.id)}
+                                                                    style={{
+                                                                        padding: '10px 8px',
+                                                                        textAlign: 'left',
+                                                                        fontWeight: 600,
+                                                                        fontSize: '0.75rem',
+                                                                        color: rmSortColumn === col.id ? '#dc2626' : '#4b5563',
+                                                                        cursor: 'pointer',
+                                                                        whiteSpace: 'nowrap',
+                                                                        background: '#fef2f2',
+                                                                        transition: 'all 0.2s',
+                                                                        userSelect: 'none',
+                                                                    }}
+                                                                >
+                                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                                        {col.label}
+                                                                        <span style={{ fontSize: '0.7rem', opacity: rmSortColumn === col.id ? 1 : 0.3 }}>
+                                                                            {rmSortColumn === col.id ? (rmSortDirection === 'asc' ? '↑' : '↓') : '↕'}
+                                                                        </span>
+                                                                    </div>
+                                                                </th>
+                                                            ))}
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        {sortedRmData.slice(0, 500).map((item: any, idx: number) => (
+                                                            <tr
+                                                                key={idx}
+                                                                style={{
+                                                                    background: idx % 2 === 0 ? 'white' : '#fafafa',
+                                                                    borderBottom: '1px solid #f3f4f6',
+                                                                    transition: 'background 0.15s',
+                                                                }}
+                                                                onMouseEnter={e => e.currentTarget.style.background = '#fef2f2'}
+                                                                onMouseLeave={e => e.currentTarget.style.background = idx % 2 === 0 ? 'white' : '#fafafa'}
+                                                            >
+                                                                <td style={{ padding: '8px', fontFamily: 'monospace', fontWeight: 700, color: '#dc2626', fontSize: '0.85rem' }}>{item.batchNumber || 'N/A'}</td>
+                                                                <td style={{ padding: '8px', fontFamily: 'monospace', fontSize: '0.7rem', color: '#6b7280' }}>{item.itemCode || 'N/A'}</td>
+                                                                <td style={{ padding: '8px', color: '#374151', fontWeight: 500, fontSize: '0.8rem', maxWidth: '220px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item.itemName}>{item.itemName || 'N/A'}</td>
+                                                                <td style={{ padding: '8px', fontSize: '0.75rem', color: '#6b7280' }}>{item.mfgDate || 'N/A'}</td>
+                                                                <td style={{ padding: '8px', fontSize: '0.75rem', color: '#dc2626', fontWeight: 600 }}>{item.expiryDate || 'N/A'}</td>
+                                                                <td style={{ padding: '8px', color: '#7c3aed', fontWeight: 600, fontSize: '0.8rem' }}>{item.batchSize || 'N/A'}</td>
+                                                                <td style={{ padding: '8px', fontSize: '0.75rem', color: '#0891b2' }}>{item.department || 'N/A'}</td>
+                                                                <td style={{ padding: '8px', fontSize: '0.75rem', color: '#6b7280' }}>{item.make || 'N/A'}</td>
+                                                            </tr>
+                                                        ))}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                            {sortedRmData.length > 500 && (
+                                                <div style={{ padding: '12px 16px', textAlign: 'center', background: '#fef2f2', color: '#dc2626', fontSize: '0.8rem' }}>
+                                                    Showing first 500 of {sortedRmData.length} batches
+                                                </div>
+                                            )}
+                                        </div>
+                                    ) : (
+                                        // FILE VIEW for unmatched
+                                        <div style={{
+                                            background: '#f9fafb',
+                                            borderRadius: '12px',
+                                            border: '1px solid #e5e7eb',
+                                            overflow: 'hidden',
+                                        }}>
+                                            {/* Sort controls */}
+                                            <div style={{
+                                                display: 'flex',
+                                                gap: '8px',
+                                                padding: '12px 16px',
+                                                background: '#fef2f2',
+                                                borderBottom: '1px solid #fecaca',
+                                                flexWrap: 'wrap',
+                                                alignItems: 'center',
+                                            }}>
+                                                <span style={{ fontSize: '0.75rem', color: '#dc2626', fontWeight: 600 }}>Sort by:</span>
+                                                {[
+                                                    { id: 'batchNumber', label: 'Batch No' },
+                                                    { id: 'itemName', label: 'Item Name' },
+                                                    { id: 'expiryDate', label: 'Expiry' },
+                                                ].map(opt => (
+                                                    <button
+                                                        key={opt.id}
+                                                        onClick={() => toggleRmSort(opt.id)}
+                                                        style={{
+                                                            padding: '4px 10px',
+                                                            border: '1px solid',
+                                                            borderColor: rmSortColumn === opt.id ? '#dc2626' : '#d1d5db',
+                                                            borderRadius: '6px',
+                                                            fontSize: '0.75rem',
+                                                            fontWeight: 600,
+                                                            cursor: 'pointer',
+                                                            background: rmSortColumn === opt.id ? '#fee2e2' : 'white',
+                                                            color: rmSortColumn === opt.id ? '#dc2626' : '#6b7280',
+                                                            transition: 'all 0.2s',
+                                                        }}
+                                                    >
+                                                        {opt.label} {rmSortColumn === opt.id ? (rmSortDirection === 'asc' ? '↑' : '↓') : ''}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                            {/* Batch Groups */}
+                                            <div style={{ maxHeight: '500px', overflowY: 'auto' }}>
+                                                {Array.from(groupedByBatch.entries()).slice(0, 100).map(([batchNumber, items], groupIdx) => {
+                                                    const isExpanded = expandedRmBatches.has(batchNumber);
+                                                    const firstItem = items[0];
+                                                    return (
+                                                        <div key={batchNumber} style={{ borderBottom: groupIdx < groupedByBatch.size - 1 ? '1px solid #e5e7eb' : 'none' }}>
+                                                            <button
+                                                                onClick={() => toggleRmBatchExpand(batchNumber)}
+                                                                style={{
+                                                                    width: '100%',
+                                                                    display: 'flex',
+                                                                    alignItems: 'center',
+                                                                    gap: '12px',
+                                                                    padding: '12px 16px',
+                                                                    background: isExpanded ? '#fef2f2' : 'white',
+                                                                    border: 'none',
+                                                                    cursor: 'pointer',
+                                                                    textAlign: 'left',
+                                                                    transition: 'background 0.15s ease',
+                                                                }}
+                                                            >
+                                                                <div style={{
+                                                                    width: '22px', height: '22px', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                                                    borderRadius: '5px', background: isExpanded ? '#dc2626' : '#e5e7eb', color: isExpanded ? 'white' : '#6b7280',
+                                                                    transition: 'all 0.2s ease', transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)',
+                                                                    fontSize: '0.7rem', fontWeight: 700, flexShrink: 0,
+                                                                }}>▶</div>
+                                                                <div style={{ fontSize: '0.8rem', fontWeight: 600, color: '#9ca3af', minWidth: '28px' }}>#{groupIdx + 1}</div>
+                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                                                    <span style={{ fontSize: '1rem' }}>📁</span>
+                                                                    <span style={{ fontFamily: 'monospace', fontSize: '0.95rem', fontWeight: 700, color: '#dc2626' }}>{batchNumber}</span>
+                                                                </div>
+                                                                <div style={{ fontSize: '0.75rem', color: '#6b7280', background: '#fee2e2', padding: '2px 8px', borderRadius: '10px' }}>
+                                                                    {items.length} item{items.length !== 1 ? 's' : ''}
+                                                                </div>
+                                                                {!isExpanded && <div style={{ flex: 1, fontSize: '0.8rem', color: '#6b7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{firstItem?.itemName || ''}</div>}
+                                                            </button>
+                                                            {isExpanded && (
+                                                                <div style={{ background: '#fafafa', padding: '8px 16px 12px 50px' }}>
+                                                                    {items.map((item: any, itemIdx: number) => (
+                                                                        <div key={itemIdx} style={{
+                                                                            display: 'grid',
+                                                                            gridTemplateColumns: '28px 100px 1fr 80px 80px',
+                                                                            gap: '10px',
+                                                                            padding: '10px 12px',
+                                                                            background: itemIdx % 2 === 0 ? 'white' : '#f9fafb',
+                                                                            borderRadius: '8px',
+                                                                            marginBottom: itemIdx < items.length - 1 ? '6px' : 0,
+                                                                            border: '1px solid #fee2e2',
+                                                                            fontSize: '0.8rem',
+                                                                        }}>
+                                                                            <div style={{ fontSize: '0.7rem', fontWeight: 600, color: '#9ca3af' }}>{itemIdx + 1}.</div>
+                                                                            <div style={{ fontFamily: 'monospace', fontSize: '0.75rem', color: '#6b7280' }}>{item.itemCode || 'N/A'}</div>
+                                                                            <div style={{ color: '#374151', fontWeight: 500 }}>{item.itemName || 'N/A'}</div>
+                                                                            <div style={{ fontSize: '0.75rem', color: '#dc2626', fontWeight: 600 }}>{item.expiryDate || 'N/A'}</div>
+                                                                            <div style={{ color: '#7c3aed', fontWeight: 600 }}>{item.batchSize || 'N/A'}</div>
+                                                                        </div>
+                                                                    ))}
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                            {groupedByBatch.size > 100 && (
+                                                <div style={{ padding: '12px 16px', textAlign: 'center', background: '#fef2f2', color: '#dc2626', fontSize: '0.8rem' }}>
+                                                    Showing first 100 of {groupedByBatch.size} batches
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })()
                             )}
                         </div>
                     )}
@@ -2611,6 +4373,1028 @@ export default function FormulaDataPage() {
                                 {rmModalType === 'matched'
                                     ? 'No RM materials found'
                                     : 'All batches have RM requisition data!'}
+                            </p>
+                        </div>
+                    )}
+                </div>
+            </div>
+        );
+    };
+
+    // Per-Formula RM Data Modal Component - Shows RM data for a specific MFC
+    const PerFormulaRmModal = () => {
+        if (!perFormulaRmModalOpen) return null;
+
+        // Toggle sorting function
+        const toggleRmSort = (column: string) => {
+            if (rmSortColumn === column) {
+                setRmSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
+            } else {
+                setRmSortColumn(column);
+                setRmSortDirection('asc');
+            }
+        };
+
+        // Sort the data
+        const sortedData = [...perFormulaRmData].sort((a, b) => {
+            const valA = a[rmSortColumn] ?? '';
+            const valB = b[rmSortColumn] ?? '';
+            if (typeof valA === 'number' && typeof valB === 'number') {
+                return rmSortDirection === 'asc' ? valA - valB : valB - valA;
+            }
+            const strA = String(valA).toLowerCase();
+            const strB = String(valB).toLowerCase();
+            if (strA < strB) return rmSortDirection === 'asc' ? -1 : 1;
+            if (strA > strB) return rmSortDirection === 'asc' ? 1 : -1;
+            return 0;
+        });
+
+        // Group by batch for file view
+        const groupedByBatch = new Map<string, any[]>();
+        sortedData.forEach((item: any) => {
+            const bn = item.batchNumber || 'Unknown';
+            if (!groupedByBatch.has(bn)) {
+                groupedByBatch.set(bn, []);
+            }
+            groupedByBatch.get(bn)!.push(item);
+        });
+
+        const isMatched = perFormulaRmType === 'matched';
+        const primaryColor = isMatched ? '#10b981' : '#dc2626';
+        const bgGradient = isMatched
+            ? 'linear-gradient(135deg, #059669 0%, #10b981 100%)'
+            : 'linear-gradient(135deg, #dc2626 0%, #ef4444 100%)';
+
+        const matchedColumns: { id: string; label: string; highlight?: boolean }[] = [
+            { id: 'matReqNo', label: 'Slip No' },
+            { id: 'batchNumber', label: 'Batch No' },
+            { id: 'materialName', label: 'Material Name' },
+            { id: 'materialCode', label: 'Code' },
+            { id: 'arNo', label: 'AR No', highlight: true },
+            { id: 'quantityRequired', label: 'Qty Req' },
+            { id: 'quantityToIssue', label: 'Qty Issue' },
+        ];
+
+        const unmatchedColumns: { id: string; label: string; highlight?: boolean }[] = [
+            { id: 'batchNumber', label: 'Batch No' },
+            { id: 'itemCode', label: 'Item Code' },
+            { id: 'itemName', label: 'Item Name' },
+            { id: 'mfgDate', label: 'Mfg Date' },
+            { id: 'expiryDate', label: 'Expiry' },
+            { id: 'batchSize', label: 'Batch Size' },
+        ];
+
+        const columns = isMatched ? matchedColumns : unmatchedColumns;
+
+        return (
+            <div style={{
+                position: 'fixed',
+                top: '50%',
+                left: '50%',
+                transform: 'translate(-50%, -50%)',
+                zIndex: 1001,
+                width: '95%',
+                maxWidth: '1100px',
+                maxHeight: '85vh',
+                overflowY: 'auto',
+                background: 'white',
+                borderRadius: '16px',
+                boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+                border: '2px solid #e5e7eb',
+            }}>
+                {/* Modal Header */}
+                <div style={{
+                    position: 'sticky',
+                    top: 0,
+                    background: bgGradient,
+                    padding: '16px 24px',
+                    borderRadius: '14px 14px 0 0',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    zIndex: 10,
+                }}>
+                    <div>
+                        <h3 style={{ color: 'white', fontSize: '1.1rem', fontWeight: 700, margin: 0 }}>
+                            🧪 RM Data: {perFormulaRmMfc}
+                        </h3>
+                        <p style={{ color: 'rgba(255,255,255,0.9)', fontSize: '0.85rem', marginTop: '4px' }}>
+                            {perFormulaRmFormulaName} • {isMatched ? `✓ ${sortedData.length} materials` : `✗ ${sortedData.length} batches without RM`}
+                        </p>
+                    </div>
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                        {/* View Mode Toggle */}
+                        <div style={{
+                            display: 'flex',
+                            background: 'rgba(255,255,255,0.2)',
+                            borderRadius: '8px',
+                            padding: '3px',
+                        }}>
+                            <button
+                                onClick={() => setRmViewMode('table')}
+                                style={{
+                                    padding: '6px 12px',
+                                    border: 'none',
+                                    borderRadius: '6px',
+                                    fontSize: '0.8rem',
+                                    fontWeight: 600,
+                                    cursor: 'pointer',
+                                    background: rmViewMode === 'table' ? 'white' : 'transparent',
+                                    color: rmViewMode === 'table' ? primaryColor : 'white',
+                                    transition: 'all 0.2s',
+                                }}
+                            >
+                                📊 Table
+                            </button>
+                            <button
+                                onClick={() => setRmViewMode('file')}
+                                style={{
+                                    padding: '6px 12px',
+                                    border: 'none',
+                                    borderRadius: '6px',
+                                    fontSize: '0.8rem',
+                                    fontWeight: 600,
+                                    cursor: 'pointer',
+                                    background: rmViewMode === 'file' ? 'white' : 'transparent',
+                                    color: rmViewMode === 'file' ? primaryColor : 'white',
+                                    transition: 'all 0.2s',
+                                }}
+                            >
+                                📁 File
+                            </button>
+                        </div>
+                        <button
+                            onClick={closePerFormulaRmModal}
+                            style={{
+                                background: 'rgba(255,255,255,0.2)',
+                                border: 'none',
+                                borderRadius: '8px',
+                                padding: '8px 12px',
+                                color: 'white',
+                                fontSize: '1rem',
+                                cursor: 'pointer',
+                                fontWeight: 600,
+                            }}
+                        >
+                            ✕ Close
+                        </button>
+                    </div>
+                </div>
+
+                {/* Modal Body */}
+                <div style={{ padding: '20px 24px' }}>
+                    {perFormulaRmLoading && (
+                        <div style={{ textAlign: 'center', padding: '40px' }}>
+                            <svg className="animate-spin" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke={primaryColor} strokeWidth="2">
+                                <path d="M21 12a9 9 0 11-6.219-8.56" strokeLinecap="round" />
+                            </svg>
+                            <p style={{ marginTop: '12px', color: '#6b7280' }}>Loading RM data...</p>
+                        </div>
+                    )}
+
+                    {perFormulaRmError && (
+                        <div style={{ background: '#fef2f2', padding: '16px', borderRadius: '8px', textAlign: 'center' }}>
+                            <p style={{ color: '#dc2626', fontWeight: 600 }}>{perFormulaRmError}</p>
+                        </div>
+                    )}
+
+                    {!perFormulaRmLoading && !perFormulaRmError && sortedData.length > 0 && (
+                        rmViewMode === 'table' ? (
+                            // TABLE VIEW
+                            <div style={{
+                                background: '#f9fafb',
+                                borderRadius: '12px',
+                                border: '1px solid #e5e7eb',
+                                overflow: 'hidden',
+                            }}>
+                                <div style={{ overflowX: 'auto', maxHeight: '400px', overflowY: 'auto' }}>
+                                    <table style={{ width: '100%', minWidth: '900px', borderCollapse: 'collapse' }}>
+                                        <thead style={{ position: 'sticky', top: 0, zIndex: 5 }}>
+                                            <tr style={{
+                                                background: isMatched ? '#f0fdf4' : '#fef2f2',
+                                                borderBottom: `2px solid ${isMatched ? '#bbf7d0' : '#fecaca'}`,
+                                            }}>
+                                                {columns.map(col => (
+                                                    <th
+                                                        key={col.id}
+                                                        onClick={() => toggleRmSort(col.id)}
+                                                        style={{
+                                                            padding: '10px 8px',
+                                                            textAlign: 'left',
+                                                            fontWeight: 600,
+                                                            fontSize: '0.75rem',
+                                                            color: rmSortColumn === col.id ? primaryColor : '#4b5563',
+                                                            cursor: 'pointer',
+                                                            whiteSpace: 'nowrap',
+                                                            background: col.highlight ? '#fef3c7' : 'inherit',
+                                                            transition: 'all 0.2s',
+                                                            userSelect: 'none',
+                                                        }}
+                                                    >
+                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                            {col.label}
+                                                            <span style={{ fontSize: '0.7rem', opacity: rmSortColumn === col.id ? 1 : 0.3 }}>
+                                                                {rmSortColumn === col.id ? (rmSortDirection === 'asc' ? '↑' : '↓') : '↕'}
+                                                            </span>
+                                                        </div>
+                                                    </th>
+                                                ))}
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {sortedData.slice(0, 300).map((item: any, idx: number) => (
+                                                <tr
+                                                    key={idx}
+                                                    style={{
+                                                        background: idx % 2 === 0 ? 'white' : '#fafafa',
+                                                        borderBottom: '1px solid #f3f4f6',
+                                                        transition: 'background 0.15s',
+                                                    }}
+                                                    onMouseEnter={e => e.currentTarget.style.background = isMatched ? '#f0fdf4' : '#fef2f2'}
+                                                    onMouseLeave={e => e.currentTarget.style.background = idx % 2 === 0 ? 'white' : '#fafafa'}
+                                                >
+                                                    {isMatched ? (
+                                                        <>
+                                                            <td style={{ padding: '8px', fontSize: '0.75rem', fontFamily: 'monospace', color: '#6b7280' }}>{item.matReqNo || 'N/A'}</td>
+                                                            <td style={{ padding: '8px', fontFamily: 'monospace', fontWeight: 600, color: '#059669', fontSize: '0.8rem' }}>{item.batchNumber || 'N/A'}</td>
+                                                            <td style={{ padding: '8px', color: '#374151', fontWeight: 500, fontSize: '0.8rem', maxWidth: '220px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item.materialName}>{item.materialName || 'N/A'}</td>
+                                                            <td style={{ padding: '8px', fontFamily: 'monospace', fontSize: '0.7rem', color: '#6b7280' }}>{item.materialCode || 'N/A'}</td>
+                                                            <td style={{ padding: '8px', background: '#fef3c7', fontFamily: 'monospace', fontWeight: 700, color: '#d97706', fontSize: '0.75rem' }}>{item.arNo || 'N/A'}</td>
+                                                            <td style={{ padding: '8px', color: '#7c3aed', fontWeight: 600, fontSize: '0.8rem' }}>{item.quantityRequired || 0}</td>
+                                                            <td style={{ padding: '8px', color: '#0891b2', fontWeight: 600, fontSize: '0.8rem' }}>{item.quantityToIssue || 0}</td>
+                                                        </>
+                                                    ) : (
+                                                        <>
+                                                            <td style={{ padding: '8px', fontFamily: 'monospace', fontWeight: 700, color: '#dc2626', fontSize: '0.85rem' }}>{item.batchNumber || 'N/A'}</td>
+                                                            <td style={{ padding: '8px', fontFamily: 'monospace', fontSize: '0.7rem', color: '#6b7280' }}>{item.itemCode || 'N/A'}</td>
+                                                            <td style={{ padding: '8px', color: '#374151', fontWeight: 500, fontSize: '0.8rem', maxWidth: '220px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item.itemName}>{item.itemName || 'N/A'}</td>
+                                                            <td style={{ padding: '8px', fontSize: '0.75rem', color: '#6b7280' }}>{item.mfgDate || 'N/A'}</td>
+                                                            <td style={{ padding: '8px', fontSize: '0.75rem', color: '#dc2626', fontWeight: 600 }}>{item.expiryDate || 'N/A'}</td>
+                                                            <td style={{ padding: '8px', color: '#7c3aed', fontWeight: 600, fontSize: '0.8rem' }}>{item.batchSize || 'N/A'}</td>
+                                                        </>
+                                                    )}
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        ) : (
+                            // FILE VIEW
+                            <div style={{
+                                background: '#f9fafb',
+                                borderRadius: '12px',
+                                border: '1px solid #e5e7eb',
+                                overflow: 'hidden',
+                            }}>
+                                {/* Sort controls */}
+                                <div style={{
+                                    display: 'flex',
+                                    gap: '8px',
+                                    padding: '12px 16px',
+                                    background: isMatched ? '#f0fdf4' : '#fef2f2',
+                                    borderBottom: `1px solid ${isMatched ? '#bbf7d0' : '#fecaca'}`,
+                                    flexWrap: 'wrap',
+                                    alignItems: 'center',
+                                }}>
+                                    <span style={{ fontSize: '0.75rem', color: primaryColor, fontWeight: 600 }}>Sort by:</span>
+                                    {[
+                                        { id: 'batchNumber', label: 'Batch No' },
+                                        { id: isMatched ? 'materialName' : 'itemName', label: isMatched ? 'Material' : 'Item' },
+                                    ].map(opt => (
+                                        <button
+                                            key={opt.id}
+                                            onClick={() => toggleRmSort(opt.id)}
+                                            style={{
+                                                padding: '4px 10px',
+                                                border: '1px solid',
+                                                borderColor: rmSortColumn === opt.id ? primaryColor : '#d1d5db',
+                                                borderRadius: '6px',
+                                                fontSize: '0.75rem',
+                                                fontWeight: 600,
+                                                cursor: 'pointer',
+                                                background: rmSortColumn === opt.id ? (isMatched ? '#d1fae5' : '#fee2e2') : 'white',
+                                                color: rmSortColumn === opt.id ? primaryColor : '#6b7280',
+                                                transition: 'all 0.2s',
+                                            }}
+                                        >
+                                            {opt.label} {rmSortColumn === opt.id ? (rmSortDirection === 'asc' ? '↑' : '↓') : ''}
+                                        </button>
+                                    ))}
+                                </div>
+                                {/* Batch Groups */}
+                                <div style={{ maxHeight: '400px', overflowY: 'auto' }}>
+                                    {Array.from(groupedByBatch.entries()).slice(0, 50).map(([batchNumber, items], groupIdx) => {
+                                        const isExpanded = expandedRmBatches.has(batchNumber);
+                                        return (
+                                            <div key={batchNumber} style={{ borderBottom: groupIdx < groupedByBatch.size - 1 ? '1px solid #e5e7eb' : 'none' }}>
+                                                <button
+                                                    onClick={() => toggleRmBatchExpand(batchNumber)}
+                                                    style={{
+                                                        width: '100%',
+                                                        display: 'flex',
+                                                        alignItems: 'center',
+                                                        gap: '12px',
+                                                        padding: '12px 16px',
+                                                        background: isExpanded ? (isMatched ? '#ecfdf5' : '#fef2f2') : 'white',
+                                                        border: 'none',
+                                                        cursor: 'pointer',
+                                                        textAlign: 'left',
+                                                        transition: 'background 0.15s ease',
+                                                    }}
+                                                >
+                                                    <div style={{
+                                                        width: '22px', height: '22px', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                                        borderRadius: '5px', background: isExpanded ? primaryColor : '#e5e7eb', color: isExpanded ? 'white' : '#6b7280',
+                                                        transition: 'all 0.2s ease', transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)',
+                                                        fontSize: '0.7rem', fontWeight: 700, flexShrink: 0,
+                                                    }}>▶</div>
+                                                    <div style={{ fontSize: '0.8rem', fontWeight: 600, color: '#9ca3af', minWidth: '28px' }}>#{groupIdx + 1}</div>
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                                        <span style={{ fontSize: '1rem' }}>📁</span>
+                                                        <span style={{ fontFamily: 'monospace', fontSize: '0.95rem', fontWeight: 700, color: primaryColor }}>{batchNumber}</span>
+                                                    </div>
+                                                    <div style={{ fontSize: '0.75rem', color: '#6b7280', background: isMatched ? '#d1fae5' : '#fee2e2', padding: '2px 8px', borderRadius: '10px' }}>
+                                                        {items.length} {isMatched ? 'material' : 'item'}{items.length !== 1 ? 's' : ''}
+                                                    </div>
+                                                </button>
+                                                {isExpanded && (
+                                                    <div style={{ background: '#fafafa', padding: '8px 16px 12px 50px' }}>
+                                                        {items.map((item: any, itemIdx: number) => (
+                                                            <div key={itemIdx} style={{
+                                                                display: 'grid',
+                                                                gridTemplateColumns: isMatched ? '28px 1fr 100px 90px' : '28px 100px 1fr 80px',
+                                                                gap: '10px',
+                                                                padding: '10px 12px',
+                                                                background: itemIdx % 2 === 0 ? 'white' : '#f9fafb',
+                                                                borderRadius: '8px',
+                                                                marginBottom: itemIdx < items.length - 1 ? '6px' : 0,
+                                                                border: `1px solid ${isMatched ? '#d1fae5' : '#fee2e2'}`,
+                                                                fontSize: '0.8rem',
+                                                            }}>
+                                                                <div style={{ fontSize: '0.7rem', fontWeight: 600, color: '#9ca3af' }}>{itemIdx + 1}.</div>
+                                                                {isMatched ? (
+                                                                    <>
+                                                                        <div style={{ color: '#374151', fontWeight: 500 }}>{item.materialName || 'N/A'}</div>
+                                                                        <div style={{ background: '#fef3c7', padding: '2px 6px', borderRadius: '4px', fontFamily: 'monospace', fontWeight: 700, color: '#d97706', fontSize: '0.7rem', textAlign: 'center' }}>{item.arNo || 'N/A'}</div>
+                                                                        <div style={{ color: '#7c3aed', fontWeight: 600, textAlign: 'right' }}>{item.quantityRequired || 0}</div>
+                                                                    </>
+                                                                ) : (
+                                                                    <>
+                                                                        <div style={{ fontFamily: 'monospace', fontSize: '0.75rem', color: '#6b7280' }}>{item.itemCode || 'N/A'}</div>
+                                                                        <div style={{ color: '#374151', fontWeight: 500 }}>{item.itemName || 'N/A'}</div>
+                                                                        <div style={{ color: '#dc2626', fontWeight: 600, textAlign: 'right' }}>{item.expiryDate || 'N/A'}</div>
+                                                                    </>
+                                                                )}
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        )
+                    )}
+
+                    {!perFormulaRmLoading && !perFormulaRmError && sortedData.length === 0 && (
+                        <div style={{ textAlign: 'center', padding: '40px', color: '#6b7280' }}>
+                            <span style={{ fontSize: '3rem' }}>{isMatched ? '📭' : '🎉'}</span>
+                            <p style={{ marginTop: '12px', fontWeight: 500 }}>
+                                {isMatched ? 'No RM materials found for this formula' : 'All batches for this formula have RM data!'}
+                            </p>
+                        </div>
+                    )}
+                </div>
+            </div>
+        );
+    };
+
+    const PerFormulaPpmModal = () => {
+        if (!perFormulaPpmModalOpen) return null;
+
+        const togglePpmSort = (column: string) => {
+            if (ppmSortColumn === column) {
+                setPpmSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
+            } else {
+                setPpmSortColumn(column);
+                setPpmSortDirection('asc');
+            }
+        };
+
+        const sortedData = [...perFormulaPpmData].sort((a, b) => {
+            const valA = a[ppmSortColumn] ?? '';
+            const valB = b[ppmSortColumn] ?? '';
+            if (typeof valA === 'number' && typeof valB === 'number') {
+                return ppmSortDirection === 'asc' ? valA - valB : valB - valA;
+            }
+            const strA = String(valA).toLowerCase();
+            const strB = String(valB).toLowerCase();
+            if (strA < strB) return ppmSortDirection === 'asc' ? -1 : 1;
+            if (strA > strB) return ppmSortDirection === 'asc' ? 1 : -1;
+            return 0;
+        });
+
+        const groupedByBatch = new Map<string, any[]>();
+        sortedData.forEach((item: any) => {
+            const bn = item.batchNumber || 'Unknown';
+            if (!groupedByBatch.has(bn)) {
+                groupedByBatch.set(bn, []);
+            }
+            groupedByBatch.get(bn)!.push(item);
+        });
+
+        const isMatched = perFormulaPpmType === 'matched';
+        const primaryColor = isMatched ? '#2563eb' : '#dc2626';
+        const bgGradient = isMatched
+            ? 'linear-gradient(135deg, #2563eb 0%, #3b82f6 100%)'
+            : 'linear-gradient(135deg, #dc2626 0%, #ef4444 100%)';
+
+        const matchedColumns: ColumnDef[] = [
+            { id: 'matReqNo', label: 'Slip No' },
+            { id: 'batchNumber', label: 'Batch No' },
+            { id: 'materialName', label: 'Material Name' },
+            { id: 'materialCode', label: 'Code' },
+            { id: 'arNo', label: 'AR No', highlight: true },
+            { id: 'quantityRequired', label: 'Qty Req' },
+            { id: 'quantityToIssue', label: 'Qty Issue' },
+        ];
+
+        const unmatchedColumns: ColumnDef[] = [
+            { id: 'batchNumber', label: 'Batch No' },
+            { id: 'itemCode', label: 'Item Code' },
+            { id: 'itemName', label: 'Item Name' },
+            { id: 'mfgDate', label: 'Mfg Date' },
+            { id: 'expiryDate', label: 'Expiry' },
+            { id: 'batchSize', label: 'Batch Size' },
+        ];
+
+        const columns = isMatched ? matchedColumns : unmatchedColumns;
+
+        return (
+            <div style={{
+                position: 'fixed',
+                top: '50%',
+                left: '50%',
+                transform: 'translate(-50%, -50%)',
+                zIndex: 1001,
+                width: '95%',
+                maxWidth: '1100px',
+                maxHeight: '85vh',
+                overflowY: 'auto',
+                background: 'white',
+                borderRadius: '16px',
+                boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+                border: '2px solid #e5e7eb',
+            }}>
+                <div style={{
+                    position: 'sticky',
+                    top: 0,
+                    background: bgGradient,
+                    padding: '16px 24px',
+                    borderRadius: '14px 14px 0 0',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    zIndex: 10,
+                }}>
+                    <div>
+                        <h3 style={{ color: 'white', fontSize: '1.1rem', fontWeight: 700, margin: 0 }}>
+                            📦 PPM Data: {perFormulaPpmMfc}
+                        </h3>
+                        <p style={{ color: 'rgba(255,255,255,0.9)', fontSize: '0.85rem', marginTop: '4px' }}>
+                            {perFormulaPpmFormulaName} • {isMatched ? `✓ ${sortedData.length} materials` : `✗ ${sortedData.length} batches without PPM`}
+                        </p>
+                    </div>
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                        <div style={{
+                            display: 'flex',
+                            background: 'rgba(255,255,255,0.2)',
+                            borderRadius: '8px',
+                            padding: '3px',
+                        }}>
+                            <button
+                                onClick={() => setPpmViewMode('table')}
+                                style={{
+                                    padding: '6px 12px',
+                                    border: 'none',
+                                    borderRadius: '6px',
+                                    fontSize: '0.8rem',
+                                    fontWeight: 600,
+                                    cursor: 'pointer',
+                                    background: ppmViewMode === 'table' ? 'white' : 'transparent',
+                                    color: ppmViewMode === 'table' ? primaryColor : 'white',
+                                    transition: 'all 0.2s',
+                                }}
+                            >
+                                📊 Table
+                            </button>
+                            <button
+                                onClick={() => setPpmViewMode('file')}
+                                style={{
+                                    padding: '6px 12px',
+                                    border: 'none',
+                                    borderRadius: '6px',
+                                    fontSize: '0.8rem',
+                                    fontWeight: 600,
+                                    cursor: 'pointer',
+                                    background: ppmViewMode === 'file' ? 'white' : 'transparent',
+                                    color: ppmViewMode === 'file' ? primaryColor : 'white',
+                                    transition: 'all 0.2s',
+                                }}
+                            >
+                                📁 File
+                            </button>
+                        </div>
+                        <button
+                            onClick={() => setPerFormulaPpmModalOpen(false)}
+                            style={{
+                                background: 'rgba(255,255,255,0.2)',
+                                border: 'none',
+                                borderRadius: '8px',
+                                padding: '8px 12px',
+                                color: 'white',
+                                fontSize: '1rem',
+                                cursor: 'pointer',
+                                fontWeight: 600,
+                            }}
+                        >
+                            ✕ Close
+                        </button>
+                    </div>
+                </div>
+
+                <div style={{ padding: '20px 24px' }}>
+                    {perFormulaPpmLoading && (
+                        <div style={{ textAlign: 'center', padding: '40px' }}>
+                            <svg className="animate-spin" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke={primaryColor} strokeWidth="2">
+                                <path d="M21 12a9 9 0 11-6.219-8.56" strokeLinecap="round" />
+                            </svg>
+                            <p style={{ marginTop: '12px', color: '#6b7280' }}>Loading PPM data...</p>
+                        </div>
+                    )}
+
+                    {perFormulaPpmError && (
+                        <div style={{ background: '#fef2f2', padding: '16px', borderRadius: '8px', textAlign: 'center' }}>
+                            <p style={{ color: '#dc2626', fontWeight: 600 }}>{perFormulaPpmError}</p>
+                        </div>
+                    )}
+
+                    {!perFormulaPpmLoading && !perFormulaPpmError && sortedData.length > 0 && (
+                        ppmViewMode === 'table' ? (
+                            <div style={{ background: '#f9fafb', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+                                <div style={{ overflowX: 'auto', maxHeight: '400px', overflowY: 'auto' }}>
+                                    <table style={{ width: '100%', minWidth: '900px', borderCollapse: 'collapse' }}>
+                                        <thead style={{ position: 'sticky', top: 0, zIndex: 5 }}>
+                                            <tr style={{ background: isMatched ? '#eff6ff' : '#fef2f2', borderBottom: `2px solid ${isMatched ? '#bfdbfe' : '#fecaca'}` }}>
+                                                {columns.map(col => (
+                                                    <th
+                                                        key={col.id}
+                                                        onClick={() => togglePpmSort(col.id)}
+                                                        style={{
+                                                            padding: '10px 8px',
+                                                            textAlign: 'left',
+                                                            fontWeight: 600,
+                                                            fontSize: '0.75rem',
+                                                            color: ppmSortColumn === col.id ? primaryColor : '#4b5563',
+                                                            cursor: 'pointer',
+                                                            whiteSpace: 'nowrap',
+                                                            background: col.highlight ? '#fef3c7' : 'inherit',
+                                                            transition: 'all 0.2s',
+                                                            userSelect: 'none',
+                                                        }}
+                                                    >
+                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                            {col.label}
+                                                            <span style={{ fontSize: '0.7rem', opacity: ppmSortColumn === col.id ? 1 : 0.3 }}>
+                                                                {ppmSortColumn === col.id ? (ppmSortDirection === 'asc' ? '↑' : '↓') : '↕'}
+                                                            </span>
+                                                        </div>
+                                                    </th>
+                                                ))}
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {sortedData.slice(0, 300).map((item: any, idx: number) => (
+                                                <tr key={idx} style={{ background: idx % 2 === 0 ? 'white' : '#fafafa', borderBottom: '1px solid #f3f4f6' }}>
+                                                    {isMatched ? (
+                                                        <>
+                                                            <td style={{ padding: '8px', fontSize: '0.75rem', fontFamily: 'monospace', color: '#6b7280' }}>{item.matReqNo || 'N/A'}</td>
+                                                            <td style={{ padding: '8px', fontFamily: 'monospace', fontWeight: 600, color: '#2563eb', fontSize: '0.8rem' }}>{item.batchNumber || 'N/A'}</td>
+                                                            <td style={{ padding: '8px', color: '#374151', fontWeight: 500, fontSize: '0.8rem', maxWidth: '220px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item.materialName}>{item.materialName || 'N/A'}</td>
+                                                            <td style={{ padding: '8px', fontFamily: 'monospace', fontSize: '0.7rem', color: '#6b7280' }}>{item.materialCode || 'N/A'}</td>
+                                                            <td style={{ padding: '8px', background: '#fef3c7', fontFamily: 'monospace', fontWeight: 700, color: '#d97706', fontSize: '0.75rem' }}>{item.arNo || 'N/A'}</td>
+                                                            <td style={{ padding: '8px', color: '#7c3aed', fontWeight: 600, fontSize: '0.8rem' }}>{item.quantityRequired || 0}</td>
+                                                            <td style={{ padding: '8px', color: '#0891b2', fontWeight: 600, fontSize: '0.8rem' }}>{item.quantityToIssue || 0}</td>
+                                                        </>
+                                                    ) : (
+                                                        <>
+                                                            <td style={{ padding: '8px', fontFamily: 'monospace', fontWeight: 700, color: '#dc2626', fontSize: '0.85rem' }}>{item.batchNumber || 'N/A'}</td>
+                                                            <td style={{ padding: '8px', fontFamily: 'monospace', fontSize: '0.7rem', color: '#6b7280' }}>{item.itemCode || 'N/A'}</td>
+                                                            <td style={{ padding: '8px', color: '#374151', fontWeight: 500, fontSize: '0.8rem', maxWidth: '220px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item.itemName}>{item.itemName || 'N/A'}</td>
+                                                            <td style={{ padding: '8px', fontSize: '0.75rem', color: '#6b7280' }}>{item.mfgDate || 'N/A'}</td>
+                                                            <td style={{ padding: '8px', fontSize: '0.75rem', color: '#dc2626', fontWeight: 600 }}>{item.expiryDate || 'N/A'}</td>
+                                                            <td style={{ padding: '8px', color: '#7c3aed', fontWeight: 600, fontSize: '0.8rem' }}>{item.batchSize || 'N/A'}</td>
+                                                        </>
+                                                    )}
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        ) : (
+                            <div style={{ background: '#f9fafb', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+                                <div style={{ display: 'flex', gap: '8px', padding: '12px 16px', background: isMatched ? '#eff6ff' : '#fef2f2', borderBottom: `1px solid ${isMatched ? '#bfdbfe' : '#fecaca'}`, alignItems: 'center' }}>
+                                    <span style={{ fontSize: '0.75rem', color: primaryColor, fontWeight: 600 }}>Sort by:</span>
+                                    {[{ id: 'batchNumber', label: 'Batch No' }, { id: isMatched ? 'materialName' : 'itemName', label: isMatched ? 'Material' : 'Item' }].map(opt => (
+                                        <button
+                                            key={opt.id}
+                                            onClick={() => togglePpmSort(opt.id)}
+                                            style={{
+                                                padding: '4px 10px',
+                                                border: '1px solid',
+                                                borderColor: ppmSortColumn === opt.id ? primaryColor : '#d1d5db',
+                                                borderRadius: '6px',
+                                                fontSize: '0.75rem',
+                                                fontWeight: 600,
+                                                cursor: 'pointer',
+                                                background: ppmSortColumn === opt.id ? (isMatched ? '#dbeafe' : '#fee2e2') : 'white',
+                                                color: ppmSortColumn === opt.id ? primaryColor : '#6b7280',
+                                            }}
+                                        >
+                                            {opt.label} {ppmSortColumn === opt.id ? (ppmSortDirection === 'asc' ? '↑' : '↓') : ''}
+                                        </button>
+                                    ))}
+                                </div>
+                                <div style={{ maxHeight: '400px', overflowY: 'auto' }}>
+                                    {Array.from(groupedByBatch.entries()).slice(0, 50).map(([batchNumber, items], groupIdx) => {
+                                        const isExpanded = expandedPpmBatches.has(batchNumber);
+                                        return (
+                                            <div key={batchNumber} style={{ borderBottom: '1px solid #e5e7eb' }}>
+                                                <button
+                                                    onClick={() => togglePpmBatchExpand(batchNumber)}
+                                                    style={{ width: '100%', display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 16px', background: isExpanded ? (isMatched ? '#f0f7ff' : '#fef2f2') : 'white', border: 'none', cursor: 'pointer', textAlign: 'left' }}
+                                                >
+                                                    <div style={{ width: '22px', height: '22px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '5px', background: isExpanded ? primaryColor : '#e5e7eb', color: isExpanded ? 'white' : '#6b7280', transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)', fontSize: '0.7rem', fontWeight: 700 }}>▶</div>
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                                        <span style={{ fontSize: '1rem' }}>📁</span>
+                                                        <span style={{ fontFamily: 'monospace', fontSize: '0.95rem', fontWeight: 700, color: primaryColor }}>{batchNumber}</span>
+                                                    </div>
+                                                    <div style={{ fontSize: '0.75rem', color: '#6b7280', background: isMatched ? '#dbeafe' : '#fee2e2', padding: '2px 8px', borderRadius: '10px' }}>{items.length} {isMatched ? 'material' : 'item'}{items.length !== 1 ? 's' : ''}</div>
+                                                </button>
+                                                {isExpanded && (
+                                                    <div style={{ background: '#fafafa', padding: '8px 16px 12px 50px' }}>
+                                                        {items.map((item: any, itemIdx: number) => (
+                                                            <div key={itemIdx} style={{ display: 'grid', gridTemplateColumns: isMatched ? '28px 1fr 100px 90px' : '28px 100px 1fr 80px', gap: '10px', padding: '10px 12px', background: 'white', borderRadius: '8px', marginBottom: '6px', border: `1px solid ${isMatched ? '#bfdbfe' : '#fecaca'}`, fontSize: '0.8rem' }}>
+                                                                <div style={{ fontSize: '0.7rem', fontWeight: 600, color: '#9ca3af' }}>{itemIdx + 1}.</div>
+                                                                {isMatched ? (
+                                                                    <>
+                                                                        <div style={{ color: '#374151', fontWeight: 500 }}>{item.materialName || 'N/A'}</div>
+                                                                        <div style={{ background: '#fef3c7', padding: '2px 6px', borderRadius: '4px', fontFamily: 'monospace', fontWeight: 700, color: '#d97706', fontSize: '0.7rem', textAlign: 'center' }}>{item.arNo || 'N/A'}</div>
+                                                                        <div style={{ color: '#7c3aed', fontWeight: 600, textAlign: 'right' }}>{item.quantityRequired || 0}</div>
+                                                                    </>
+                                                                ) : (
+                                                                    <>
+                                                                        <div style={{ fontFamily: 'monospace', fontSize: '0.75rem', color: '#6b7280' }}>{item.itemCode || 'N/A'}</div>
+                                                                        <div style={{ color: '#374151', fontWeight: 500 }}>{item.itemName || 'N/A'}</div>
+                                                                        <div style={{ color: '#dc2626', fontWeight: 600, textAlign: 'right' }}>{item.expiryDate || 'N/A'}</div>
+                                                                    </>
+                                                                )}
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        )
+                    )}
+
+                    {!perFormulaPpmLoading && !perFormulaPpmError && sortedData.length === 0 && (
+                        <div style={{ textAlign: 'center', padding: '40px', color: '#6b7280' }}>
+                            <span style={{ fontSize: '3rem' }}>{isMatched ? '📭' : '🎉'}</span>
+                            <p style={{ marginTop: '12px', fontWeight: 500 }}>
+                                {isMatched ? 'No PPM materials found for this formula' : 'All batches for this formula have PPM data!'}
+                            </p>
+                        </div>
+                    )}
+                </div>
+            </div>
+        );
+    };
+
+    const PerFormulaPmModal = () => {
+        if (!perFormulaPmModalOpen) return null;
+
+        const togglePmSort = (column: string) => {
+            if (pmSortColumn === column) {
+                setPmSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
+            } else {
+                setPmSortColumn(column);
+                setPmSortDirection('asc');
+            }
+        };
+
+        const sortedData = [...perFormulaPmData].sort((a, b) => {
+            const valA = a[pmSortColumn] ?? '';
+            const valB = b[pmSortColumn] ?? '';
+            if (typeof valA === 'number' && typeof valB === 'number') {
+                return pmSortDirection === 'asc' ? valA - valB : valB - valA;
+            }
+            const strA = String(valA).toLowerCase();
+            const strB = String(valB).toLowerCase();
+            if (strA < strB) return pmSortDirection === 'asc' ? -1 : 1;
+            if (strA > strB) return pmSortDirection === 'asc' ? 1 : -1;
+            return 0;
+        });
+
+        const groupedByBatch = new Map<string, any[]>();
+        sortedData.forEach((item: any) => {
+            const bn = item.batchNumber || 'Unknown';
+            if (!groupedByBatch.has(bn)) {
+                groupedByBatch.set(bn, []);
+            }
+            groupedByBatch.get(bn)!.push(item);
+        });
+
+        const isMatched = perFormulaPmType === 'matched';
+        const primaryColor = isMatched ? '#7c3aed' : '#dc2626';
+        const bgGradient = isMatched
+            ? 'linear-gradient(135deg, #6d28d9 0%, #7c3aed 100%)'
+            : 'linear-gradient(135deg, #dc2626 0%, #ef4444 100%)';
+
+        const matchedColumns: ColumnDef[] = [
+            { id: 'matReqNo', label: 'Slip No' },
+            { id: 'batchNumber', label: 'Batch No' },
+            { id: 'materialName', label: 'Material Name' },
+            { id: 'materialCode', label: 'Code' },
+            { id: 'arNo', label: 'AR No', highlight: true },
+            { id: 'quantityRequired', label: 'Qty Req' },
+            { id: 'quantityToIssue', label: 'Qty Issue' },
+        ];
+
+        const unmatchedColumns: ColumnDef[] = [
+            { id: 'batchNumber', label: 'Batch No' },
+            { id: 'itemCode', label: 'Item Code' },
+            { id: 'itemName', label: 'Item Name' },
+            { id: 'mfgDate', label: 'Mfg Date' },
+            { id: 'expiryDate', label: 'Expiry' },
+            { id: 'batchSize', label: 'Batch Size' },
+        ];
+
+        const columns = isMatched ? matchedColumns : unmatchedColumns;
+
+        return (
+            <div style={{
+                position: 'fixed',
+                top: '50%',
+                left: '50%',
+                transform: 'translate(-50%, -50%)',
+                zIndex: 1001,
+                width: '95%',
+                maxWidth: '1100px',
+                maxHeight: '85vh',
+                overflowY: 'auto',
+                background: 'white',
+                borderRadius: '16px',
+                boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+                border: '2px solid #e5e7eb',
+            }}>
+                <div style={{
+                    position: 'sticky',
+                    top: 0,
+                    background: bgGradient,
+                    padding: '16px 24px',
+                    borderRadius: '14px 14px 0 0',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    zIndex: 10,
+                }}>
+                    <div>
+                        <h3 style={{ color: 'white', fontSize: '1.1rem', fontWeight: 700, margin: 0 }}>
+                            📦 PM Data: {perFormulaPmMfc}
+                        </h3>
+                        <p style={{ color: 'rgba(255,255,255,0.9)', fontSize: '0.85rem', marginTop: '4px' }}>
+                            {perFormulaPmFormulaName} • {isMatched ? `✓ ${sortedData.length} materials` : `✗ ${sortedData.length} batches without PM`}
+                        </p>
+                    </div>
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                        <div style={{
+                            display: 'flex',
+                            background: 'rgba(255,255,255,0.2)',
+                            borderRadius: '8px',
+                            padding: '3px',
+                        }}>
+                            <button
+                                onClick={() => setPmViewMode('table')}
+                                style={{
+                                    padding: '6px 12px',
+                                    border: 'none',
+                                    borderRadius: '6px',
+                                    fontSize: '0.8rem',
+                                    fontWeight: 600,
+                                    cursor: 'pointer',
+                                    background: pmViewMode === 'table' ? 'white' : 'transparent',
+                                    color: pmViewMode === 'table' ? primaryColor : 'white',
+                                    transition: 'all 0.2s',
+                                }}
+                            >
+                                📊 Table
+                            </button>
+                            <button
+                                onClick={() => setPmViewMode('file')}
+                                style={{
+                                    padding: '6px 12px',
+                                    border: 'none',
+                                    borderRadius: '6px',
+                                    fontSize: '0.8rem',
+                                    fontWeight: 600,
+                                    cursor: 'pointer',
+                                    background: pmViewMode === 'file' ? 'white' : 'transparent',
+                                    color: pmViewMode === 'file' ? primaryColor : 'white',
+                                    transition: 'all 0.2s',
+                                }}
+                            >
+                                📁 File
+                            </button>
+                        </div>
+                        <button
+                            onClick={() => setPerFormulaPmModalOpen(false)}
+                            style={{
+                                background: 'rgba(255,255,255,0.2)',
+                                border: 'none',
+                                borderRadius: '8px',
+                                padding: '8px 12px',
+                                color: 'white',
+                                fontSize: '1rem',
+                                cursor: 'pointer',
+                                fontWeight: 600,
+                            }}
+                        >
+                            ✕ Close
+                        </button>
+                    </div>
+                </div>
+
+                <div style={{ padding: '20px 24px' }}>
+                    {perFormulaPmLoading && (
+                        <div style={{ textAlign: 'center', padding: '40px' }}>
+                            <svg className="animate-spin" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke={primaryColor} strokeWidth="2">
+                                <path d="M21 12a9 9 0 11-6.219-8.56" strokeLinecap="round" />
+                            </svg>
+                            <p style={{ marginTop: '12px', color: '#6b7280' }}>Loading PM data...</p>
+                        </div>
+                    )}
+
+                    {perFormulaPmError && (
+                        <div style={{ background: '#fef2f2', padding: '16px', borderRadius: '8px', textAlign: 'center' }}>
+                            <p style={{ color: '#dc2626', fontWeight: 600 }}>{perFormulaPmError}</p>
+                        </div>
+                    )}
+
+                    {!perFormulaPmLoading && !perFormulaPmError && sortedData.length > 0 && (
+                        pmViewMode === 'table' ? (
+                            <div style={{ background: '#f9fafb', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+                                <div style={{ overflowX: 'auto', maxHeight: '400px', overflowY: 'auto' }}>
+                                    <table style={{ width: '100%', minWidth: '900px', borderCollapse: 'collapse' }}>
+                                        <thead style={{ position: 'sticky', top: 0, zIndex: 5 }}>
+                                            <tr style={{ background: isMatched ? '#f5f3ff' : '#fef2f2', borderBottom: `2px solid ${isMatched ? '#ddd6fe' : '#fecaca'}` }}>
+                                                {columns.map(col => (
+                                                    <th
+                                                        key={col.id}
+                                                        onClick={() => togglePmSort(col.id)}
+                                                        style={{
+                                                            padding: '10px 8px',
+                                                            textAlign: 'left',
+                                                            fontWeight: 600,
+                                                            fontSize: '0.75rem',
+                                                            color: pmSortColumn === col.id ? primaryColor : '#4b5563',
+                                                            cursor: 'pointer',
+                                                            whiteSpace: 'nowrap',
+                                                            background: col.highlight ? '#fef3c7' : 'inherit',
+                                                            transition: 'all 0.2s',
+                                                            userSelect: 'none',
+                                                        }}
+                                                    >
+                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                            {col.label}
+                                                            <span style={{ fontSize: '0.7rem', opacity: pmSortColumn === col.id ? 1 : 0.3 }}>
+                                                                {pmSortColumn === col.id ? (pmSortDirection === 'asc' ? '↑' : '↓') : '↕'}
+                                                            </span>
+                                                        </div>
+                                                    </th>
+                                                ))}
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {sortedData.slice(0, 300).map((item: any, idx: number) => (
+                                                <tr key={idx} style={{ background: idx % 2 === 0 ? 'white' : '#fafafa', borderBottom: '1px solid #f3f4f6' }}>
+                                                    {isMatched ? (
+                                                        <>
+                                                            <td style={{ padding: '8px', fontSize: '0.75rem', fontFamily: 'monospace', color: '#6b7280' }}>{item.matReqNo || 'N/A'}</td>
+                                                            <td style={{ padding: '8px', fontFamily: 'monospace', fontWeight: 600, color: '#7c3aed', fontSize: '0.8rem' }}>{item.batchNumber || 'N/A'}</td>
+                                                            <td style={{ padding: '8px', color: '#374151', fontWeight: 500, fontSize: '0.8rem', maxWidth: '220px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item.materialName}>{item.materialName || 'N/A'}</td>
+                                                            <td style={{ padding: '8px', fontFamily: 'monospace', fontSize: '0.7rem', color: '#6b7280' }}>{item.materialCode || 'N/A'}</td>
+                                                            <td style={{ padding: '8px', background: '#fef3c7', fontFamily: 'monospace', fontWeight: 700, color: '#d97706', fontSize: '0.75rem' }}>{item.arNo || 'N/A'}</td>
+                                                            <td style={{ padding: '8px', color: '#7c3aed', fontWeight: 600, fontSize: '0.8rem' }}>{item.quantityRequired || 0}</td>
+                                                            <td style={{ padding: '8px', color: '#0891b2', fontWeight: 600, fontSize: '0.8rem' }}>{item.quantityToIssue || 0}</td>
+                                                        </>
+                                                    ) : (
+                                                        <>
+                                                            <td style={{ padding: '8px', fontFamily: 'monospace', fontWeight: 700, color: '#dc2626', fontSize: '0.85rem' }}>{item.batchNumber || 'N/A'}</td>
+                                                            <td style={{ padding: '8px', fontFamily: 'monospace', fontSize: '0.7rem', color: '#6b7280' }}>{item.itemCode || 'N/A'}</td>
+                                                            <td style={{ padding: '8px', color: '#374151', fontWeight: 500, fontSize: '0.8rem', maxWidth: '220px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item.itemName}>{item.itemName || 'N/A'}</td>
+                                                            <td style={{ padding: '8px', fontSize: '0.75rem', color: '#6b7280' }}>{item.mfgDate || 'N/A'}</td>
+                                                            <td style={{ padding: '8px', fontSize: '0.75rem', color: '#dc2626', fontWeight: 600 }}>{item.expiryDate || 'N/A'}</td>
+                                                            <td style={{ padding: '8px', color: '#7c3aed', fontWeight: 600, fontSize: '0.8rem' }}>{item.batchSize || 'N/A'}</td>
+                                                        </>
+                                                    )}
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        ) : (
+                            <div style={{ background: '#f9fafb', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+                                <div style={{ display: 'flex', gap: '8px', padding: '12px 16px', background: isMatched ? '#f5f3ff' : '#fef2f2', borderBottom: `1px solid ${isMatched ? '#ddd6fe' : '#fecaca'}`, alignItems: 'center' }}>
+                                    <span style={{ fontSize: '0.75rem', color: primaryColor, fontWeight: 600 }}>Sort by:</span>
+                                    {[{ id: 'batchNumber', label: 'Batch No' }, { id: isMatched ? 'materialName' : 'itemName', label: isMatched ? 'Material' : 'Item' }].map(opt => (
+                                        <button
+                                            key={opt.id}
+                                            onClick={() => togglePmSort(opt.id)}
+                                            style={{
+                                                padding: '4px 10px',
+                                                border: '1px solid',
+                                                borderColor: pmSortColumn === opt.id ? primaryColor : '#d1d5db',
+                                                borderRadius: '6px',
+                                                fontSize: '0.75rem',
+                                                fontWeight: 600,
+                                                cursor: 'pointer',
+                                                background: pmSortColumn === opt.id ? (isMatched ? '#ede9fe' : '#fee2e2') : 'white',
+                                                color: pmSortColumn === opt.id ? primaryColor : '#6b7280',
+                                            }}
+                                        >
+                                            {opt.label} {pmSortColumn === opt.id ? (pmSortDirection === 'asc' ? '↑' : '↓') : ''}
+                                        </button>
+                                    ))}
+                                </div>
+                                <div style={{ maxHeight: '400px', overflowY: 'auto' }}>
+                                    {Array.from(groupedByBatch.entries()).slice(0, 50).map(([batchNumber, items], groupIdx) => {
+                                        const isExpanded = expandedPmBatches.has(batchNumber);
+                                        return (
+                                            <div key={batchNumber} style={{ borderBottom: '1px solid #e5e7eb' }}>
+                                                <button
+                                                    onClick={() => togglePmBatchExpand(batchNumber)}
+                                                    style={{ width: '100%', display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 16px', background: isExpanded ? (isMatched ? '#f5f3ff' : '#fef2f2') : 'white', border: 'none', cursor: 'pointer', textAlign: 'left' }}
+                                                >
+                                                    <div style={{ width: '22px', height: '22px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '5px', background: isExpanded ? primaryColor : '#e5e7eb', color: isExpanded ? 'white' : '#6b7280', transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)', fontSize: '0.7rem', fontWeight: 700 }}>▶</div>
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                                        <span style={{ fontSize: '1rem' }}>📁</span>
+                                                        <span style={{ fontFamily: 'monospace', fontSize: '0.95rem', fontWeight: 700, color: primaryColor }}>{batchNumber}</span>
+                                                    </div>
+                                                    <div style={{ fontSize: '0.75rem', color: '#6b7280', background: isMatched ? '#ede9fe' : '#fee2e2', padding: '2px 8px', borderRadius: '10px' }}>{items.length} {isMatched ? 'material' : 'item'}{items.length !== 1 ? 's' : ''}</div>
+                                                </button>
+                                                {isExpanded && (
+                                                    <div style={{ background: '#fafafa', padding: '8px 16px 12px 50px' }}>
+                                                        {items.map((item: any, itemIdx: number) => (
+                                                            <div key={itemIdx} style={{ display: 'grid', gridTemplateColumns: isMatched ? '28px 1fr 100px 90px' : '28px 100px 1fr 80px', gap: '10px', padding: '10px 12px', background: 'white', borderRadius: '8px', marginBottom: '6px', border: `1px solid ${isMatched ? '#ddd6fe' : '#fecaca'}`, fontSize: '0.8rem' }}>
+                                                                <div style={{ fontSize: '0.7rem', fontWeight: 600, color: '#9ca3af' }}>{itemIdx + 1}.</div>
+                                                                {isMatched ? (
+                                                                    <>
+                                                                        <div style={{ color: '#374151', fontWeight: 500 }}>{item.materialName || 'N/A'}</div>
+                                                                        <div style={{ background: '#fef3c7', padding: '2px 6px', borderRadius: '4px', fontFamily: 'monospace', fontWeight: 700, color: '#d97706', fontSize: '0.7rem', textAlign: 'center' }}>{item.arNo || 'N/A'}</div>
+                                                                        <div style={{ color: '#7c3aed', fontWeight: 600, textAlign: 'right' }}>{item.quantityRequired || 0}</div>
+                                                                    </>
+                                                                ) : (
+                                                                    <>
+                                                                        <div style={{ fontFamily: 'monospace', fontSize: '0.75rem', color: '#6b7280' }}>{item.itemCode || 'N/A'}</div>
+                                                                        <div style={{ color: '#374151', fontWeight: 500 }}>{item.itemName || 'N/A'}</div>
+                                                                        <div style={{ color: '#dc2626', fontWeight: 600, textAlign: 'right' }}>{item.expiryDate || 'N/A'}</div>
+                                                                    </>
+                                                                )}
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        )
+                    )}
+
+                    {!perFormulaPmLoading && !perFormulaPmError && sortedData.length === 0 && (
+                        <div style={{ textAlign: 'center', padding: '40px', color: '#6b7280' }}>
+                            <span style={{ fontSize: '3rem' }}>{isMatched ? '📭' : '🎉'}</span>
+                            <p style={{ marginTop: '12px', fontWeight: 500 }}>
+                                {isMatched ? 'No PM materials found for this formula' : 'All batches for this formula have PM data!'}
                             </p>
                         </div>
                     )}
@@ -2841,20 +5625,7 @@ export default function FormulaDataPage() {
                         🧪 {materialCount} materials
                     </div>
 
-                    {/* Revision */}
-                    <div style={{
-                        padding: '0.35rem 0.75rem',
-                        borderRadius: '10px',
-                        background: 'linear-gradient(135deg, rgba(253, 244, 255, 0.85) 0%, rgba(243, 232, 255, 0.75) 100%)',
-                        backdropFilter: 'blur(6px)',
-                        color: '#a855f7',
-                        fontSize: '0.72rem',
-                        fontWeight: '600',
-                        border: '1px solid rgba(243, 232, 255, 0.7)',
-                        boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.5)',
-                    }}>
-                        REV {formula.masterFormulaDetails.revisionNo || '0'}
-                    </div>
+
                 </button>
             </div>
         );
@@ -3003,240 +5774,566 @@ export default function FormulaDataPage() {
                     </div>
                 ) : (
                     <>
-                        {/* BATCH RECONCILIATION SUMMARY - Enhanced with vibrant colors & glass effect */}
-                        {batchReconciliation && (
+                        {/* BATCH & MFC RECONCILIATION SUMMARY - Compact with category breakdown */}
+                        <div style={{
+                            marginBottom: '1.5rem',
+                            background: 'linear-gradient(135deg, rgba(240, 249, 255, 0.9) 0%, rgba(250, 245, 255, 0.85) 50%, rgba(245, 243, 255, 0.9) 100%)',
+                            backdropFilter: 'blur(12px)',
+                            WebkitBackdropFilter: 'blur(12px)',
+                            borderRadius: '16px',
+                            border: '1px solid rgba(255,255,255,0.7)',
+                            padding: '16px 20px',
+                            position: 'relative',
+                            overflow: 'hidden',
+                            boxShadow: '0 4px 20px rgba(99, 102, 241, 0.12), inset 0 1px 0 rgba(255,255,255,0.8)',
+                        }}>
+                            {/* Decorative background */}
                             <div style={{
-                                marginBottom: '2rem',
-                                background: 'linear-gradient(135deg, rgba(240, 249, 255, 0.85) 0%, rgba(250, 245, 255, 0.8) 50%, rgba(245, 243, 255, 0.85) 100%)',
-                                backdropFilter: 'blur(12px)',
-                                WebkitBackdropFilter: 'blur(12px)',
-                                borderRadius: '22px',
-                                border: '1px solid rgba(255,255,255,0.7)',
-                                padding: '24px 28px',
+                                position: 'absolute',
+                                top: '-30%',
+                                right: '-3%',
+                                width: '120px',
+                                height: '120px',
+                                borderRadius: '50%',
+                                background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.08) 0%, rgba(59, 130, 246, 0.08) 100%)',
+                            }} />
+
+                            {/* Header Row - Unique MFCs + Title */}
+                            <div style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                marginBottom: '12px',
                                 position: 'relative',
-                                overflow: 'hidden',
-                                boxShadow: '0 8px 32px rgba(99, 102, 241, 0.15), inset 0 1px 0 rgba(255,255,255,0.8)',
+                                zIndex: 1,
                             }}>
-                                {/* Decorative background elements */}
-                                <div style={{
-                                    position: 'absolute',
-                                    top: '-20%',
-                                    right: '-5%',
-                                    width: '200px',
-                                    height: '200px',
-                                    borderRadius: '50%',
-                                    background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.1) 0%, rgba(59, 130, 246, 0.1) 100%)',
-                                }} />
-                                <div style={{
-                                    position: 'absolute',
-                                    bottom: '-30%',
-                                    left: '10%',
-                                    width: '150px',
-                                    height: '150px',
-                                    borderRadius: '50%',
-                                    background: 'linear-gradient(135deg, rgba(16, 185, 129, 0.08) 0%, rgba(6, 182, 212, 0.08) 100%)',
-                                }} />
-
-                                <div style={{
-                                    position: 'absolute',
-                                    top: '16px',
-                                    right: '20px',
-                                    background: batchReconciliation.allBatchesAccountedFor
-                                        ? 'linear-gradient(135deg, #059669 0%, #10b981 100%)'
-                                        : 'linear-gradient(135deg, #dc2626 0%, #ef4444 100%)',
-                                    color: 'white',
-                                    padding: '6px 16px',
-                                    borderRadius: '24px',
-                                    fontSize: '11px',
-                                    fontWeight: 700,
-                                    boxShadow: batchReconciliation.allBatchesAccountedFor
-                                        ? '0 4px 12px rgba(16, 185, 129, 0.3)'
-                                        : '0 4px 12px rgba(239, 68, 68, 0.3)',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    gap: '6px',
-                                }}>
-                                    {batchReconciliation.allBatchesAccountedFor ? '✅ ALL BATCHES ACCOUNTED' : '❌ BATCHES MISSING'}
-                                </div>
-
-                                <h2 style={{
-                                    color: '#1e293b',
-                                    fontSize: '17px',
-                                    fontWeight: 700,
-                                    marginBottom: '20px',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    gap: '10px',
-                                    position: 'relative',
-                                    zIndex: 1,
-                                }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                                     <span style={{
-                                        width: '36px',
-                                        height: '36px',
+                                        width: '28px',
+                                        height: '28px',
                                         background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
-                                        borderRadius: '10px',
+                                        borderRadius: '8px',
                                         display: 'flex',
                                         alignItems: 'center',
                                         justifyContent: 'center',
-                                        fontSize: '18px',
+                                        fontSize: '14px',
                                     }}>📊</span>
-                                    Batch Reconciliation Summary
-                                </h2>
-
-                                {/* Main Stats Cards */}
+                                    <h2 style={{
+                                        color: '#1e293b',
+                                        fontSize: '14px',
+                                        fontWeight: 700,
+                                        margin: 0,
+                                    }}>
+                                        Batch Reconciliation
+                                    </h2>
+                                </div>
+                                
+                                {/* Stats Badges */}
                                 <div style={{
                                     display: 'flex',
-                                    alignItems: 'stretch',
+                                    alignItems: 'center',
+                                    gap: '8px',
+                                    flexWrap: 'wrap',
+                                }}>
+                                   
+                                    
+                                    {/* Unique Batches Badge */}
+                                    {batchReconciliation && (
+                                        <button
+                                            onClick={() => toggleBatchSection('unique')}
+                                            style={{
+                                                background: 'linear-gradient(135deg, #7c3aed 0%, #8b5cf6 100%)',
+                                                color: 'white',
+                                                padding: '5px 12px',
+                                                borderRadius: '20px',
+                                                fontSize: '11px',
+                                                fontWeight: 700,
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: '5px',
+                                                boxShadow: '0 2px 8px rgba(139, 92, 246, 0.3)',
+                                                border: 'none',
+                                                cursor: 'pointer',
+                                                transition: 'transform 0.15s ease',
+                                            }}
+                                            onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.05)'; }}
+                                            onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
+                                            title="Click to view unique batches"
+                                        >
+                                            📦 {(batchReconciliation.totalBatchesInSystem - batchReconciliation.batchesNotMatchedToFormula).toLocaleString()} Unique Batches
+                                        </button>
+                                    )}
+                                    
+                                    {/* Total Batches Badge */}
+                                    {batchReconciliation && (
+                                        <button
+                                            onClick={() => toggleBatchSection('all')}
+                                            style={{
+                                                background: 'linear-gradient(135deg, #f59e0b 0%, #fbbf24 100%)',
+                                                color: 'white',
+                                                padding: '5px 12px',
+                                                borderRadius: '20px',
+                                                fontSize: '11px',
+                                                fontWeight: 700,
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: '5px',
+                                                boxShadow: '0 2px 8px rgba(245, 158, 11, 0.3)',
+                                                border: 'none',
+                                                cursor: 'pointer',
+                                                transition: 'transform 0.15s ease',
+                                            }}
+                                            onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.05)'; }}
+                                            onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
+                                            title="Click to view all batches"
+                                        >
+                                            📋 {batchReconciliation.totalBatchesInSystem.toLocaleString()} Total Batches
+                                        </button>
+                                    )}
+                                    
+                                    {/* Reconciliation Status Badge */}
+                                    {batchReconciliation && (
+                                        <div style={{
+                                            background: batchReconciliation.allBatchesAccountedFor
+                                                ? 'linear-gradient(135deg, #059669 0%, #10b981 100%)'
+                                                : 'linear-gradient(135deg, #dc2626 0%, #ef4444 100%)',
+                                            color: 'white',
+                                            padding: '5px 12px',
+                                            borderRadius: '20px',
+                                            fontSize: '10px',
+                                            fontWeight: 700,
+                                            boxShadow: batchReconciliation.allBatchesAccountedFor
+                                                ? '0 2px 8px rgba(16, 185, 129, 0.3)'
+                                                : '0 2px 8px rgba(239, 68, 68, 0.3)',
+                                        }}>
+                                            {batchReconciliation.allBatchesAccountedFor ? '✅ RECONCILED' : '❌ MISMATCH'}
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+
+                            {/* Reconciliation Equation: Total = 3+ batches + 1-2 batches + No batch MFCs + Placebo */}
+                            <div style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                gap: '8px',
+                                flexWrap: 'wrap',
+                                position: 'relative',
+                                zIndex: 1,
+                            }}>
+                                {/* Total Batches */}
+                                <Link href="/batches" style={{
+                                    background: 'linear-gradient(135deg, rgba(124, 58, 237, 0.9) 0%, rgba(139, 92, 246, 0.95) 100%)',
+                                    borderRadius: '12px',
+                                    padding: '10px 16px',
+                                    textAlign: 'center',
+                                    boxShadow: '0 4px 16px rgba(139, 92, 246, 0.3)',
+                                    border: '1px solid rgba(255,255,255,0.2)',
+                                    color: 'white',
+                                    textDecoration: 'none',
+                                    cursor: 'pointer',
+                                    transition: 'transform 0.15s ease',
+                                    minWidth: '90px',
+                                }}
+                                    onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.03)'; }}
+                                    onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
+                                >
+                                    <div style={{ fontSize: '22px', fontWeight: 800 }}>
+                                        {batchReconciliation?.totalBatchesInSystem?.toLocaleString() || sectionBatchTotals.totalCounted.toLocaleString()}
+                                    </div>
+                                    <div style={{ fontSize: '9px', fontWeight: 600, textTransform: 'uppercase', opacity: 0.9 }}>
+                                        Total Batches
+                                    </div>
+                                </Link>
+
+                                <span style={{ fontSize: '20px', color: '#94a3b8', fontWeight: 300 }}>=</span>
+
+                                {/* MFCs with 3+ Batches */}
+                                <div 
+                                    onClick={() => setMainMfcsOpen(true)}
+                                    style={{
+                                        background: 'linear-gradient(135deg, rgba(5, 150, 105, 0.9) 0%, rgba(16, 185, 129, 0.95) 100%)',
+                                        borderRadius: '12px',
+                                        padding: '10px 14px',
+                                        textAlign: 'center',
+                                        boxShadow: '0 4px 16px rgba(16, 185, 129, 0.3)',
+                                        border: '1px solid rgba(255,255,255,0.2)',
+                                        color: 'white',
+                                        cursor: 'pointer',
+                                        transition: 'transform 0.15s ease',
+                                        minWidth: '80px',
+                                    }}
+                                    onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.03)'; }}
+                                    onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
+                                >
+                                    <div style={{ fontSize: '20px', fontWeight: 800 }}>
+                                        {sectionBatchTotals.main.toLocaleString()}
+                                    </div>
+                                    <div style={{ fontSize: '8px', fontWeight: 600, textTransform: 'uppercase', opacity: 0.9 }}>
+                                        MFC 3+ Batches
+                                    </div>
+                                    <div style={{ fontSize: '8px', opacity: 0.7 }}>
+                                        ({mainFormulas.length} MFCs)
+                                    </div>
+                                </div>
+
+                                <span style={{ fontSize: '18px', color: '#94a3b8', fontWeight: 300 }}>+</span>
+
+                                {/* MFCs with 1-2 Batches */}
+                                <div 
+                                    onClick={() => setLowBatchMfcsOpen(true)}
+                                    style={{
+                                        background: 'linear-gradient(135deg, rgba(245, 158, 11, 0.9) 0%, rgba(251, 191, 36, 0.95) 100%)',
+                                        borderRadius: '12px',
+                                        padding: '10px 14px',
+                                        textAlign: 'center',
+                                        boxShadow: '0 4px 16px rgba(245, 158, 11, 0.3)',
+                                        border: '1px solid rgba(255,255,255,0.2)',
+                                        color: 'white',
+                                        cursor: 'pointer',
+                                        transition: 'transform 0.15s ease',
+                                        minWidth: '80px',
+                                    }}
+                                    onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.03)'; }}
+                                    onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
+                                >
+                                    <div style={{ fontSize: '20px', fontWeight: 800 }}>
+                                        {sectionBatchTotals.lowBatch.toLocaleString()}
+                                    </div>
+                                    <div style={{ fontSize: '8px', fontWeight: 600, textTransform: 'uppercase', opacity: 0.9 }}>
+                                        MFC 1-2 Batches
+                                    </div>
+                                    <div style={{ fontSize: '8px', opacity: 0.7 }}>
+                                        ({lowBatchFormulas.length} MFCs)
+                                    </div>
+                                </div>
+
+                                <span style={{ fontSize: '18px', color: '#94a3b8', fontWeight: 300 }}>+</span>
+
+                                {/* No Batch MFCs */}
+                                <div 
+                                    onClick={() => setNoBatchMfcsOpen(true)}
+                                    style={{
+                                        background: 'linear-gradient(135deg, rgba(107, 114, 128, 0.9) 0%, rgba(156, 163, 175, 0.95) 100%)',
+                                        borderRadius: '12px',
+                                        padding: '10px 14px',
+                                        textAlign: 'center',
+                                        boxShadow: '0 4px 16px rgba(107, 114, 128, 0.3)',
+                                        border: '1px solid rgba(255,255,255,0.2)',
+                                        color: 'white',
+                                        cursor: 'pointer',
+                                        transition: 'transform 0.15s ease',
+                                        minWidth: '80px',
+                                    }}
+                                    onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.03)'; }}
+                                    onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
+                                >
+                                    <div style={{ fontSize: '20px', fontWeight: 800 }}>
+                                        {sectionBatchTotals.noBatch.toLocaleString()}
+                                    </div>
+                                    <div style={{ fontSize: '8px', fontWeight: 600, textTransform: 'uppercase', opacity: 0.9 }}>
+                                        No Batch MFCs
+                                    </div>
+                                    <div style={{ fontSize: '8px', opacity: 0.7 }}>
+                                        ({noBatchFormulas.length} MFCs)
+                                    </div>
+                                </div>
+
+                                <span style={{ fontSize: '18px', color: '#94a3b8', fontWeight: 300 }}>+</span>
+
+                                {/* Placebo & Media Fill */}
+                                <div 
+                                    onClick={() => setPlaceboMfcsOpen(true)}
+                                    style={{
+                                        background: 'linear-gradient(135deg, rgba(236, 72, 153, 0.9) 0%, rgba(244, 114, 182, 0.95) 100%)',
+                                        borderRadius: '12px',
+                                        padding: '10px 14px',
+                                        textAlign: 'center',
+                                        boxShadow: '0 4px 16px rgba(236, 72, 153, 0.3)',
+                                        border: '1px solid rgba(255,255,255,0.2)',
+                                        color: 'white',
+                                        cursor: 'pointer',
+                                        transition: 'transform 0.15s ease',
+                                        minWidth: '80px',
+                                    }}
+                                    onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.03)'; }}
+                                    onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
+                                >
+                                    <div style={{ fontSize: '20px', fontWeight: 800 }}>
+                                        {sectionBatchTotals.placebo.toLocaleString()}
+                                    </div>
+                                    <div style={{ fontSize: '8px', fontWeight: 600, textTransform: 'uppercase', opacity: 0.9 }}>
+                                        Placebo/Media
+                                    </div>
+                                    <div style={{ fontSize: '8px', opacity: 0.7 }}>
+                                        ({placeboFormulas.length} MFCs)
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* UNIQUE BATCH RECONCILIATION SECTION */}
+                        {uniqueBatchReconciliation && (
+                            <div style={{
+                                marginBottom: '1.5rem',
+                                background: 'linear-gradient(135deg, rgba(250, 245, 255, 0.9) 0%, rgba(240, 249, 255, 0.85) 50%, rgba(236, 253, 245, 0.9) 100%)',
+                                backdropFilter: 'blur(12px)',
+                                WebkitBackdropFilter: 'blur(12px)',
+                                borderRadius: '16px',
+                                border: '1px solid rgba(255,255,255,0.7)',
+                                padding: '16px 20px',
+                                position: 'relative',
+                                overflow: 'hidden',
+                                boxShadow: '0 4px 20px rgba(139, 92, 246, 0.12), inset 0 1px 0 rgba(255,255,255,0.8)',
+                            }}>
+                                {/* Decorative background */}
+                                <div style={{
+                                    position: 'absolute',
+                                    top: '-30%',
+                                    right: '-3%',
+                                    width: '120px',
+                                    height: '120px',
+                                    borderRadius: '50%',
+                                    background: 'linear-gradient(135deg, rgba(16, 185, 129, 0.08) 0%, rgba(139, 92, 246, 0.08) 100%)',
+                                }} />
+
+                                {/* Header Row */}
+                                <div style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'space-between',
+                                    marginBottom: '12px',
+                                    position: 'relative',
+                                    zIndex: 1,
+                                }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                        <span style={{
+                                            width: '28px',
+                                            height: '28px',
+                                            background: 'linear-gradient(135deg, #10b981 0%, #06b6d4 100%)',
+                                            borderRadius: '8px',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
+                                            fontSize: '14px',
+                                        }}>📦</span>
+                                        <h2 style={{
+                                            color: '#1e293b',
+                                            fontSize: '14px',
+                                            fontWeight: 700,
+                                            margin: 0,
+                                        }}>
+                                            Unique Batch Reconciliation
+                                        </h2>
+                                    </div>
+                                    
+                                    {/* Reconciliation Status Badge */}
+                                    <div style={{
+                                        background: uniqueBatchReconciliation.isReconciled
+                                            ? 'linear-gradient(135deg, #059669 0%, #10b981 100%)'
+                                            : 'linear-gradient(135deg, #dc2626 0%, #ef4444 100%)',
+                                        color: 'white',
+                                        padding: '5px 12px',
+                                        borderRadius: '20px',
+                                        fontSize: '10px',
+                                        fontWeight: 700,
+                                        boxShadow: uniqueBatchReconciliation.isReconciled
+                                            ? '0 2px 8px rgba(16, 185, 129, 0.3)'
+                                            : '0 2px 8px rgba(239, 68, 68, 0.3)',
+                                    }}>
+                                        {uniqueBatchReconciliation.isReconciled ? '✅ RECONCILED' : '❌ MISMATCH'}
+                                    </div>
+                                </div>
+
+                                {/* Unique Batch Reconciliation Equation */}
+                                <div style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
                                     justifyContent: 'center',
-                                    gap: '16px',
+                                    gap: '8px',
                                     flexWrap: 'wrap',
                                     position: 'relative',
                                     zIndex: 1,
                                 }}>
-                                    {/* Total Batches Card */}
-                                    <Link href="/batches" style={{
-                                        flex: '1',
-                                        minWidth: '160px',
-                                        background: 'linear-gradient(135deg, rgba(124, 58, 237, 0.85) 0%, rgba(139, 92, 246, 0.9) 100%)',
-                                        backdropFilter: 'blur(8px)',
-                                        WebkitBackdropFilter: 'blur(8px)',
-                                        borderRadius: '18px',
-                                        padding: '22px 26px',
-                                        textAlign: 'center',
-                                        boxShadow: '0 8px 32px rgba(139, 92, 246, 0.35), inset 0 1px 1px rgba(255,255,255,0.2)',
-                                        border: '1px solid rgba(255,255,255,0.2)',
-                                        color: 'white',
-                                        position: 'relative',
-                                        overflow: 'hidden',
-                                        textDecoration: 'none',
-                                        cursor: 'pointer',
-                                        transition: 'transform 0.2s ease, box-shadow 0.2s ease',
-                                    }}
-                                        onMouseEnter={(e) => {
-                                            e.currentTarget.style.transform = 'translateY(-2px)';
-                                            e.currentTarget.style.boxShadow = '0 12px 40px rgba(139, 92, 246, 0.45), inset 0 1px 1px rgba(255,255,255,0.2)';
+                                    {/* Total Unique Batches */}
+                                    <div 
+                                        onClick={() => toggleBatchSection('unique')}
+                                        style={{
+                                            background: 'linear-gradient(135deg, rgba(16, 185, 129, 0.9) 0%, rgba(6, 182, 212, 0.95) 100%)',
+                                            borderRadius: '12px',
+                                            padding: '10px 16px',
+                                            textAlign: 'center',
+                                            boxShadow: '0 4px 16px rgba(16, 185, 129, 0.3)',
+                                            border: '1px solid rgba(255,255,255,0.2)',
+                                            color: 'white',
+                                            cursor: 'pointer',
+                                            transition: 'transform 0.15s ease',
+                                            minWidth: '100px',
                                         }}
-                                        onMouseLeave={(e) => {
-                                            e.currentTarget.style.transform = 'translateY(0)';
-                                            e.currentTarget.style.boxShadow = '0 8px 32px rgba(139, 92, 246, 0.35), inset 0 1px 1px rgba(255,255,255,0.2)';
-                                        }}
+                                        onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.03)'; }}
+                                        onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
                                     >
-                                        <div style={{
-                                            position: 'absolute',
-                                            top: '-10px',
-                                            right: '-10px',
-                                            width: '50px',
-                                            height: '50px',
-                                            borderRadius: '50%',
-                                            background: 'rgba(255,255,255,0.1)',
-                                        }} />
-                                        <div style={{ fontSize: '32px', fontWeight: 800, marginBottom: '4px' }}>
-                                            {batchReconciliation.totalBatchesInSystem.toLocaleString()}
+                                        <div style={{ fontSize: '22px', fontWeight: 800 }}>
+                                            {uniqueBatchReconciliation.totalUniqueBatches.toLocaleString()}
                                         </div>
-                                        <div style={{ fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', opacity: 0.9 }}>
-                                            Total Batches
-                                        </div>
-                                        <div style={{ fontSize: '10px', opacity: 0.7, marginTop: '2px' }}>
-                                            Click to view all →
-                                        </div>
-                                    </Link>
-
-                                    {/* Equals Sign */}
-                                    <div style={{
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        justifyContent: 'center',
-                                        fontSize: '28px',
-                                        fontWeight: '300',
-                                        color: '#94a3b8',
-                                    }}>=</div>
-
-                                    {/* Matched Batches Card */}
-                                    <div style={{
-                                        flex: '1',
-                                        minWidth: '160px',
-                                        background: 'linear-gradient(135deg, rgba(5, 150, 105, 0.85) 0%, rgba(16, 185, 129, 0.9) 100%)',
-                                        backdropFilter: 'blur(8px)',
-                                        WebkitBackdropFilter: 'blur(8px)',
-                                        borderRadius: '18px',
-                                        padding: '22px 26px',
-                                        textAlign: 'center',
-                                        boxShadow: '0 8px 32px rgba(16, 185, 129, 0.35), inset 0 1px 1px rgba(255,255,255,0.2)',
-                                        border: '1px solid rgba(255,255,255,0.2)',
-                                        color: 'white',
-                                        position: 'relative',
-                                        overflow: 'hidden',
-                                    }}>
-                                        <div style={{
-                                            position: 'absolute',
-                                            top: '-10px',
-                                            right: '-10px',
-                                            width: '50px',
-                                            height: '50px',
-                                            borderRadius: '50%',
-                                            background: 'rgba(255,255,255,0.1)',
-                                        }} />
-                                        <div style={{ fontSize: '32px', fontWeight: 800, marginBottom: '4px' }}>
-                                            {batchReconciliation.batchesMatchedToFormula.toLocaleString()}
-                                        </div>
-                                        <div style={{ fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', opacity: 0.9 }}>
-                                            Matched to Formula
-                                        </div>
-                                        <div style={{ fontSize: '10px', opacity: 0.7, marginTop: '2px' }}>
-                                            Found in Master
+                                        <div style={{ fontSize: '9px', fontWeight: 600, textTransform: 'uppercase', opacity: 0.9 }}>
+                                            Unique Batches
                                         </div>
                                     </div>
 
-                                    {/* Plus Sign */}
-                                    <div style={{
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        justifyContent: 'center',
-                                        fontSize: '28px',
-                                        fontWeight: '300',
-                                        color: '#94a3b8',
-                                    }}>+</div>
+                                    <span style={{ fontSize: '20px', color: '#94a3b8', fontWeight: 300 }}>=</span>
 
-                                    {/* Orphan Batches Card */}
-                                    <div style={{
-                                        flex: '1',
-                                        minWidth: '160px',
-                                        background: batchReconciliation.batchesNotMatchedToFormula > 0
-                                            ? 'linear-gradient(135deg, rgba(220, 38, 38, 0.85) 0%, rgba(239, 68, 68, 0.9) 100%)'
-                                            : 'linear-gradient(135deg, rgba(5, 150, 105, 0.85) 0%, rgba(16, 185, 129, 0.9) 100%)',
-                                        backdropFilter: 'blur(8px)',
-                                        WebkitBackdropFilter: 'blur(8px)',
-                                        borderRadius: '18px',
-                                        padding: '22px 26px',
-                                        textAlign: 'center',
-                                        boxShadow: batchReconciliation.batchesNotMatchedToFormula > 0
-                                            ? '0 8px 32px rgba(239, 68, 68, 0.35), inset 0 1px 1px rgba(255,255,255,0.2)'
-                                            : '0 8px 32px rgba(16, 185, 129, 0.35), inset 0 1px 1px rgba(255,255,255,0.2)',
-                                        border: '1px solid rgba(255,255,255,0.2)',
-                                        color: 'white',
-                                        position: 'relative',
-                                        overflow: 'hidden',
-                                    }}>
-                                        <div style={{
-                                            position: 'absolute',
-                                            top: '-10px',
-                                            right: '-10px',
-                                            width: '50px',
-                                            height: '50px',
-                                            borderRadius: '50%',
-                                            background: 'rgba(255,255,255,0.1)',
-                                        }} />
-                                        <div style={{ fontSize: '32px', fontWeight: 800, marginBottom: '4px' }}>
-                                            {batchReconciliation.batchesNotMatchedToFormula.toLocaleString()}
+                                    {/* MFCs with 3+ Batches */}
+                                    <div 
+                                        onClick={() => setMainMfcsOpen(true)}
+                                        style={{
+                                            background: 'linear-gradient(135deg, rgba(5, 150, 105, 0.9) 0%, rgba(16, 185, 129, 0.95) 100%)',
+                                            borderRadius: '12px',
+                                            padding: '10px 14px',
+                                            textAlign: 'center',
+                                            boxShadow: '0 4px 16px rgba(16, 185, 129, 0.3)',
+                                            border: '1px solid rgba(255,255,255,0.2)',
+                                            color: 'white',
+                                            cursor: 'pointer',
+                                            transition: 'transform 0.15s ease',
+                                            minWidth: '80px',
+                                        }}
+                                        onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.03)'; }}
+                                        onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
+                                    >
+                                        <div style={{ fontSize: '20px', fontWeight: 800 }}>
+                                            {uniqueBatchReconciliation.mainUniqueBatches.toLocaleString()}
                                         </div>
-                                        <div style={{ fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', opacity: 0.9 }}>
-                                            Not Matched
+                                        <div style={{ fontSize: '8px', fontWeight: 600, textTransform: 'uppercase', opacity: 0.9 }}>
+                                            MFCs 3+ Batches
                                         </div>
-                                        <div style={{ fontSize: '10px', opacity: 0.7, marginTop: '2px' }}>
-                                            Orphan Batches
+                                        <div style={{ fontSize: '8px', opacity: 0.7 }}>
+                                            ({uniqueBatchReconciliation.mainMfcCount} MFCs)
                                         </div>
                                     </div>
+
+                                    <span style={{ fontSize: '18px', color: '#94a3b8', fontWeight: 300 }}>+</span>
+
+                                    {/* Low Batch MFCs (1-2 Batches) */}
+                                    <div 
+                                        onClick={() => setLowBatchMfcsOpen(true)}
+                                        style={{
+                                            background: 'linear-gradient(135deg, rgba(245, 158, 11, 0.9) 0%, rgba(251, 191, 36, 0.95) 100%)',
+                                            borderRadius: '12px',
+                                            padding: '10px 14px',
+                                            textAlign: 'center',
+                                            boxShadow: '0 4px 16px rgba(245, 158, 11, 0.3)',
+                                            border: '1px solid rgba(255,255,255,0.2)',
+                                            color: 'white',
+                                            cursor: 'pointer',
+                                            transition: 'transform 0.15s ease',
+                                            minWidth: '80px',
+                                        }}
+                                        onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.03)'; }}
+                                        onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
+                                    >
+                                        <div style={{ fontSize: '20px', fontWeight: 800 }}>
+                                            {uniqueBatchReconciliation.lowBatchUniqueBatches.toLocaleString()}
+                                        </div>
+                                        <div style={{ fontSize: '8px', fontWeight: 600, textTransform: 'uppercase', opacity: 0.9 }}>
+                                            Low Batch MFCs
+                                        </div>
+                                        <div style={{ fontSize: '8px', opacity: 0.7 }}>
+                                            ({uniqueBatchReconciliation.lowBatchMfcCount} MFCs)
+                                        </div>
+                                    </div>
+
+                                    <span style={{ fontSize: '18px', color: '#94a3b8', fontWeight: 300 }}>+</span>
+
+                                    {/* No Batch MFCs */}
+                                    <div 
+                                        onClick={() => setNoBatchMfcsOpen(true)}
+                                        style={{
+                                            background: 'linear-gradient(135deg, rgba(107, 114, 128, 0.9) 0%, rgba(156, 163, 175, 0.95) 100%)',
+                                            borderRadius: '12px',
+                                            padding: '10px 14px',
+                                            textAlign: 'center',
+                                            boxShadow: '0 4px 16px rgba(107, 114, 128, 0.3)',
+                                            border: '1px solid rgba(255,255,255,0.2)',
+                                            color: 'white',
+                                            cursor: 'pointer',
+                                            transition: 'transform 0.15s ease',
+                                            minWidth: '80px',
+                                        }}
+                                        onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.03)'; }}
+                                        onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
+                                    >
+                                        <div style={{ fontSize: '20px', fontWeight: 800 }}>
+                                            {uniqueBatchReconciliation.noBatchUniqueBatches.toLocaleString()}
+                                        </div>
+                                        <div style={{ fontSize: '8px', fontWeight: 600, textTransform: 'uppercase', opacity: 0.9 }}>
+                                            No Batch MFCs
+                                        </div>
+                                        <div style={{ fontSize: '8px', opacity: 0.7 }}>
+                                            ({uniqueBatchReconciliation.noBatchMfcCount} MFCs)
+                                        </div>
+                                    </div>
+
+                                    <span style={{ fontSize: '18px', color: '#94a3b8', fontWeight: 300 }}>+</span>
+
+                                    {/* Placebo & Media Fill */}
+                                    <div 
+                                        onClick={() => setPlaceboMfcsOpen(true)}
+                                        style={{
+                                            background: 'linear-gradient(135deg, rgba(236, 72, 153, 0.9) 0%, rgba(244, 114, 182, 0.95) 100%)',
+                                            borderRadius: '12px',
+                                            padding: '10px 14px',
+                                            textAlign: 'center',
+                                            boxShadow: '0 4px 16px rgba(236, 72, 153, 0.3)',
+                                            border: '1px solid rgba(255,255,255,0.2)',
+                                            color: 'white',
+                                            cursor: 'pointer',
+                                            transition: 'transform 0.15s ease',
+                                            minWidth: '80px',
+                                        }}
+                                        onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.03)'; }}
+                                        onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
+                                    >
+                                        <div style={{ fontSize: '20px', fontWeight: 800 }}>
+                                            {uniqueBatchReconciliation.placeboUniqueBatches.toLocaleString()}
+                                        </div>
+                                        <div style={{ fontSize: '8px', fontWeight: 600, textTransform: 'uppercase', opacity: 0.9 }}>
+                                            Placebo/Media
+                                        </div>
+                                        <div style={{ fontSize: '8px', opacity: 0.7 }}>
+                                            ({uniqueBatchReconciliation.placeboMfcCount} MFCs)
+                                        </div>
+                                    </div>
+
+                                    {/* Show unmatched if any */}
+                                    {uniqueBatchReconciliation.unmatchedUniqueBatches > 0 && (
+                                        <>
+                                            <span style={{ fontSize: '18px', color: '#94a3b8', fontWeight: 300 }}>+</span>
+                                            <div 
+                                                style={{
+                                                    background: 'linear-gradient(135deg, rgba(220, 38, 38, 0.9) 0%, rgba(239, 68, 68, 0.95) 100%)',
+                                                    borderRadius: '12px',
+                                                    padding: '10px 14px',
+                                                    textAlign: 'center',
+                                                    boxShadow: '0 4px 16px rgba(220, 38, 38, 0.3)',
+                                                    border: '1px solid rgba(255,255,255,0.2)',
+                                                    color: 'white',
+                                                    minWidth: '80px',
+                                                }}
+                                            >
+                                                <div style={{ fontSize: '20px', fontWeight: 800 }}>
+                                                    {uniqueBatchReconciliation.unmatchedUniqueBatches.toLocaleString()}
+                                                </div>
+                                                <div style={{ fontSize: '8px', fontWeight: 600, textTransform: 'uppercase', opacity: 0.9 }}>
+                                                    Unmatched
+                                                </div>
+                                            </div>
+                                        </>
+                                    )}
                                 </div>
+
+
                             </div>
                         )}
 
@@ -3703,16 +6800,29 @@ export default function FormulaDataPage() {
                                 title="MFCs with 3+ Batches"
                                 count={mainFormulas.length}
                                 totalBatches={sectionBatchTotals.main}
+                                uniqueBatches={uniqueBatchReconciliation?.mainUniqueBatches}
                                 icon="🧪"
                                 isOpen={mainMfcsOpen}
                                 onToggle={() => setMainMfcsOpen(!mainMfcsOpen)}
                                 badgeColor="#10b981"
                                 badgeText="Primary"
                                 description="MFCs with significant production volume"
-                                rmDataMatched={globalRmDataMatched}
-                                rmDataUnmatched={globalRmDataUnmatched}
+                                rmDataMatched={sectionRmData.main.matched}
+                                rmDataUnmatched={sectionRmData.main.unmatched}
                                 onRmMatchedClick={() => openRmDataModal('matched')}
                                 onRmUnmatchedClick={() => openRmDataModal('unmatched')}
+                                ppmDataMatched={sectionPpmPmData.main.ppmMatched}
+                                ppmDataUnmatched={sectionPpmPmData.main.ppmUnmatched}
+                                pmDataMatched={sectionPpmPmData.main.pmMatched}
+                                pmDataUnmatched={sectionPpmPmData.main.pmUnmatched}
+                                onPpmMatchedClick={() => openPpmDataModal('matched')}
+                                onPpmUnmatchedClick={() => openPpmDataModal('unmatched')}
+                                onPmMatchedClick={() => openPmDataModal('matched')}
+                                onPmUnmatchedClick={() => openPmDataModal('unmatched')}
+                                materialQualified={sectionMaterialQualData.main.qualified}
+                                materialUnqualified={sectionMaterialQualData.main.unqualified}
+                                onMaterialQualifiedClick={() => openMatDataModal('qualified')}
+                                onMaterialUnqualifiedClick={() => openMatDataModal('unqualified')}
                             />
                         </div>
 
@@ -3740,8 +6850,16 @@ export default function FormulaDataPage() {
                                             }}
                                         >
                                             {/* MFC Header - Always visible */}
-                                            <button
+                                            <div
+                                                role="button"
+                                                tabIndex={0}
                                                 onClick={() => toggleMfc(formula._id)}
+                                                onKeyDown={(e) => {
+                                                    if (e.key === 'Enter' || e.key === ' ') {
+                                                        e.preventDefault();
+                                                        toggleMfc(formula._id);
+                                                    }
+                                                }}
                                                 style={{
                                                     width: '100%',
                                                     padding: '1rem 1.5rem',
@@ -3752,6 +6870,7 @@ export default function FormulaDataPage() {
                                                     alignItems: 'center',
                                                     gap: '1rem',
                                                     textAlign: 'left',
+                                                    outline: 'none',
                                                 }}
                                             >
                                                 {/* Sr. No */}
@@ -3802,28 +6921,276 @@ export default function FormulaDataPage() {
                                                     gap: '0.75rem',
                                                 }}>
                                                     {formula.masterFormulaDetails.productName}
-                                                    {formula.totalBatchCount && formula.totalBatchCount > 0 && (
-                                                        <span style={{
-                                                            padding: '0.2rem 0.6rem',
-                                                            background: 'linear-gradient(135deg, #059669 0%, #10b981 100%)',
-                                                            color: '#fff',
-                                                            borderRadius: '12px',
-                                                            fontSize: '0.7rem',
-                                                            fontWeight: '600',
-                                                            boxShadow: '0 2px 4px rgba(16, 185, 129, 0.3)',
-                                                            whiteSpace: 'nowrap',
-                                                        }}>
-                                                            📦 {formula.totalBatchCount} Batches
-                                                        </span>
-                                                    )}
-                                                    {/* Per-formula RM Data Status Capsule */}
-                                                    {(formula.rmDataMatched !== undefined || formula.rmDataUnmatched !== undefined) && (
-                                                        <BatchStatusCapsule
-                                                            matched={formula.rmDataMatched || 0}
-                                                            unmatched={formula.rmDataUnmatched || 0}
-                                                            size="small"
-                                                        />
-                                                    )}
+                                                    {/* Batch Count Badges: Total and Unique with Reconciliation */}
+                                                    {formula.totalBatchCount && formula.totalBatchCount > 0 && (() => {
+                                                        const uniqueBatches = (formula.rmDataMatched || 0) + (formula.rmDataUnmatched || 0);
+                                                        const matched = formula.rmDataMatched || 0;
+                                                        const unmatched = formula.rmDataUnmatched || 0;
+                                                        return (
+                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                                                {/* Total Batch Records */}
+                                                                <span 
+                                                                    style={{
+                                                                        padding: '0.15rem 0.5rem',
+                                                                        background: '#e5e7eb',
+                                                                        color: '#4b5563',
+                                                                        borderRadius: '10px',
+                                                                        fontSize: '0.65rem',
+                                                                        fontWeight: '600',
+                                                                        whiteSpace: 'nowrap',
+                                                                    }}
+                                                                    title={`Total batch records (may include duplicates)`}
+                                                                >
+                                                                    📦 {formula.totalBatchCount} Total
+                                                                </span>
+                                                                {/* Unique Batches */}
+                                                                <span 
+                                                                    style={{
+                                                                        padding: '0.15rem 0.5rem',
+                                                                        background: 'linear-gradient(135deg, #059669 0%, #10b981 100%)',
+                                                                        color: '#fff',
+                                                                        borderRadius: '10px',
+                                                                        fontSize: '0.65rem',
+                                                                        fontWeight: '600',
+                                                                        boxShadow: '0 2px 4px rgba(16, 185, 129, 0.2)',
+                                                                        whiteSpace: 'nowrap',
+                                                                    }}
+                                                                    title={`Unique batch numbers: ${uniqueBatches} (RM: ${matched} matched + ${unmatched} unmatched = ${matched + unmatched})`}
+                                                                >
+                                                                    🎯 {uniqueBatches} Unique
+                                                                </span>
+                                                            </div>
+                                                        );
+                                                    })()}
+                                                    {/* Per-formula RM Data Status Capsule with reconciliation */}
+                                                    {(formula.rmDataMatched !== undefined || formula.rmDataUnmatched !== undefined) && (() => {
+                                                        // Collect all product codes for this formula
+                                                        const allProductCodes: string[] = [];
+                                                        if (formula.masterFormulaDetails?.productCode) {
+                                                            allProductCodes.push(formula.masterFormulaDetails.productCode);
+                                                        }
+                                                        // Add filling details product codes
+                                                        if (formula.fillingDetails && Array.isArray(formula.fillingDetails)) {
+                                                            formula.fillingDetails.forEach((fd: any) => {
+                                                                if (fd.productCode && fd.productCode !== 'N/A' && !allProductCodes.includes(fd.productCode)) {
+                                                                    allProductCodes.push(fd.productCode);
+                                                                }
+                                                            });
+                                                        }
+                                                        // Add process filling product codes
+                                                        if (formula.processes && Array.isArray(formula.processes)) {
+                                                            formula.processes.forEach((p: any) => {
+                                                                if (p.fillingProducts && Array.isArray(p.fillingProducts)) {
+                                                                    p.fillingProducts.forEach((fp: any) => {
+                                                                        if (fp.productCode && !allProductCodes.includes(fp.productCode)) {
+                                                                            allProductCodes.push(fp.productCode);
+                                                                        }
+                                                                    });
+                                                                }
+                                                            });
+                                                        }
+                                                        
+                                                        const ppmMatched = formula.ppmDataMatched || 0;
+                                                        const ppmUnmatched = formula.ppmDataUnmatched || 0;
+                                                        const pmMatched = formula.pmDataMatched || 0;
+                                                        const pmUnmatched = formula.pmDataUnmatched || 0;
+                                                        
+                                                        return (
+                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                                {/* RM Capsule */}
+                                                                <BatchStatusCapsule
+                                                                    type="RM"
+                                                                    matched={formula.rmDataMatched || 0}
+                                                                    unmatched={formula.rmDataUnmatched || 0}
+                                                                    onGreenClick={() => openPerFormulaRmModal(
+                                                                        mfcNo,
+                                                                        allProductCodes,
+                                                                        formula.masterFormulaDetails.productName,
+                                                                        'matched'
+                                                                    )}
+                                                                    onRedClick={() => openPerFormulaRmModal(
+                                                                        mfcNo,
+                                                                        allProductCodes,
+                                                                        formula.masterFormulaDetails.productName,
+                                                                        'unmatched'
+                                                                    )}
+                                                                    size="small"
+                                                                />
+                                                                
+                                                                {/* PPM Capsule (Blue) */}
+                                                                {(ppmMatched > 0 || ppmUnmatched > 0) && (
+                                                                    <div 
+                                                                        style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                                                                        title={`PPM (Primary Packing Material): ${ppmMatched} found, ${ppmUnmatched} missing`}
+                                                                    >
+                                                                        <span style={{
+                                                                            fontSize: '9px',
+                                                                            fontWeight: 700,
+                                                                            color: '#2563eb',
+                                                                            background: '#dbeafe',
+                                                                            padding: '2px 5px',
+                                                                            borderRadius: '4px',
+                                                                            textTransform: 'uppercase',
+                                                                            letterSpacing: '0.5px',
+                                                                        }}>
+                                                                            PPM
+                                                                        </span>
+                                                                        <div style={{
+                                                                            display: 'inline-flex',
+                                                                            alignItems: 'stretch',
+                                                                            height: '20px',
+                                                                            borderRadius: '20px',
+                                                                            overflow: 'hidden',
+                                                                            boxShadow: '0 2px 6px rgba(0,0,0,0.15)',
+                                                                            border: '1px solid rgba(255,255,255,0.3)',
+                                                                            minWidth: '60px',
+                                                                        }}>
+                                                                            {ppmMatched > 0 && (
+                                                                                <button
+                                                                                    onClick={(e) => { e.stopPropagation(); openPerFormulaPpmModal(mfcNo, allProductCodes, formula.masterFormulaDetails.productName, 'matched'); }}
+                                                                                    style={{
+                                                                                        flex: ppmMatched,
+                                                                                        minWidth: '30px',
+                                                                                        display: 'flex',
+                                                                                        alignItems: 'center',
+                                                                                        justifyContent: 'center',
+                                                                                        gap: '3px',
+                                                                                        padding: '2px 8px',
+                                                                                        background: 'linear-gradient(135deg, #2563eb 0%, #3b82f6 100%)',
+                                                                                        color: 'white',
+                                                                                        fontSize: '10px',
+                                                                                        fontWeight: 700,
+                                                                                        border: 'none',
+                                                                                        cursor: 'pointer',
+                                                                                        transition: 'filter 0.2s ease',
+                                                                                    }}
+                                                                                    onMouseEnter={(e) => e.currentTarget.style.filter = 'brightness(1.1)'}
+                                                                                    onMouseLeave={(e) => e.currentTarget.style.filter = 'brightness(1)'}
+                                                                                    title={`${ppmMatched} batches with PPM data - Click to view`}
+                                                                                >
+                                                                                    <span style={{ fontSize: '0.85em' }}>✓</span>
+                                                                                    {ppmMatched}
+                                                                                </button>
+                                                                            )}
+                                                                            {ppmUnmatched > 0 && (
+                                                                                <button
+                                                                                    onClick={(e) => { e.stopPropagation(); openPerFormulaPpmModal(mfcNo, allProductCodes, formula.masterFormulaDetails.productName, 'unmatched'); }}
+                                                                                    style={{
+                                                                                        flex: ppmUnmatched,
+                                                                                        minWidth: '30px',
+                                                                                        display: 'flex',
+                                                                                        alignItems: 'center',
+                                                                                        justifyContent: 'center',
+                                                                                        gap: '3px',
+                                                                                        padding: '2px 8px',
+                                                                                        background: 'linear-gradient(135deg, #dc2626 0%, #ef4444 100%)',
+                                                                                        color: 'white',
+                                                                                        fontSize: '10px',
+                                                                                        fontWeight: 700,
+                                                                                        border: 'none',
+                                                                                        cursor: 'pointer',
+                                                                                        transition: 'filter 0.2s ease',
+                                                                                    }}
+                                                                                    onMouseEnter={(e) => e.currentTarget.style.filter = 'brightness(1.1)'}
+                                                                                    onMouseLeave={(e) => e.currentTarget.style.filter = 'brightness(1)'}
+                                                                                    title={`${ppmUnmatched} batches without PPM data - Click to view`}
+                                                                                >
+                                                                                    <span style={{ fontSize: '0.85em' }}>✕</span>
+                                                                                    {ppmUnmatched}
+                                                                                </button>
+                                                                            )}
+                                                                        </div>
+                                                                    </div>
+                                                                )}
+                                                                
+                                                                {/* PM Capsule (Purple) */}
+                                                                {(pmMatched > 0 || pmUnmatched > 0) && (
+                                                                    <div 
+                                                                        style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                                                                        title={`PM (Packing Material): ${pmMatched} found, ${pmUnmatched} missing`}
+                                                                    >
+                                                                        <span style={{
+                                                                            fontSize: '9px',
+                                                                            fontWeight: 700,
+                                                                            color: '#7c3aed',
+                                                                            background: '#f3e8ff',
+                                                                            padding: '2px 5px',
+                                                                            borderRadius: '4px',
+                                                                            textTransform: 'uppercase',
+                                                                            letterSpacing: '0.5px',
+                                                                        }}>
+                                                                            PM
+                                                                        </span>
+                                                                        <div style={{
+                                                                            display: 'inline-flex',
+                                                                            alignItems: 'stretch',
+                                                                            height: '20px',
+                                                                            borderRadius: '20px',
+                                                                            overflow: 'hidden',
+                                                                            boxShadow: '0 2px 6px rgba(0,0,0,0.15)',
+                                                                            border: '1px solid rgba(255,255,255,0.3)',
+                                                                            minWidth: '60px',
+                                                                        }}>
+                                                                            {pmMatched > 0 && (
+                                                                                <button
+                                                                                    onClick={(e) => { e.stopPropagation(); openPerFormulaPmModal(mfcNo, allProductCodes, formula.masterFormulaDetails.productName, 'matched'); }}
+                                                                                    style={{
+                                                                                        flex: pmMatched,
+                                                                                        minWidth: '30px',
+                                                                                        display: 'flex',
+                                                                                        alignItems: 'center',
+                                                                                        justifyContent: 'center',
+                                                                                        gap: '3px',
+                                                                                        padding: '2px 8px',
+                                                                                        background: 'linear-gradient(135deg, #6d28d9 0%, #7c3aed 100%)',
+                                                                                        color: 'white',
+                                                                                        fontSize: '10px',
+                                                                                        fontWeight: 700,
+                                                                                        border: 'none',
+                                                                                        cursor: 'pointer',
+                                                                                        transition: 'filter 0.2s ease',
+                                                                                    }}
+                                                                                    onMouseEnter={(e) => e.currentTarget.style.filter = 'brightness(1.1)'}
+                                                                                    onMouseLeave={(e) => e.currentTarget.style.filter = 'brightness(1)'}
+                                                                                    title={`${pmMatched} batches with PM data - Click to view`}
+                                                                                >
+                                                                                    <span style={{ fontSize: '0.85em' }}>✓</span>
+                                                                                    {pmMatched}
+                                                                                </button>
+                                                                            )}
+                                                                            {pmUnmatched > 0 && (
+                                                                                <button
+                                                                                    onClick={(e) => { e.stopPropagation(); openPerFormulaPmModal(mfcNo, allProductCodes, formula.masterFormulaDetails.productName, 'unmatched'); }}
+                                                                                    style={{
+                                                                                        flex: pmUnmatched,
+                                                                                        minWidth: '30px',
+                                                                                        display: 'flex',
+                                                                                        alignItems: 'center',
+                                                                                        justifyContent: 'center',
+                                                                                        gap: '3px',
+                                                                                        padding: '2px 8px',
+                                                                                        background: 'linear-gradient(135deg, #dc2626 0%, #ef4444 100%)',
+                                                                                        color: 'white',
+                                                                                        fontSize: '10px',
+                                                                                        fontWeight: 700,
+                                                                                        border: 'none',
+                                                                                        cursor: 'pointer',
+                                                                                        transition: 'filter 0.2s ease',
+                                                                                    }}
+                                                                                    onMouseEnter={(e) => e.currentTarget.style.filter = 'brightness(1.1)'}
+                                                                                    onMouseLeave={(e) => e.currentTarget.style.filter = 'brightness(1)'}
+                                                                                    title={`${pmUnmatched} batches without PM data - Click to view`}
+                                                                                >
+                                                                                    <span style={{ fontSize: '0.85em' }}>✕</span>
+                                                                                    {pmUnmatched}
+                                                                                </button>
+                                                                            )}
+                                                                        </div>
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        );
+                                                    })()}
                                                 </div>
 
                                                 {/* Product Code */}
@@ -3873,14 +7240,8 @@ export default function FormulaDataPage() {
                                                     {materialCount} materials
                                                 </div>
 
-                                                {/* Revision */}
-                                                <div style={{
-                                                    fontSize: '0.75rem',
-                                                    color: 'var(--muted-foreground)',
-                                                }}>
-                                                    REV {formula.masterFormulaDetails.revisionNo || '0'}
-                                                </div>
-                                            </button>
+
+                                            </div>
 
                                             {/* Expanded Content - FormulaDisplay Style */}
                                             {isExpanded && (
@@ -3933,11 +7294,25 @@ export default function FormulaDataPage() {
                                                                     {formula.parsingStatus === 'success' ? 'Complete' : 'Partial'}
                                                                 </span>
                                                                 {formula.totalBatchCount && formula.totalBatchCount > 0 && (
-                                                                    <button
-                                                                        onClick={() => openBatchListModal(
-                                                                            getFormulaAllProductCodes(formula),
-                                                                            formula.masterFormulaDetails.productName
-                                                                        )}
+                                                                    <span
+                                                                        role="button"
+                                                                        tabIndex={0}
+                                                                        onClick={(e) => {
+                                                                            e.stopPropagation();
+                                                                            openBatchListModal(
+                                                                                getFormulaAllProductCodes(formula),
+                                                                                formula.masterFormulaDetails.productName
+                                                                            );
+                                                                        }}
+                                                                        onKeyDown={(e) => {
+                                                                            if (e.key === 'Enter' || e.key === ' ') {
+                                                                                e.stopPropagation();
+                                                                                openBatchListModal(
+                                                                                    getFormulaAllProductCodes(formula),
+                                                                                    formula.masterFormulaDetails.productName
+                                                                                );
+                                                                            }
+                                                                        }}
                                                                         style={{
                                                                             padding: '0.375rem 0.75rem',
                                                                             background: 'linear-gradient(135deg, #059669 0%, #10b981 100%)',
@@ -3946,10 +7321,9 @@ export default function FormulaDataPage() {
                                                                             fontSize: '0.875rem',
                                                                             fontWeight: '600',
                                                                             boxShadow: '0 2px 8px rgba(16, 185, 129, 0.3)',
-                                                                            border: 'none',
                                                                             cursor: 'pointer',
                                                                             transition: 'all 0.15s ease',
-                                                                            display: 'flex',
+                                                                            display: 'inline-flex',
                                                                             alignItems: 'center',
                                                                             gap: '4px',
                                                                         }}
@@ -3964,11 +7338,129 @@ export default function FormulaDataPage() {
                                                                         title="Click to view all batch details"
                                                                     >
                                                                         📦 {formula.totalBatchCount} Batches - View Details
-                                                                    </button>
+                                                                    </span>
                                                                 )}
                                                             </div>
                                                         </div>
                                                     </div>
+
+                                                    {/* BATCH ACTION PANEL - APPEARS FIRST */}
+                                                    {formula.totalBatchCount && formula.totalBatchCount > 0 && (
+                                                        <div style={{
+                                                            marginBottom: '1.25rem',
+                                                            padding: '1.25rem 1.5rem',
+                                                            background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)',
+                                                            borderRadius: '16px',
+                                                            border: '1px solid rgba(139, 92, 246, 0.3)',
+                                                            boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3), 0 0 20px rgba(139, 92, 246, 0.1)',
+                                                            display: 'flex',
+                                                            alignItems: 'center',
+                                                            justifyContent: 'space-between',
+                                                            gap: '1.5rem',
+                                                            flexWrap: 'wrap',
+                                                        }}>
+                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                                                                <div style={{
+                                                                    width: '52px',
+                                                                    height: '52px',
+                                                                    borderRadius: '14px',
+                                                                    background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                                                                    display: 'flex',
+                                                                    alignItems: 'center',
+                                                                    justifyContent: 'center',
+                                                                    boxShadow: '0 4px 16px rgba(16, 185, 129, 0.4)',
+                                                                    fontSize: '1.5rem',
+                                                                }}>
+                                                                    📦
+                                                                </div>
+                                                                <div>
+                                                                    <div style={{
+                                                                        fontSize: '1.15rem',
+                                                                        fontWeight: '800',
+                                                                        color: 'white',
+                                                                        letterSpacing: '-0.01em',
+                                                                    }}>
+                                                                        {formula.totalBatchCount} Production Batches
+                                                                    </div>
+                                                                    <div style={{
+                                                                        fontSize: '0.85rem',
+                                                                        color: 'rgba(255, 255, 255, 0.6)',
+                                                                        marginTop: '2px',
+                                                                    }}>
+                                                                        Click to view batch manufacturing records
+                                                                    </div>
+                                                                </div>
+                                                            </div>
+                                                            <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+                                                                <button
+                                                                    onClick={(e) => {
+                                                                        e.stopPropagation();
+                                                                        toggleMfcBatchData(formula._id, formula);
+                                                                    }}
+                                                                    style={{
+                                                                        padding: '0.875rem 1.75rem',
+                                                                        background: isMfcBatchDataVisible(formula._id)
+                                                                            ? 'linear-gradient(135deg, #dc2626 0%, #ef4444 100%)'
+                                                                            : 'linear-gradient(135deg, #7c3aed 0%, #a855f7 100%)',
+                                                                        color: 'white',
+                                                                        borderRadius: '14px',
+                                                                        fontSize: '1rem',
+                                                                        fontWeight: '700',
+                                                                        boxShadow: isMfcBatchDataVisible(formula._id)
+                                                                            ? '0 6px 20px rgba(220, 38, 38, 0.4)'
+                                                                            : '0 6px 20px rgba(139, 92, 246, 0.4)',
+                                                                        border: 'none',
+                                                                        cursor: 'pointer',
+                                                                        transition: 'all 0.2s ease',
+                                                                        display: 'flex',
+                                                                        alignItems: 'center',
+                                                                        gap: '10px',
+                                                                        whiteSpace: 'nowrap',
+                                                                    }}
+                                                                    onMouseEnter={(e) => {
+                                                                        e.currentTarget.style.transform = 'scale(1.05)';
+                                                                    }}
+                                                                    onMouseLeave={(e) => {
+                                                                        e.currentTarget.style.transform = 'scale(1)';
+                                                                    }}
+                                                                >
+                                                                    {isMfcBatchDataVisible(formula._id) ? '✕ Hide Batches' : '🔓 Show Batches'}
+                                                                </button>
+                                                                <button
+                                                                    onClick={() => openBatchListModal(
+                                                                        getFormulaAllProductCodes(formula),
+                                                                        formula.masterFormulaDetails.productName
+                                                                    )}
+                                                                    style={{
+                                                                        padding: '0.875rem 1.75rem',
+                                                                        background: 'linear-gradient(135deg, #059669 0%, #10b981 100%)',
+                                                                        color: 'white',
+                                                                        borderRadius: '14px',
+                                                                        fontSize: '1rem',
+                                                                        fontWeight: '700',
+                                                                        boxShadow: '0 6px 20px rgba(16, 185, 129, 0.4)',
+                                                                        border: 'none',
+                                                                        cursor: 'pointer',
+                                                                        transition: 'all 0.2s ease',
+                                                                        display: 'flex',
+                                                                        alignItems: 'center',
+                                                                        gap: '10px',
+                                                                        whiteSpace: 'nowrap',
+                                                                    }}
+                                                                    onMouseEnter={(e) => {
+                                                                        e.currentTarget.style.transform = 'scale(1.05)';
+                                                                        e.currentTarget.style.boxShadow = '0 8px 24px rgba(16, 185, 129, 0.5)';
+                                                                    }}
+                                                                    onMouseLeave={(e) => {
+                                                                        e.currentTarget.style.transform = 'scale(1)';
+                                                                        e.currentTarget.style.boxShadow = '0 6px 20px rgba(16, 185, 129, 0.4)';
+                                                                    }}
+                                                                >
+                                                                    🔍 Open in Modal
+                                                                </button>
+                                                            </div>
+                                                        </div>
+                                                    )}
 
                                                     {/* File Info Banner */}
                                                     <div style={{
@@ -3987,70 +7479,439 @@ export default function FormulaDataPage() {
                                                         <span><strong>Uploaded:</strong> {new Date(formula.uploadedAt).toLocaleString()}</span>
                                                     </div>
 
-                                                    {/* VIEW BATCH DETAILS BUTTON - Prominent CTA */}
-                                                    {formula.totalBatchCount && formula.totalBatchCount > 0 && (
+                                                    {/* Batch Data Section - PREMIUM CARD-BASED DESIGN - SHOWS FIRST */}
+                                                    {formula.totalBatchCount && formula.totalBatchCount > 0 && isMfcBatchDataVisible(formula._id) && (
                                                         <div style={{
-                                                            marginBottom: '1.25rem',
-                                                            padding: '1rem 1.25rem',
-                                                            background: 'linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%)',
-                                                            borderRadius: 'var(--radius-lg)',
-                                                            border: '2px solid #10b981',
-                                                            display: 'flex',
-                                                            alignItems: 'center',
-                                                            justifyContent: 'space-between',
-                                                            gap: '1rem',
-                                                            flexWrap: 'wrap',
+                                                            marginBottom: '1.5rem',
+                                                            padding: '1.75rem',
+                                                            background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #334155 100%)',
+                                                            borderRadius: '20px',
+                                                            border: '1px solid rgba(139, 92, 246, 0.3)',
+                                                            boxShadow: '0 20px 60px rgba(0, 0, 0, 0.4), 0 0 40px rgba(139, 92, 246, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.05)',
                                                         }}>
-                                                            <div>
-                                                                <div style={{
-                                                                    fontSize: '1rem',
-                                                                    fontWeight: '700',
-                                                                    color: '#059669',
-                                                                    marginBottom: '4px'
-                                                                }}>
-                                                                    📦 {formula.totalBatchCount} Production Batches Found
+                                                            {/* Premium Header */}
+                                                            <div style={{
+                                                                display: 'flex',
+                                                                alignItems: 'center',
+                                                                justifyContent: 'space-between',
+                                                                marginBottom: '1.5rem',
+                                                                paddingBottom: '1rem',
+                                                                borderBottom: '1px solid rgba(139, 92, 246, 0.2)',
+                                                            }}>
+                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                                                                    <div style={{
+                                                                        width: '48px',
+                                                                        height: '48px',
+                                                                        borderRadius: '14px',
+                                                                        background: 'linear-gradient(135deg, #7c3aed 0%, #a855f7 100%)',
+                                                                        display: 'flex',
+                                                                        alignItems: 'center',
+                                                                        justifyContent: 'center',
+                                                                        boxShadow: '0 4px 16px rgba(139, 92, 246, 0.4)',
+                                                                    }}>
+                                                                        <span style={{ fontSize: '1.5rem' }}>📦</span>
+                                                                    </div>
+                                                                    <div>
+                                                                        <h3 style={{
+                                                                            fontSize: '1.35rem',
+                                                                            fontWeight: '800',
+                                                                            color: 'white',
+                                                                            margin: 0,
+                                                                            letterSpacing: '-0.02em',
+                                                                        }}>
+                                                                            Batch Production Records
+                                                                        </h3>
+                                                                        <p style={{
+                                                                            fontSize: '0.85rem',
+                                                                            color: 'rgba(255, 255, 255, 0.6)',
+                                                                            margin: '0.25rem 0 0 0',
+                                                                        }}>
+                                                                            Complete manufacturing batch history
+                                                                        </p>
+                                                                    </div>
                                                                 </div>
-                                                                <div style={{
-                                                                    fontSize: '0.8rem',
-                                                                    color: '#047857'
-                                                                }}>
-                                                                    Click the button to view complete batch information from Batch Creation data
-                                                                </div>
-                                                            </div>
-                                                            <button
-                                                                onClick={() => openBatchListModal(
-                                                                    getFormulaAllProductCodes(formula),
-                                                                    formula.masterFormulaDetails.productName
+                                                                {!isMfcBatchDataLoading(formula._id) && mfcBatchData[formula._id] && (
+                                                                    <div style={{
+                                                                        padding: '0.5rem 1.25rem',
+                                                                        background: 'linear-gradient(135deg, #7c3aed 0%, #a855f7 100%)',
+                                                                        color: 'white',
+                                                                        borderRadius: '30px',
+                                                                        fontSize: '0.9rem',
+                                                                        fontWeight: '700',
+                                                                        boxShadow: '0 4px 12px rgba(139, 92, 246, 0.4)',
+                                                                        display: 'flex',
+                                                                        alignItems: 'center',
+                                                                        gap: '0.5rem',
+                                                                    }}>
+                                                                        <span style={{ fontSize: '1.1rem' }}>🏭</span>
+                                                                        {mfcBatchData[formula._id].length} Batches
+                                                                    </div>
                                                                 )}
-                                                                style={{
-                                                                    padding: '0.75rem 1.5rem',
-                                                                    background: 'linear-gradient(135deg, #059669 0%, #10b981 100%)',
-                                                                    color: 'white',
-                                                                    borderRadius: '12px',
-                                                                    fontSize: '0.95rem',
-                                                                    fontWeight: '700',
-                                                                    boxShadow: '0 4px 12px rgba(16, 185, 129, 0.4)',
-                                                                    border: 'none',
-                                                                    cursor: 'pointer',
-                                                                    transition: 'all 0.2s ease',
+                                                            </div>
+
+                                                            {/* Loading State */}
+                                                            {isMfcBatchDataLoading(formula._id) && (
+                                                                <div style={{
+                                                                    textAlign: 'center',
+                                                                    padding: '3rem',
+                                                                }}>
+                                                                    <div style={{
+                                                                        width: '60px',
+                                                                        height: '60px',
+                                                                        margin: '0 auto 1rem auto',
+                                                                        borderRadius: '50%',
+                                                                        border: '3px solid rgba(139, 92, 246, 0.2)',
+                                                                        borderTopColor: '#a855f7',
+                                                                        animation: 'spin 1s linear infinite',
+                                                                    }} />
+                                                                    <p style={{ color: 'rgba(255, 255, 255, 0.7)', fontWeight: '600', fontSize: '1rem' }}>Loading batch records...</p>
+                                                                </div>
+                                                            )}
+
+                                                            {/* Batch Cards Grid */}
+                                                            {!isMfcBatchDataLoading(formula._id) && mfcBatchData[formula._id] && mfcBatchData[formula._id].length > 0 && (
+                                                                <div style={{
                                                                     display: 'flex',
-                                                                    alignItems: 'center',
-                                                                    gap: '8px',
-                                                                    whiteSpace: 'nowrap',
-                                                                }}
-                                                                onMouseEnter={(e) => {
-                                                                    e.currentTarget.style.transform = 'scale(1.05)';
-                                                                    e.currentTarget.style.boxShadow = '0 6px 16px rgba(16, 185, 129, 0.5)';
-                                                                }}
-                                                                onMouseLeave={(e) => {
-                                                                    e.currentTarget.style.transform = 'scale(1)';
-                                                                    e.currentTarget.style.boxShadow = '0 4px 12px rgba(16, 185, 129, 0.4)';
-                                                                }}
-                                                            >
-                                                                🔍 View Batch Details
-                                                            </button>
+                                                                    flexDirection: 'column',
+                                                                    gap: '1rem',
+                                                                    maxHeight: '600px',
+                                                                    overflowY: 'auto',
+                                                                    paddingRight: '0.5rem',
+                                                                }}>
+                                                                    {mfcBatchData[formula._id].map((batch, idx) => (
+                                                                        <div
+                                                                            key={idx}
+                                                                            style={{
+                                                                                background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0.02) 100%)',
+                                                                                backdropFilter: 'blur(10px)',
+                                                                                borderRadius: '16px',
+                                                                                border: '1px solid rgba(255, 255, 255, 0.08)',
+                                                                                padding: '1.25rem',
+                                                                                transition: 'all 0.2s ease',
+                                                                            }}
+                                                                            onMouseEnter={(e) => {
+                                                                                e.currentTarget.style.background = 'linear-gradient(135deg, rgba(139, 92, 246, 0.15) 0%, rgba(168, 85, 247, 0.1) 100%)';
+                                                                                e.currentTarget.style.borderColor = 'rgba(139, 92, 246, 0.3)';
+                                                                                e.currentTarget.style.transform = 'translateY(-2px)';
+                                                                            }}
+                                                                            onMouseLeave={(e) => {
+                                                                                e.currentTarget.style.background = 'linear-gradient(135deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0.02) 100%)';
+                                                                                e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.08)';
+                                                                                e.currentTarget.style.transform = 'translateY(0)';
+                                                                            }}
+                                                                        >
+                                                                            {/* Card Header */}
+                                                                            <div style={{
+                                                                                display: 'flex',
+                                                                                alignItems: 'center',
+                                                                                justifyContent: 'space-between',
+                                                                                marginBottom: '1rem',
+                                                                                paddingBottom: '0.75rem',
+                                                                                borderBottom: '1px solid rgba(255, 255, 255, 0.06)',
+                                                                            }}>
+                                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                                                                                    <div style={{
+                                                                                        width: '36px',
+                                                                                        height: '36px',
+                                                                                        borderRadius: '10px',
+                                                                                        background: batch.type === 'Export' 
+                                                                                            ? 'linear-gradient(135deg, #10b981 0%, #059669 100%)'
+                                                                                            : 'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)',
+                                                                                        display: 'flex',
+                                                                                        alignItems: 'center',
+                                                                                        justifyContent: 'center',
+                                                                                        fontSize: '1rem',
+                                                                                        boxShadow: batch.type === 'Export'
+                                                                                            ? '0 4px 12px rgba(16, 185, 129, 0.3)'
+                                                                                            : '0 4px 12px rgba(59, 130, 246, 0.3)',
+                                                                                    }}>
+                                                                                        {batch.type === 'Export' ? '📤' : '📥'}
+                                                                                    </div>
+                                                                                    <div>
+                                                                                        <div style={{
+                                                                                            fontFamily: 'monospace',
+                                                                                            fontSize: '1.1rem',
+                                                                                            fontWeight: '800',
+                                                                                            color: '#a855f7',
+                                                                                            letterSpacing: '0.02em',
+                                                                                        }}>
+                                                                                            {batch.batchNumber}
+                                                                                        </div>
+                                                                                        <div style={{
+                                                                                            fontSize: '0.75rem',
+                                                                                            color: 'rgba(255, 255, 255, 0.5)',
+                                                                                            marginTop: '2px',
+                                                                                        }}>
+                                                                                            Batch #{idx + 1}
+                                                                                        </div>
+                                                                                    </div>
+                                                                                </div>
+                                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                                                    <span style={{
+                                                                                        padding: '0.35rem 0.75rem',
+                                                                                        background: batch.type === 'Export' 
+                                                                                            ? 'rgba(16, 185, 129, 0.2)' 
+                                                                                            : 'rgba(59, 130, 246, 0.2)',
+                                                                                        color: batch.type === 'Export' ? '#34d399' : '#60a5fa',
+                                                                                        borderRadius: '8px',
+                                                                                        fontSize: '0.75rem',
+                                                                                        fontWeight: '700',
+                                                                                        textTransform: 'uppercase',
+                                                                                        letterSpacing: '0.05em',
+                                                                                    }}>
+                                                                                        {batch.type}
+                                                                                    </span>
+                                                                                    <button
+                                                                                        onClick={() => openBatchModal(batch.batchNumber)}
+                                                                                        style={{
+                                                                                            padding: '0.5rem 1rem',
+                                                                                            background: 'linear-gradient(135deg, #7c3aed 0%, #a855f7 100%)',
+                                                                                            color: 'white',
+                                                                                            borderRadius: '10px',
+                                                                                            fontSize: '0.8rem',
+                                                                                            fontWeight: '700',
+                                                                                            border: 'none',
+                                                                                            cursor: 'pointer',
+                                                                                            transition: 'all 0.15s ease',
+                                                                                            boxShadow: '0 4px 12px rgba(139, 92, 246, 0.3)',
+                                                                                        }}
+                                                                                        onMouseEnter={(e) => {
+                                                                                            e.currentTarget.style.transform = 'scale(1.05)';
+                                                                                            e.currentTarget.style.boxShadow = '0 6px 16px rgba(139, 92, 246, 0.4)';
+                                                                                        }}
+                                                                                        onMouseLeave={(e) => {
+                                                                                            e.currentTarget.style.transform = 'scale(1)';
+                                                                                            e.currentTarget.style.boxShadow = '0 4px 12px rgba(139, 92, 246, 0.3)';
+                                                                                        }}
+                                                                                    >
+                                                                                        🔍 Details
+                                                                                    </button>
+                                                                                </div>
+                                                                            </div>
+
+                                                                            {/* Main Content - 2 Column Grid */}
+                                                                            <div style={{
+                                                                                display: 'grid',
+                                                                                gridTemplateColumns: 'repeat(2, 1fr)',
+                                                                                gap: '0.75rem 1.5rem',
+                                                                            }}>
+                                                                                {/* Item Code */}
+                                                                                <div style={{
+                                                                                    display: 'flex',
+                                                                                    alignItems: 'center',
+                                                                                    gap: '0.5rem',
+                                                                                }}>
+                                                                                    <span style={{ fontSize: '0.9rem' }}>🏷️</span>
+                                                                                    <span style={{ color: 'rgba(255, 255, 255, 0.5)', fontSize: '0.75rem', minWidth: '70px' }}>Item Code</span>
+                                                                                    <span style={{ color: 'white', fontSize: '0.85rem', fontWeight: '600', fontFamily: 'monospace' }}>{batch.itemCode}</span>
+                                                                                </div>
+
+                                                                                {/* Item Name */}
+                                                                                <div style={{
+                                                                                    display: 'flex',
+                                                                                    alignItems: 'center',
+                                                                                    gap: '0.5rem',
+                                                                                    gridColumn: batch.itemName && batch.itemName.length > 30 ? 'span 2' : 'span 1',
+                                                                                }}>
+                                                                                    <span style={{ fontSize: '0.9rem' }}>💊</span>
+                                                                                    <span style={{ color: 'rgba(255, 255, 255, 0.5)', fontSize: '0.75rem', minWidth: '70px' }}>Product</span>
+                                                                                    <span style={{ color: '#f0abfc', fontSize: '0.85rem', fontWeight: '600' }}>{batch.itemName || 'N/A'}</span>
+                                                                                </div>
+
+                                                                                {/* Manufacturing Date */}
+                                                                                <div style={{
+                                                                                    display: 'flex',
+                                                                                    alignItems: 'center',
+                                                                                    gap: '0.5rem',
+                                                                                }}>
+                                                                                    <span style={{ fontSize: '0.9rem' }}>📅</span>
+                                                                                    <span style={{ color: 'rgba(255, 255, 255, 0.5)', fontSize: '0.75rem', minWidth: '70px' }}>Mfg Date</span>
+                                                                                    <span style={{ color: '#86efac', fontSize: '0.85rem', fontWeight: '600' }}>{batch.mfgDate || 'N/A'}</span>
+                                                                                </div>
+
+                                                                                {/* Expiry Date */}
+                                                                                <div style={{
+                                                                                    display: 'flex',
+                                                                                    alignItems: 'center',
+                                                                                    gap: '0.5rem',
+                                                                                }}>
+                                                                                    <span style={{ fontSize: '0.9rem' }}>⏰</span>
+                                                                                    <span style={{ color: 'rgba(255, 255, 255, 0.5)', fontSize: '0.75rem', minWidth: '70px' }}>Expiry</span>
+                                                                                    <span style={{ color: '#fca5a5', fontSize: '0.85rem', fontWeight: '600' }}>{batch.expiryDate || 'N/A'}</span>
+                                                                                </div>
+
+                                                                                {/* Batch Size */}
+                                                                                <div style={{
+                                                                                    display: 'flex',
+                                                                                    alignItems: 'center',
+                                                                                    gap: '0.5rem',
+                                                                                }}>
+                                                                                    <span style={{ fontSize: '0.9rem' }}>📊</span>
+                                                                                    <span style={{ color: 'rgba(255, 255, 255, 0.5)', fontSize: '0.75rem', minWidth: '70px' }}>Batch Size</span>
+                                                                                    <span style={{ color: '#c4b5fd', fontSize: '0.85rem', fontWeight: '700' }}>{batch.batchSize} {batch.unit}</span>
+                                                                                </div>
+
+                                                                                {/* Pack */}
+                                                                                <div style={{
+                                                                                    display: 'flex',
+                                                                                    alignItems: 'center',
+                                                                                    gap: '0.5rem',
+                                                                                }}>
+                                                                                    <span style={{ fontSize: '0.9rem' }}>📦</span>
+                                                                                    <span style={{ color: 'rgba(255, 255, 255, 0.5)', fontSize: '0.75rem', minWidth: '70px' }}>Pack</span>
+                                                                                    <span style={{ color: 'white', fontSize: '0.85rem', fontWeight: '600' }}>{batch.pack || 'N/A'}</span>
+                                                                                </div>
+
+                                                                                {/* MRP Value */}
+                                                                                <div style={{
+                                                                                    display: 'flex',
+                                                                                    alignItems: 'center',
+                                                                                    gap: '0.5rem',
+                                                                                }}>
+                                                                                    <span style={{ fontSize: '0.9rem' }}>💰</span>
+                                                                                    <span style={{ color: 'rgba(255, 255, 255, 0.5)', fontSize: '0.75rem', minWidth: '70px' }}>MRP</span>
+                                                                                    <span style={{ color: '#fde047', fontSize: '0.85rem', fontWeight: '700' }}>
+                                                                                        {batch.mrpValue ? `₹${batch.mrpValue}` : 'N/A'}
+                                                                                    </span>
+                                                                                </div>
+
+                                                                                {/* Department */}
+                                                                                <div style={{
+                                                                                    display: 'flex',
+                                                                                    alignItems: 'center',
+                                                                                    gap: '0.5rem',
+                                                                                }}>
+                                                                                    <span style={{ fontSize: '0.9rem' }}>🏢</span>
+                                                                                    <span style={{ color: 'rgba(255, 255, 255, 0.5)', fontSize: '0.75rem', minWidth: '70px' }}>Dept</span>
+                                                                                    <span style={{ color: 'white', fontSize: '0.85rem', fontWeight: '600' }}>{batch.department || 'N/A'}</span>
+                                                                                </div>
+
+                                                                                {/* Location */}
+                                                                                <div style={{
+                                                                                    display: 'flex',
+                                                                                    alignItems: 'center',
+                                                                                    gap: '0.5rem',
+                                                                                }}>
+                                                                                    <span style={{ fontSize: '0.9rem' }}>📍</span>
+                                                                                    <span style={{ color: 'rgba(255, 255, 255, 0.5)', fontSize: '0.75rem', minWidth: '70px' }}>Location</span>
+                                                                                    <span style={{ color: 'white', fontSize: '0.85rem', fontWeight: '600' }}>{batch.locationId || 'N/A'}</span>
+                                                                                </div>
+
+                                                                                {/* Manufacturing License */}
+                                                                                <div style={{
+                                                                                    display: 'flex',
+                                                                                    alignItems: 'center',
+                                                                                    gap: '0.5rem',
+                                                                                }}>
+                                                                                    <span style={{ fontSize: '0.9rem' }}>📜</span>
+                                                                                    <span style={{ color: 'rgba(255, 255, 255, 0.5)', fontSize: '0.75rem', minWidth: '70px' }}>Mfg Lic</span>
+                                                                                    <span style={{ color: 'white', fontSize: '0.85rem', fontWeight: '600' }}>{batch.mfgLicNo || 'N/A'}</span>
+                                                                                </div>
+
+                                                                                {/* Year */}
+                                                                                <div style={{
+                                                                                    display: 'flex',
+                                                                                    alignItems: 'center',
+                                                                                    gap: '0.5rem',
+                                                                                }}>
+                                                                                    <span style={{ fontSize: '0.9rem' }}>🗓️</span>
+                                                                                    <span style={{ color: 'rgba(255, 255, 255, 0.5)', fontSize: '0.75rem', minWidth: '70px' }}>Year</span>
+                                                                                    <span style={{ color: 'white', fontSize: '0.85rem', fontWeight: '600' }}>{batch.year || 'N/A'}</span>
+                                                                                </div>
+
+                                                                                {/* Make */}
+                                                                                <div style={{
+                                                                                    display: 'flex',
+                                                                                    alignItems: 'center',
+                                                                                    gap: '0.5rem',
+                                                                                }}>
+                                                                                    <span style={{ fontSize: '0.9rem' }}>🏭</span>
+                                                                                    <span style={{ color: 'rgba(255, 255, 255, 0.5)', fontSize: '0.75rem', minWidth: '70px' }}>Make</span>
+                                                                                    <span style={{ color: 'white', fontSize: '0.85rem', fontWeight: '600' }}>{batch.make || 'N/A'}</span>
+                                                                                </div>
+
+                                                                                {/* Batch Completion Date */}
+                                                                                {batch.batchCompletionDate && (
+                                                                                    <div style={{
+                                                                                        display: 'flex',
+                                                                                        alignItems: 'center',
+                                                                                        gap: '0.5rem',
+                                                                                    }}>
+                                                                                        <span style={{ fontSize: '0.9rem' }}>✅</span>
+                                                                                        <span style={{ color: 'rgba(255, 255, 255, 0.5)', fontSize: '0.75rem', minWidth: '70px' }}>Completed</span>
+                                                                                        <span style={{ color: '#86efac', fontSize: '0.85rem', fontWeight: '600' }}>{batch.batchCompletionDate}</span>
+                                                                                    </div>
+                                                                                )}
+                                                                            </div>
+
+                                                                            {/* Company Info Footer */}
+                                                                            {(batch.companyName || batch.fileName) && (
+                                                                                <div style={{
+                                                                                    marginTop: '1rem',
+                                                                                    paddingTop: '0.75rem',
+                                                                                    borderTop: '1px solid rgba(255, 255, 255, 0.06)',
+                                                                                    display: 'flex',
+                                                                                    alignItems: 'center',
+                                                                                    justifyContent: 'space-between',
+                                                                                    flexWrap: 'wrap',
+                                                                                    gap: '0.5rem',
+                                                                                }}>
+                                                                                    {batch.companyName && batch.companyName !== 'N/A' && (
+                                                                                        <div style={{
+                                                                                            display: 'flex',
+                                                                                            alignItems: 'center',
+                                                                                            gap: '0.5rem',
+                                                                                            fontSize: '0.75rem',
+                                                                                            color: 'rgba(255, 255, 255, 0.4)',
+                                                                                        }}>
+                                                                                            <span>🏛️</span>
+                                                                                            <span>{batch.companyName}</span>
+                                                                                        </div>
+                                                                                    )}
+                                                                                    {batch.fileName && (
+                                                                                        <div style={{
+                                                                                            display: 'flex',
+                                                                                            alignItems: 'center',
+                                                                                            gap: '0.5rem',
+                                                                                            fontSize: '0.7rem',
+                                                                                            color: 'rgba(255, 255, 255, 0.3)',
+                                                                                            fontFamily: 'monospace',
+                                                                                        }}>
+                                                                                            <span>📁</span>
+                                                                                            <span>{batch.fileName}</span>
+                                                                                        </div>
+                                                                                    )}
+                                                                                </div>
+                                                                            )}
+                                                                        </div>
+                                                                    ))}
+                                                                </div>
+                                                            )}
+
+                                                            {/* No Data State */}
+                                                            {!isMfcBatchDataLoading(formula._id) && (!mfcBatchData[formula._id] || mfcBatchData[formula._id].length === 0) && (
+                                                                <div style={{
+                                                                    textAlign: 'center',
+                                                                    padding: '3rem',
+                                                                }}>
+                                                                    <div style={{
+                                                                        width: '80px',
+                                                                        height: '80px',
+                                                                        margin: '0 auto 1rem auto',
+                                                                        borderRadius: '50%',
+                                                                        background: 'rgba(255, 255, 255, 0.05)',
+                                                                        display: 'flex',
+                                                                        alignItems: 'center',
+                                                                        justifyContent: 'center',
+                                                                        fontSize: '2.5rem',
+                                                                    }}>📭</div>
+                                                                    <p style={{ color: 'rgba(255, 255, 255, 0.6)', fontWeight: '600', fontSize: '1rem', margin: 0 }}>No batch data found for this formula</p>
+                                                                    <p style={{ color: 'rgba(255, 255, 255, 0.4)', fontSize: '0.85rem', marginTop: '0.5rem' }}>Batch records may not have been uploaded yet</p>
+                                                                </div>
+                                                            )}
                                                         </div>
                                                     )}
+
 
                                                     {/* Company Information */}
                                                     {formula.companyInfo && (
@@ -4108,7 +7969,7 @@ export default function FormulaDataPage() {
                                                             <InfoRow label="Manufacturing Location" value={formula.masterFormulaDetails.manufacturingLocation} />
                                                             <InfoRow label="Manufacturer" value={formula.masterFormulaDetails.manufacturer} />
                                                             <InfoRow label="Shelf Life" value={formula.masterFormulaDetails.shelfLife} />
-                                                            <InfoRow label="Revision No" value={formula.masterFormulaDetails.revisionNo} />
+
                                                             <InfoRow label="Reason for Change" value={formula.masterFormulaDetails.reasonForChange} />
                                                             <InfoRow label="Effective Batch No" value={formula.masterFormulaDetails.effectiveBatchNo} />
                                                             <InfoRow label="Date" value={formula.masterFormulaDetails.date} />
@@ -4716,12 +8577,27 @@ export default function FormulaDataPage() {
                                     title="Low Batch MFCs (1-2 Batches)"
                                     count={lowBatchFormulas.length}
                                     totalBatches={sectionBatchTotals.lowBatch}
+                                    uniqueBatches={uniqueBatchReconciliation?.lowBatchUniqueBatches}
                                     icon="📊"
                                     isOpen={lowBatchMfcsOpen}
                                     onToggle={() => setLowBatchMfcsOpen(!lowBatchMfcsOpen)}
                                     badgeColor="#f59e0b"
                                     badgeText="1-2 Batches"
                                     description="MFCs with 1 or 2 batches in the system"
+                                    rmDataMatched={sectionRmData.lowBatch.matched}
+                                    rmDataUnmatched={sectionRmData.lowBatch.unmatched}
+                                    ppmDataMatched={sectionPpmPmData.lowBatch.ppmMatched}
+                                    ppmDataUnmatched={sectionPpmPmData.lowBatch.ppmUnmatched}
+                                    pmDataMatched={sectionPpmPmData.lowBatch.pmMatched}
+                                    pmDataUnmatched={sectionPpmPmData.lowBatch.pmUnmatched}
+                                    onPpmMatchedClick={() => openPpmDataModal('matched')}
+                                    onPpmUnmatchedClick={() => openPpmDataModal('unmatched')}
+                                    onPmMatchedClick={() => openPmDataModal('matched')}
+                                    onPmUnmatchedClick={() => openPmDataModal('unmatched')}
+                                    materialQualified={sectionMaterialQualData.lowBatch.qualified}
+                                    materialUnqualified={sectionMaterialQualData.lowBatch.unqualified}
+                                    onMaterialQualifiedClick={() => openMatDataModal('qualified')}
+                                    onMaterialUnqualifiedClick={() => openMatDataModal('unqualified')}
                                 />
                                 {lowBatchMfcsOpen && (
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
@@ -4749,8 +8625,16 @@ export default function FormulaDataPage() {
                                                     }}
                                                 >
                                                     {/* MFC Header */}
-                                                    <button
+                                                    <div
+                                                        role="button"
+                                                        tabIndex={0}
                                                         onClick={() => toggleMfc(formula._id)}
+                                                        onKeyDown={(e) => {
+                                                            if (e.key === 'Enter' || e.key === ' ') {
+                                                                e.preventDefault();
+                                                                toggleMfc(formula._id);
+                                                            }
+                                                        }}
                                                         style={{
                                                             width: '100%',
                                                             padding: '1rem 1.5rem',
@@ -4761,6 +8645,7 @@ export default function FormulaDataPage() {
                                                             alignItems: 'center',
                                                             gap: '1rem',
                                                             textAlign: 'left',
+                                                            outline: 'none',
                                                         }}
                                                     >
                                                         <div style={{ width: '40px', fontSize: '0.9rem', fontWeight: '600', color: 'var(--muted-foreground)' }}>
@@ -4791,10 +8676,8 @@ export default function FormulaDataPage() {
                                                         <div style={{ padding: '0.25rem 0.75rem', borderRadius: 'var(--radius-sm)', background: 'var(--muted)', color: 'var(--muted-foreground)', fontSize: '0.75rem', fontWeight: '500' }}>
                                                             {materialCount} materials
                                                         </div>
-                                                        <div style={{ fontSize: '0.75rem', color: 'var(--muted-foreground)' }}>
-                                                            REV {formula.masterFormulaDetails.revisionNo || '0'}
-                                                        </div>
-                                                    </button>
+
+                                                    </div>
                                                 </div>
                                             );
                                         })}
@@ -4810,12 +8693,27 @@ export default function FormulaDataPage() {
                                     title="No Batch MFCs"
                                     count={noBatchFormulas.length}
                                     totalBatches={sectionBatchTotals.noBatch}
+                                    uniqueBatches={uniqueBatchReconciliation?.noBatchUniqueBatches}
                                     icon="🚫"
                                     isOpen={noBatchMfcsOpen}
                                     onToggle={() => setNoBatchMfcsOpen(!noBatchMfcsOpen)}
                                     badgeColor="#dc2626"
                                     badgeText="0 Batches"
                                     description="MFCs with no production batches in the system"
+                                    rmDataMatched={sectionRmData.noBatch.matched}
+                                    rmDataUnmatched={sectionRmData.noBatch.unmatched}
+                                    ppmDataMatched={sectionPpmPmData.noBatch.ppmMatched}
+                                    ppmDataUnmatched={sectionPpmPmData.noBatch.ppmUnmatched}
+                                    pmDataMatched={sectionPpmPmData.noBatch.pmMatched}
+                                    pmDataUnmatched={sectionPpmPmData.noBatch.pmUnmatched}
+                                    onPpmMatchedClick={() => openPpmDataModal('matched')}
+                                    onPpmUnmatchedClick={() => openPpmDataModal('unmatched')}
+                                    onPmMatchedClick={() => openPmDataModal('matched')}
+                                    onPmUnmatchedClick={() => openPmDataModal('unmatched')}
+                                    materialQualified={sectionMaterialQualData.noBatch.qualified}
+                                    materialUnqualified={sectionMaterialQualData.noBatch.unqualified}
+                                    onMaterialQualifiedClick={() => openMatDataModal('qualified')}
+                                    onMaterialUnqualifiedClick={() => openMatDataModal('unqualified')}
                                 />
                                 {noBatchMfcsOpen && (
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
@@ -4844,8 +8742,16 @@ export default function FormulaDataPage() {
                                                     }}
                                                 >
                                                     {/* MFC Header */}
-                                                    <button
+                                                    <div
+                                                        role="button"
+                                                        tabIndex={0}
                                                         onClick={() => toggleMfc(formula._id)}
+                                                        onKeyDown={(e) => {
+                                                            if (e.key === 'Enter' || e.key === ' ') {
+                                                                e.preventDefault();
+                                                                toggleMfc(formula._id);
+                                                            }
+                                                        }}
                                                         style={{
                                                             width: '100%',
                                                             padding: '1rem 1.5rem',
@@ -4856,6 +8762,7 @@ export default function FormulaDataPage() {
                                                             alignItems: 'center',
                                                             gap: '1rem',
                                                             textAlign: 'left',
+                                                            outline: 'none',
                                                         }}
                                                     >
                                                         <div style={{ width: '40px', fontSize: '0.9rem', fontWeight: '600', color: 'var(--muted-foreground)' }}>
@@ -4887,7 +8794,7 @@ export default function FormulaDataPage() {
                                                         <div style={{ fontSize: '0.75rem', color: 'var(--muted-foreground)' }}>
                                                             REV {formula.masterFormulaDetails.revisionNo || '0'}
                                                         </div>
-                                                    </button>
+                                                    </div>
                                                 </div>
                                             );
                                         })}
@@ -4903,12 +8810,27 @@ export default function FormulaDataPage() {
                                     title="Placebo & Media Fill Products"
                                     count={placeboFormulas.length}
                                     totalBatches={sectionBatchTotals.placebo}
+                                    uniqueBatches={uniqueBatchReconciliation?.placeboUniqueBatches}
                                     icon="💊"
                                     isOpen={placeboMfcsOpen}
                                     onToggle={() => setPlaceboMfcsOpen(!placeboMfcsOpen)}
                                     badgeColor="#6b7280"
                                     badgeText="Placebo/MediaFill"
                                     description="Placebo formulations and Media Fill products for validation"
+                                    rmDataMatched={sectionRmData.placebo.matched}
+                                    rmDataUnmatched={sectionRmData.placebo.unmatched}
+                                    ppmDataMatched={sectionPpmPmData.placebo.ppmMatched}
+                                    ppmDataUnmatched={sectionPpmPmData.placebo.ppmUnmatched}
+                                    pmDataMatched={sectionPpmPmData.placebo.pmMatched}
+                                    pmDataUnmatched={sectionPpmPmData.placebo.pmUnmatched}
+                                    onPpmMatchedClick={() => openPpmDataModal('matched')}
+                                    onPpmUnmatchedClick={() => openPpmDataModal('unmatched')}
+                                    onPmMatchedClick={() => openPmDataModal('matched')}
+                                    onPmUnmatchedClick={() => openPmDataModal('unmatched')}
+                                    materialQualified={sectionMaterialQualData.placebo.qualified}
+                                    materialUnqualified={sectionMaterialQualData.placebo.unqualified}
+                                    onMaterialQualifiedClick={() => openMatDataModal('qualified')}
+                                    onMaterialUnqualifiedClick={() => openMatDataModal('unqualified')}
                                 />
                                 {placeboMfcsOpen && (
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
@@ -4936,8 +8858,16 @@ export default function FormulaDataPage() {
                                                     }}
                                                 >
                                                     {/* MFC Header */}
-                                                    <button
+                                                    <div
+                                                        role="button"
+                                                        tabIndex={0}
                                                         onClick={() => toggleMfc(formula._id)}
+                                                        onKeyDown={(e) => {
+                                                            if (e.key === 'Enter' || e.key === ' ') {
+                                                                e.preventDefault();
+                                                                toggleMfc(formula._id);
+                                                            }
+                                                        }}
                                                         style={{
                                                             width: '100%',
                                                             padding: '1rem 1.5rem',
@@ -4948,6 +8878,7 @@ export default function FormulaDataPage() {
                                                             alignItems: 'center',
                                                             gap: '1rem',
                                                             textAlign: 'left',
+                                                            outline: 'none',
                                                         }}
                                                     >
                                                         <div style={{ width: '40px', fontSize: '0.9rem', fontWeight: '600', color: 'var(--muted-foreground)' }}>
@@ -4981,7 +8912,7 @@ export default function FormulaDataPage() {
                                                         <div style={{ fontSize: '0.75rem', color: 'var(--muted-foreground)' }}>
                                                             REV {formula.masterFormulaDetails.revisionNo || '0'}
                                                         </div>
-                                                    </button>
+                                                    </div>
                                                 </div>
                                             );
                                         })}
@@ -5655,8 +9586,1558 @@ export default function FormulaDataPage() {
                 );
             })()}
 
+            {/* BATCH SECTION - Collapsible at bottom */}
+            {showBatchSection && (
+                <div ref={batchSectionRef} style={{
+                    marginTop: '2rem',
+                    background: 'var(--card)',
+                    borderRadius: '16px',
+                    border: '2px solid var(--border)',
+                    overflow: 'hidden',
+                    marginLeft: '1rem',
+                    marginRight: "1rem"
+                }}>
+                    {/* Batch Section Header */}
+                    <div style={{
+                        padding: '1.5rem',
+                        background: batchViewMode === 'unique'
+                            ? 'linear-gradient(135deg, #f5f3ff 0%, #ede9fe 100%)'
+                            : 'linear-gradient(135deg, #ecfeff 0%, #cffafe 100%)',
+                        borderBottom: '2px solid var(--border)',
+                    }}>
+                        <div style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            flexWrap: 'wrap',
+                            gap: '1rem',
+                        }}>
+                            <div>
+                                <h2 style={{
+                                    fontSize: '1.5rem',
+                                    fontWeight: 700,
+                                    color: batchViewMode === 'unique' ? '#7c3aed' : '#0891b2',
+                                    marginBottom: '0.5rem',
+                                }}>
+                                    📦 Batch Registry
+                                </h2>
+                                <p style={{
+                                    fontSize: '0.9rem',
+                                    color: 'var(--muted-foreground)',
+                                }}>
+                                    {batchViewMode === 'unique' 
+                                        ? `Viewing ${(() => {
+                                            const groups = new Map<string, BatchItem[]>();
+                                            allBatches.forEach(b => {
+                                                const bn = b.batchNumber || 'Unknown';
+                                                if (!groups.has(bn)) groups.set(bn, []);
+                                                groups.get(bn)?.push(b);
+                                            });
+                                            return groups.size;
+                                        })()} unique batch groups`
+                                        : `Viewing all ${allBatches.length} batch records`
+                                    }
+                                </p>
+                            </div>
+                            <button
+                                onClick={() => setShowBatchSection(false)}
+                                style={{
+                                    padding: '0.75rem 1.5rem',
+                                    background: 'var(--muted)',
+                                    border: 'none',
+                                    borderRadius: '8px',
+                                    cursor: 'pointer',
+                                    fontWeight: 600,
+                                    color: 'var(--foreground)',
+                                }}
+                            >
+                                ✕ Close
+                            </button>
+                        </div>
+
+                        {/* View Mode Tabs */}
+                        <div style={{
+                            display: 'flex',
+                            gap: '1rem',
+                            marginTop: '1rem',
+                        }}>
+                            <button
+                                onClick={() => setBatchViewMode('unique')}
+                                style={{
+                                    padding: '0.75rem 1.5rem',
+                                    background: batchViewMode === 'unique'
+                                        ? 'linear-gradient(135deg, #7c3aed 0%, #8b5cf6 100%)'
+                                        : 'var(--muted)',
+                                    color: batchViewMode === 'unique' ? 'white' : 'var(--foreground)',
+                                    border: 'none',
+                                    borderRadius: '8px',
+                                    cursor: 'pointer',
+                                    fontWeight: 600,
+                                    boxShadow: batchViewMode === 'unique' ? '0 4px 12px rgba(139, 92, 246, 0.3)' : 'none',
+                                }}
+                            >
+                                📁 Unique Batches
+                            </button>
+                            <button
+                                onClick={() => setBatchViewMode('all')}
+                                style={{
+                                    padding: '0.75rem 1.5rem',
+                                    background: batchViewMode === 'all'
+                                        ? 'linear-gradient(135deg, #0891b2 0%, #06b6d4 100%)'
+                                        : 'var(--muted)',
+                                    color: batchViewMode === 'all' ? 'white' : 'var(--foreground)',
+                                    border: 'none',
+                                    borderRadius: '8px',
+                                    cursor: 'pointer',
+                                    fontWeight: 600,
+                                    boxShadow: batchViewMode === 'all' ? '0 4px 12px rgba(6, 182, 212, 0.3)' : 'none',
+                                }}
+                            >
+                                📋 All Batches
+                            </button>
+                        </div>
+
+                        {/* Search Bar */}
+                        <div style={{ marginTop: '1rem', position: 'relative' }}>
+                            <input
+                                type="text"
+                                placeholder="Search by batch number, item code, or item name..."
+                                value={batchSearchTerm}
+                                onChange={(e) => setBatchSearchTerm(e.target.value)}
+                                style={{
+                                    width: '100%',
+                                    padding: '0.75rem 1rem 0.75rem 2.5rem',
+                                    fontSize: '0.9rem',
+                                    border: '2px solid var(--border)',
+                                    borderRadius: '8px',
+                                    background: 'var(--background)',
+                                    color: 'var(--foreground)',
+                                }}
+                            />
+                            <span style={{
+                                position: 'absolute',
+                                left: '0.75rem',
+                                top: '50%',
+                                transform: 'translateY(-50%)',
+                                fontSize: '1.1rem',
+                            }}>🔍</span>
+                        </div>
+                    </div>
+
+                    {/* Batch Content */}
+                    <div style={{ maxHeight: '600px', overflowY: 'auto', padding: '1rem' }}>
+                        {isBatchesLoading ? (
+                            <div style={{ textAlign: 'center', padding: '3rem' }}>
+                                <svg className="animate-spin" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#8b5cf6" strokeWidth="2">
+                                    <path d="M21 12a9 9 0 11-6.219-8.56" strokeLinecap="round" />
+                                </svg>
+                                <p style={{ marginTop: '1rem', color: 'var(--muted-foreground)' }}>Loading batches...</p>
+                            </div>
+                        ) : batchViewMode === 'unique' ? (
+                            /* Unique Batches View */
+                            (() => {
+                                const groups = new Map<string, BatchItem[]>();
+                                const filtered = allBatches.filter(b => {
+                                    if (!batchSearchTerm.trim()) return true;
+                                    const term = batchSearchTerm.toLowerCase();
+                                    return (
+                                        b.batchNumber?.toLowerCase().includes(term) ||
+                                        b.itemCode?.toLowerCase().includes(term) ||
+                                        b.itemName?.toLowerCase().includes(term)
+                                    );
+                                });
+                                
+                                 filtered.forEach(batch => {
+                                    const bn = batch.batchNumber || 'Unknown';
+                                    if (!groups.has(bn)) groups.set(bn, []);
+                                    groups.get(bn)?.push(batch);
+                                });
+
+                                // Support sorting groups by various fields
+                                const sortedGroups = Array.from(groups.entries()).sort((a, b) => {
+                                    const itemA = a[1][0];
+                                    const itemB = b[1][0];
+                                    
+                                    // Custom sorting for records count
+                                    if ((batchSortColumn as string) === 'records') {
+                                        const countA = a[1].length;
+                                        const countB = b[1].length;
+                                        return batchSortDirection === 'asc' ? countA - countB : countB - countA;
+                                    }
+
+                                    let valA: any = itemA[batchSortColumn as keyof BatchItem] || '';
+                                    let valB: any = itemB[batchSortColumn as keyof BatchItem] || '';
+
+                                    // Special handling for counts if sorting by unknown
+                                    if (batchSortColumn === 'batchNumber') {
+                                        valA = a[0];
+                                        valB = b[0];
+                                    }
+
+                                    // Chronological sort for dates or shelf life
+                                    if (batchSortColumn === 'mfgDate' || batchSortColumn === 'expiryDate' || (batchSortColumn as string) === 'shelfLife') {
+                                        const parsePharmaDate = (dateStr: string | undefined) => {
+                                            if (!dateStr || dateStr === 'N/A') return 0;
+                                            const parts = dateStr.split('-');
+                                            if (parts.length === 3) {
+                                                const months = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+                                                const monthIdx = months.indexOf(parts[1].toUpperCase());
+                                                if (monthIdx !== -1) {
+                                                    const year = parseInt(parts[2]);
+                                                    const fullYear = year < 50 ? 2000 + year : 1900 + year;
+                                                    return new Date(fullYear, monthIdx, parseInt(parts[0])).getTime();
+                                                }
+                                            }
+                                            return new Date(dateStr).getTime() || 0;
+                                        };
+
+                                        if ((batchSortColumn as string) === 'shelfLife') {
+                                            const timeA = parsePharmaDate(itemA.expiryDate).valueOf() - parsePharmaDate(itemA.mfgDate).valueOf();
+                                            const timeB = parsePharmaDate(itemB.expiryDate).valueOf() - parsePharmaDate(itemB.mfgDate).valueOf();
+                                            return batchSortDirection === 'asc' ? timeA - timeB : timeB - timeA;
+                                        }
+
+                                        const timeA = parsePharmaDate(valA);
+                                        const timeB = parsePharmaDate(valB);
+                                        return batchSortDirection === 'asc' ? timeA - timeB : timeB - timeA;
+                                    }
+
+                                    const comparison = String(valA).localeCompare(String(valB), undefined, { numeric: true, sensitivity: 'base' });
+                                    return batchSortDirection === 'asc' ? comparison : -comparison;
+                                });
+
+                                return sortedGroups.length === 0 ? (
+                                    <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--muted-foreground)' }}>
+                                        <span style={{ fontSize: '3rem' }}>📭</span>
+                                        <p style={{ marginTop: '1rem' }}>No batches found</p>
+                                    </div>
+                                ) : (
+                                    <div style={{ display: 'flex', flexDirection: 'column' }}>
+                                        {/* Sorting Headers for Unique View */}
+                                        <div style={{
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '1rem',
+                                            padding: '0.75rem 1rem',
+                                            background: '#f8fafc',
+                                            borderRadius: '8px',
+                                            marginBottom: '0.5rem',
+                                            border: '1px solid #e2e8f0',
+                                            fontSize: '0.75rem',
+                                            fontWeight: 700,
+                                            color: '#64748b',
+                                            textTransform: 'uppercase',
+                                            letterSpacing: '0.05em'
+                                        }}>
+                                            <div style={{ width: '24px' }}></div>
+                                            <div style={{ width: '32px' }}>#</div>
+                                            <div 
+                                                onClick={() => toggleBatchSort('batchNumber')}
+                                                style={{ width: '150px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', color: batchSortColumn === 'batchNumber' ? '#7c3aed' : 'inherit' }}
+                                            >
+                                                Batch No {batchSortColumn === 'batchNumber' && (batchSortDirection === 'asc' ? '↑' : '↓')}
+                                            </div>
+                                            <div 
+                                                onClick={() => toggleBatchSort('itemCode')}
+                                                style={{ width: '120px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', color: batchSortColumn === 'itemCode' ? '#7c3aed' : 'inherit' }}
+                                            >
+                                                Item Code {batchSortColumn === 'itemCode' && (batchSortDirection === 'asc' ? '↑' : '↓')}
+                                            </div>
+                                            <div 
+                                                onClick={() => toggleBatchSort('records')}
+                                                style={{ width: '80px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', color: (batchSortColumn as string) === 'records' ? '#7c3aed' : 'inherit' }}
+                                            >
+                                                Records {(batchSortColumn as string) === 'records' && (batchSortDirection === 'asc' ? '↑' : '↓')}
+                                            </div>
+                                            <div 
+                                                onClick={() => toggleBatchSort('itemName')}
+                                                style={{ flex: 1, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', color: batchSortColumn === 'itemName' ? '#7c3aed' : 'inherit' }}
+                                            >
+                                                Item Name {batchSortColumn === 'itemName' && (batchSortDirection === 'asc' ? '↑' : '↓')}
+                                            </div>
+                                            <div 
+                                                onClick={() => toggleBatchSort('mfgDate')}
+                                                style={{ width: '180px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', color: (batchSortColumn === 'mfgDate' || batchSortColumn === 'expiryDate') ? '#7c3aed' : 'inherit' }}
+                                            >
+                                                Validity {(batchSortColumn === 'mfgDate' || batchSortColumn === 'expiryDate') && (batchSortDirection === 'asc' ? '↑' : '↓')}
+                                            </div>
+                                            <div 
+                                                onClick={() => toggleBatchSort('shelfLife')}
+                                                style={{ width: '100px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', textAlign: 'right', justifyContent: 'flex-end', color: (batchSortColumn as string) === 'shelfLife' ? '#7c3aed' : 'inherit' }}
+                                            >
+                                                Shelf Life {(batchSortColumn as string) === 'shelfLife' && (batchSortDirection === 'asc' ? '↑' : '↓')}
+                                            </div>
+                                        </div>
+
+                                        {sortedGroups.map(([batchNumber, rawItems], idx) => {
+                                            const isExpanded = expandedBatchGroups.has(batchNumber);
+                                            
+                                            // Sort items inside the folder as well
+                                            const items = [...rawItems].sort((a, b) => {
+                                                let valA: any = a[batchSortColumn as keyof BatchItem] || '';
+                                                let valB: any = b[batchSortColumn as keyof BatchItem] || '';
+                                                
+                                                if (batchSortColumn === 'mfgDate' || batchSortColumn === 'expiryDate' || (batchSortColumn as string) === 'shelfLife') {
+                                                    const parsePharmaDate = (dateStr: string | undefined) => {
+                                                        if (!dateStr || dateStr === 'N/A') return 0;
+                                                        const parts = dateStr.split('-');
+                                                        if (parts.length === 3) {
+                                                            const months = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+                                                            const monthIdx = months.indexOf(parts[1].toUpperCase());
+                                                            if (monthIdx !== -1) {
+                                                                const year = parseInt(parts[2]);
+                                                                const fullYear = year < 50 ? 2000 + year : 1900 + year;
+                                                                return new Date(fullYear, monthIdx, parseInt(parts[0])).getTime();
+                                                            }
+                                                        }
+                                                        return new Date(dateStr).getTime() || 0;
+                                                    };
+
+                                                    if ((batchSortColumn as string) === 'shelfLife') {
+                                                        const timeA = parsePharmaDate(a.expiryDate) - parsePharmaDate(a.mfgDate);
+                                                        const timeB = parsePharmaDate(b.expiryDate) - parsePharmaDate(b.mfgDate);
+                                                        return batchSortDirection === 'asc' ? timeA - timeB : timeB - timeA;
+                                                    }
+
+                                                    const timeA = parsePharmaDate(valA);
+                                                    const timeB = parsePharmaDate(valB);
+                                                    return batchSortDirection === 'asc' ? timeA - timeB : timeB - timeA;
+                                                }
+
+                                                const comparison = String(valA).localeCompare(String(valB), undefined, { numeric: true, sensitivity: 'base' });
+                                                return batchSortDirection === 'asc' ? comparison : -comparison;
+                                            });
+
+                                            return (
+                                                <div key={batchNumber} style={{
+                                                    marginBottom: '0.75rem',
+                                                    border: '1px solid var(--border)',
+                                                    borderRadius: '8px',
+                                                    overflow: 'hidden',
+                                                    boxShadow: isExpanded ? '0 4px 12px rgba(124, 58, 237, 0.1)' : 'none',
+                                                }}>
+                                                    <button
+                                                        onClick={() => {
+                                                            setExpandedBatchGroups(prev => {
+                                                                const next = new Set(prev);
+                                                                if (next.has(batchNumber)) {
+                                                                    next.delete(batchNumber);
+                                                                } else {
+                                                                    next.add(batchNumber);
+                                                                }
+                                                                return next;
+                                                            });
+                                                        }}
+                                                        style={{
+                                                            width: '100%',
+                                                            display: 'flex',
+                                                            alignItems: 'center',
+                                                            gap: '1rem',
+                                                            padding: '1rem',
+                                                            background: isExpanded ? '#faf5ff' : 'var(--card)',
+                                                            border: 'none',
+                                                            cursor: 'pointer',
+                                                            textAlign: 'left',
+                                                        }}
+                                                    >
+                                                        <div style={{
+                                                            width: '24px',
+                                                            height: '24px',
+                                                            display: 'flex',
+                                                            alignItems: 'center',
+                                                            justifyContent: 'center',
+                                                            borderRadius: '4px',
+                                                            background: isExpanded ? '#7c3aed' : '#e5e7eb',
+                                                            color: isExpanded ? 'white' : '#6b7280',
+                                                            transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)',
+                                                            transition: 'all 0.2s ease',
+                                                            fontSize: '0.7rem',
+                                                            fontWeight: 700,
+                                                        }}>▶</div>
+                                                        <div style={{ fontSize: '0.8rem', fontWeight: 600, color: '#9ca3af', minWidth: '32px' }}>
+                                                            #{idx + 1}
+                                                        </div>
+                                                        <div style={{
+                                                            fontFamily: 'monospace',
+                                                            fontSize: '1rem',
+                                                            fontWeight: 700,
+                                                            color: '#7c3aed',
+                                                            minWidth: '150px'
+                                                        }}>
+                                                            📁 {batchNumber}
+                                                        </div>
+                                                        <div style={{
+                                                            fontSize: '0.85rem',
+                                                            fontWeight: 600,
+                                                            color: '#6b7280',
+                                                            fontFamily: 'monospace',
+                                                            minWidth: '120px'
+                                                        }}>
+                                                            {items[0].itemCode}
+                                                        </div>
+                                                        <div style={{
+                                                            fontSize: '0.75rem',
+                                                            minWidth: '80px',
+                                                            color: items.length > 1 ? '#ea580c' : '#6b7280',
+                                                            background: items.length > 1 ? '#fff7ed' : '#f3f4f6',
+                                                            border: items.length > 1 ? '1px solid #fed7aa' : '1px solid #e5e7eb',
+                                                            padding: '3px 10px',
+                                                            borderRadius: '12px',
+                                                            fontWeight: 600,
+                                                            textAlign: 'center'
+                                                        }}>
+                                                            {items.length} record{items.length !== 1 ? 's' : ''}
+                                                        </div>
+                                                        <div style={{
+                                                            flex: 1,
+                                                            fontSize: '0.85rem',
+                                                            color: '#374151',
+                                                            overflow: 'hidden',
+                                                            textOverflow: 'ellipsis',
+                                                            whiteSpace: 'nowrap',
+                                                            fontWeight: 500
+                                                        }}>
+                                                            {items[0].itemName}
+                                                        </div>
+                                                        <div style={{ fontSize: '0.8rem', color: '#6b7280', width: '180px', display: 'flex', gap: '8px' }}>
+                                                            <span>{items[0].mfgDate} → {items[0].expiryDate}</span>
+                                                        </div>
+                                                        <div style={{ fontSize: '0.8rem', width: '100px', display: 'flex', justifyContent: 'flex-end' }}>
+                                                            <span style={{ fontWeight: 600, color: '#059669' }}>
+                                                                {calculateShelfLife(items[0].mfgDate, items[0].expiryDate)}
+                                                            </span>
+                                                        </div>
+                                                    </button>
+
+                                                {isExpanded && (
+                                                    <div style={{ padding: '1rem', background: '#fafafa' }}>
+                                                        {items.map((item: BatchItem, itemIdx: number) => (
+                                                            <div key={itemIdx} style={{
+                                                                display: 'grid',
+                                                                gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+                                                                gap: '1rem',
+                                                                padding: '1rem',
+                                                                background: 'white',
+                                                                borderRadius: '8px',
+                                                                border: '1px solid #e9d5ff',
+                                                                marginBottom: itemIdx < items.length - 1 ? '0.75rem' : 0,
+                                                                boxShadow: '0 2px 4px rgba(0,0,0,0.02)'
+                                                            }}>
+                                                                <div>
+                                                                    <div style={{ fontSize: '0.65rem', color: '#9ca3af', fontWeight: 500, textTransform: 'uppercase' }}>Item Code</div>
+                                                                    <div style={{ fontSize: '0.85rem', fontWeight: 600, color: '#7c3aed', fontFamily: 'monospace' }}>{item.itemCode}</div>
+                                                                </div>
+                                                                <div>
+                                                                    <div style={{ fontSize: '0.65rem', color: '#9ca3af', fontWeight: 500, textTransform: 'uppercase' }}>Item Name</div>
+                                                                    <div style={{ fontSize: '0.85rem', color: '#374151', fontWeight: 500 }}>{item.itemName}</div>
+                                                                </div>
+                                                                <div>
+                                                                    <div style={{ fontSize: '0.65rem', color: '#9ca3af', fontWeight: 500, textTransform: 'uppercase' }}>Mfg Date</div>
+                                                                    <div style={{ fontSize: '0.85rem', color: '#374151' }}>{item.mfgDate || 'N/A'}</div>
+                                                                </div>
+                                                                <div>
+                                                                    <div style={{ fontSize: '0.65rem', color: '#9ca3af', fontWeight: 500, textTransform: 'uppercase' }}>Expiry Date</div>
+                                                                    <div style={{ fontSize: '0.85rem', color: '#dc2626', fontWeight: 600 }}>{item.expiryDate || 'N/A'}</div>
+                                                                </div>
+                                                                <div>
+                                                                    <div style={{ fontSize: '0.65rem', color: '#9ca3af', fontWeight: 500, textTransform: 'uppercase' }}>Shelf Life</div>
+                                                                    <div style={{ fontSize: '0.85rem', color: '#059669', fontWeight: 600 }}>{calculateShelfLife(item.mfgDate, item.expiryDate)}</div>
+                                                                </div>
+                                                                <div>
+                                                                    <div style={{ fontSize: '0.65rem', color: '#9ca3af', fontWeight: 500, textTransform: 'uppercase' }}>Batch Size</div>
+                                                                    <div style={{ fontSize: '0.85rem', color: '#374151' }}>{item.batchSize} {item.batchUom}</div>
+                                                                </div>
+                                                                <div>
+                                                                    <div style={{ fontSize: '0.65rem', color: '#9ca3af', fontWeight: 500, textTransform: 'uppercase' }}>Pack</div>
+                                                                    <div style={{ fontSize: '0.85rem', color: '#374151' }}>{item.pack || 'N/A'}</div>
+                                                                </div>
+                                                                <div style={{ gridColumn: 'span 2' }}>
+                                                                    <div style={{ fontSize: '0.65rem', color: '#9ca3af', fontWeight: 500, textTransform: 'uppercase' }}>Source</div>
+                                                                    <div style={{ fontSize: '0.75rem', color: '#6b7280', fontStyle: 'italic' }}>{item.sourceFileName}</div>
+                                                                </div>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            );
+                        })()
+                        ) : (
+                            /* All Batches View - Table */
+                            (() => {
+                                const filtered = allBatches.filter(b => {
+                                    if (!batchSearchTerm.trim()) return true;
+                                    const term = batchSearchTerm.toLowerCase();
+                                    return (
+                                        b.batchNumber?.toLowerCase().includes(term) ||
+                                        b.itemCode?.toLowerCase().includes(term) ||
+                                        b.itemName?.toLowerCase().includes(term)
+                                    );
+                                });
+
+                                const sortedBatches = [...filtered].sort((a, b) => {
+                                    let valA: any = a[batchSortColumn as keyof BatchItem] || '';
+                                    let valB: any = b[batchSortColumn as keyof BatchItem] || '';
+                                    
+                                    // Chronological sort for dates or shelf life
+                                    if (batchSortColumn === 'mfgDate' || batchSortColumn === 'expiryDate' || (batchSortColumn as string) === 'shelfLife') {
+                                        const parsePharmaDate = (dateStr: string | undefined) => {
+                                            if (!dateStr || dateStr === 'N/A') return 0;
+                                            const parts = dateStr.split('-');
+                                            if (parts.length === 3) {
+                                                const months = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+                                                const monthIdx = months.indexOf(parts[1].toUpperCase());
+                                                if (monthIdx !== -1) {
+                                                    const year = parseInt(parts[2]);
+                                                    const fullYear = year < 50 ? 2000 + year : 1900 + year;
+                                                    return new Date(fullYear, monthIdx, parseInt(parts[0])).getTime();
+                                                }
+                                            }
+                                            return new Date(dateStr).getTime() || 0;
+                                        };
+
+                                        if ((batchSortColumn as string) === 'shelfLife') {
+                                            const timeA = parsePharmaDate(a.expiryDate) - parsePharmaDate(a.mfgDate);
+                                            const timeB = parsePharmaDate(b.expiryDate) - parsePharmaDate(b.mfgDate);
+                                            return batchSortDirection === 'asc' ? timeA - timeB : timeB - timeA;
+                                        }
+
+                                        const timeA = parsePharmaDate(valA);
+                                        const timeB = parsePharmaDate(valB);
+                                        return batchSortDirection === 'asc' ? timeA - timeB : timeB - timeA;
+                                    }
+
+                                    const comparison = String(valA).localeCompare(String(valB), undefined, { numeric: true, sensitivity: 'base' });
+                                    return batchSortDirection === 'asc' ? comparison : -comparison;
+                                });
+
+                                return (
+                                    <div style={{ overflowX: 'auto' }}>
+                                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                                            <thead>
+                                                <tr style={{ background: '#f9fafb', position: 'sticky', top: 0, zIndex: 10 }}>
+                                                    <th style={{ padding: '0.75rem', textAlign: 'left', fontWeight: 600, borderBottom: '2px solid var(--border)', color: '#6b7280' }}>#</th>
+                                                    {[
+                                                        { id: 'batchNumber', label: 'Batch No' },
+                                                        { id: 'itemCode', label: 'Item Code' },
+                                                        { id: 'itemName', label: 'Item Name' },
+                                                        { id: 'mfgDate', label: 'Mfg Date' },
+                                                        { id: 'expiryDate', label: 'Expiry Date' },
+                                                        { id: 'shelfLife', label: 'Shelf Life' },
+                                                        { id: 'batchSize', label: 'Batch Size' },
+                                                        { id: 'pack', label: 'Pack' },
+                                                        { id: 'sourceFileName', label: 'Source' }
+                                                    ].map(col => (
+                                                        <th 
+                                                            key={col.id}
+                                                            onClick={() => toggleBatchSort(col.id as keyof BatchItem)}
+                                                            style={{ 
+                                                                padding: '0.75rem', 
+                                                                textAlign: 'left', 
+                                                                fontWeight: 600, 
+                                                                borderBottom: '2px solid var(--border)',
+                                                                cursor: 'pointer',
+                                                                color: batchSortColumn === col.id ? '#7c3aed' : '#6b7280',
+                                                                transition: 'all 0.2s',
+                                                                whiteSpace: 'nowrap'
+                                                            }}
+                                                        >
+                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                                {col.label}
+                                                                <span style={{ fontSize: '0.7rem', opacity: batchSortColumn === col.id ? 1 : 0.3 }}>
+                                                                    {batchSortColumn === col.id ? (batchSortDirection === 'asc' ? '↑' : '↓') : '↕'}
+                                                                </span>
+                                                            </div>
+                                                        </th>
+                                                    ))}
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {sortedBatches.length === 0 ? (
+                                                    <tr>
+                                                        <td colSpan={10} style={{ padding: '3rem', textAlign: 'center', color: 'var(--muted-foreground)' }}>
+                                                            <span style={{ fontSize: '2rem' }}>📭</span>
+                                                            <p style={{ marginTop: '0.5rem' }}>No batches found</p>
+                                                        </td>
+                                                    </tr>
+                                                ) : (
+                                                    sortedBatches.slice(0, 500).map((batch, idx) => (
+                                                        <tr key={idx} style={{ 
+                                                            background: idx % 2 === 0 ? 'white' : '#fafafa',
+                                                            transition: 'background 0.2s'
+                                                        }}
+                                                        onMouseEnter={(e) => e.currentTarget.style.background = '#f5f3ff'}
+                                                        onMouseLeave={(e) => e.currentTarget.style.background = idx % 2 === 0 ? 'white' : '#fafafa'}
+                                                        >
+                                                            <td style={{ padding: '0.75rem', borderBottom: '1px solid #f3f4f6', color: '#9ca3af' }}>{idx + 1}</td>
+                                                            <td style={{ padding: '0.75rem', borderBottom: '1px solid #f3f4f6' }}>
+                                                                <span style={{ fontFamily: 'monospace', fontWeight: 600, color: '#0891b2' }}>{batch.batchNumber}</span>
+                                                            </td>
+                                                            <td style={{ padding: '0.75rem', borderBottom: '1px solid #f3f4f6' }}>
+                                                                <span style={{ fontFamily: 'monospace', fontSize: '0.8rem', color: '#6b7280' }}>{batch.itemCode}</span>
+                                                            </td>
+                                                            <td style={{ padding: '0.75rem', borderBottom: '1px solid #f3f4f6', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={batch.itemName}>
+                                                                {batch.itemName}
+                                                            </td>
+                                                            <td style={{ padding: '0.75rem', borderBottom: '1px solid #f3f4f6' }}>{batch.mfgDate || 'N/A'}</td>
+                                                            <td style={{ padding: '0.75rem', borderBottom: '1px solid #f3f4f6', color: '#dc2626', fontWeight: 600 }}>{batch.expiryDate || 'N/A'}</td>
+                                                            <td style={{ padding: '0.75rem', borderBottom: '1px solid #f3f4f6', color: '#059669', fontWeight: 600 }}>
+                                                                {calculateShelfLife(batch.mfgDate, batch.expiryDate)}
+                                                            </td>
+                                                            <td style={{ padding: '0.75rem', borderBottom: '1px solid #f3f4f6' }}>{batch.batchSize} {batch.batchUom}</td>
+                                                            <td style={{ padding: '0.75rem', borderBottom: '1px solid #f3f4f6' }}>{batch.pack || 'N/A'}</td>
+                                                            <td style={{ padding: '0.75rem', borderBottom: '1px solid #f3f4f6', fontSize: '0.75rem', color: '#6b7280', fontStyle: 'italic', maxWidth: '150px', overflow: 'hidden', textOverflow: 'ellipsis' }} title={batch.sourceFileName}>
+                                                                {batch.sourceFileName}
+                                                            </td>
+                                                        </tr>
+                                                    ))
+                                                )}
+                                            </tbody>
+                                        </table>
+                                        {sortedBatches.length > 500 && (
+                                            <div style={{
+                                                padding: '1rem',
+                                                textAlign: 'center',
+                                                background: '#f9fafb',
+                                                color: '#6b7280',
+                                                fontSize: '0.85rem',
+                                                borderTop: '1px solid var(--border)',
+                                            }}>
+                                                Showing first 500 of {sortedBatches.length.toLocaleString()} records. Use search to narrow results.
+                                            </div>
+                                        )}
+                                    </div>
+                                );
+                            })()
+                        )}
+                    </div>
+                </div>
+            )}
+
             {/* RM Data Modal */}
             <RmDataModal />
+
+            {/* Per-Formula RM Modal with backdrop */}
+            {perFormulaRmModalOpen && (
+                <div
+                    onClick={closePerFormulaRmModal}
+                    style={{
+                        position: 'fixed',
+                        top: 0,
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        background: 'rgba(0,0,0,0.5)',
+                        zIndex: 1000,
+                    }}
+                />
+            )}
+            <PerFormulaRmModal />
+
+            {/* Per-Formula PPM Modal with backdrop */}
+            {perFormulaPpmModalOpen && (
+                <div
+                    onClick={closePerFormulaPpmModal}
+                    style={{
+                        position: 'fixed',
+                        top: 0,
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        background: 'rgba(0,0,0,0.5)',
+                        zIndex: 1000,
+                    }}
+                />
+            )}
+            <PerFormulaPpmModal />
+
+            {/* Per-Formula PM Modal with backdrop */}
+            {perFormulaPmModalOpen && (
+                <div
+                    onClick={closePerFormulaPmModal}
+                    style={{
+                        position: 'fixed',
+                        top: 0,
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        background: 'rgba(0,0,0,0.5)',
+                        zIndex: 1000,
+                    }}
+                />
+            )}
+            <PerFormulaPmModal />
+
+            {/* PPM Data Modal */}
+            {showPpmDataModal && (
+                <div style={{
+                    position: 'fixed',
+                    top: '50%',
+                    left: '50%',
+                    transform: 'translate(-50%, -50%)',
+                    zIndex: 1000,
+                    width: '95%',
+                    maxWidth: '1200px',
+                    maxHeight: '90vh',
+                    overflowY: 'auto',
+                    background: 'white',
+                    borderRadius: '16px',
+                    boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(0, 0, 0, 0.05)',
+                    border: '2px solid #e5e7eb',
+                }}>
+                    {/* Modal Header */}
+                    <div style={{
+                        position: 'sticky',
+                        top: 0,
+                        background: ppmModalType === 'matched'
+                            ? 'linear-gradient(135deg, #2563eb 0%, #3b82f6 100%)'
+                            : 'linear-gradient(135deg, #dc2626 0%, #ef4444 100%)',
+                        padding: '16px 24px',
+                        borderRadius: '14px 14px 0 0',
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        zIndex: 10,
+                    }}>
+                        <div>
+                            <h3 style={{ color: 'white', fontSize: '1.1rem', fontWeight: 700, margin: 0 }}>
+                                📦 PPM (Primary Packing Material) Requisition Data
+                            </h3>
+                            <p style={{ color: 'rgba(255,255,255,0.9)', fontSize: '0.85rem', marginTop: '4px' }}>
+                                {ppmModalType === 'matched'
+                                    ? `✓ ${ppmModalData.length} batches with PPM data`
+                                    : `✗ ${ppmModalData.length} batches without PPM data`
+                                }
+                            </p>
+                        </div>
+                        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                            {/* View Mode Toggle */}
+                            <div style={{
+                                display: 'flex',
+                                background: 'rgba(255,255,255,0.2)',
+                                borderRadius: '8px',
+                                padding: '3px',
+                            }}>
+                                <button
+                                    onClick={() => setPpmViewMode('table')}
+                                    style={{
+                                        padding: '6px 12px',
+                                        border: 'none',
+                                        borderRadius: '6px',
+                                        fontSize: '0.8rem',
+                                        fontWeight: 600,
+                                        cursor: 'pointer',
+                                        background: ppmViewMode === 'table' ? 'white' : 'transparent',
+                                        color: ppmViewMode === 'table' ? (ppmModalType === 'matched' ? '#2563eb' : '#dc2626') : 'white',
+                                        transition: 'all 0.2s',
+                                    }}
+                                >
+                                    📊 Table
+                                </button>
+                                <button
+                                    onClick={() => setPpmViewMode('file')}
+                                    style={{
+                                        padding: '6px 12px',
+                                        border: 'none',
+                                        borderRadius: '6px',
+                                        fontSize: '0.8rem',
+                                        fontWeight: 600,
+                                        cursor: 'pointer',
+                                        background: ppmViewMode === 'file' ? 'white' : 'transparent',
+                                        color: ppmViewMode === 'file' ? (ppmModalType === 'matched' ? '#2563eb' : '#dc2626') : 'white',
+                                        transition: 'all 0.2s',
+                                    }}
+                                >
+                                    📁 File
+                                </button>
+                            </div>
+                            <button
+                                onClick={closePpmDataModal}
+                                style={{
+                                    padding: '8px 16px',
+                                    background: 'white',
+                                    border: 'none',
+                                    borderRadius: '8px',
+                                    cursor: 'pointer',
+                                    fontWeight: 600,
+                                    color: ppmModalType === 'matched' ? '#2563eb' : '#dc2626',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '6px',
+                                }}
+                            >
+                                ✕ Close
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* Modal Body */}
+                    <div style={{ padding: '20px' }}>
+                        {isPpmModalLoading ? (
+                            <div style={{ textAlign: 'center', padding: '60px', color: '#64748b' }}>
+                                <div style={{ width: '48px', height: '48px', border: '4px solid #e2e8f0', borderTopColor: '#3b82f6', borderRadius: '50%', animation: 'spin 1s linear infinite', margin: '0 auto 20px' }} />
+                                Loading PPM data...
+                            </div>
+                        ) : ppmModalError ? (
+                            <div style={{ textAlign: 'center', padding: '60px', color: '#ef4444' }}>
+                                ❌ {ppmModalError}
+                            </div>
+                        ) : (
+                            <>
+                                {/* Stats Cards */}
+                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '16px', marginBottom: '20px' }}>
+                                    <div style={{
+                                        background: ppmModalType === 'matched'
+                                            ? 'linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%)'
+                                            : 'linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%)',
+                                        padding: '12px 16px',
+                                        borderRadius: '12px',
+                                        border: ppmModalType === 'matched' ? '1px solid #bfdbfe' : '1px solid #fecaca',
+                                    }}>
+                                        <p style={{ fontSize: '0.75rem', color: ppmModalType === 'matched' ? '#2563eb' : '#dc2626', fontWeight: 600, marginBottom: '4px' }}>
+                                            {ppmModalType === 'matched' ? 'Total PPM Materials' : 'Batches Missing PPM Data'}
+                                        </p>
+                                        <p style={{ fontSize: '1.5rem', fontWeight: 700, color: ppmModalType === 'matched' ? '#1d4ed8' : '#b91c1c' }}>
+                                            {ppmModalData.length}
+                                        </p>
+                                    </div>
+                                    <div style={{
+                                        background: 'linear-gradient(135deg, #f3e8ff 0%, #e9d5ff 100%)',
+                                        padding: '12px 16px',
+                                        borderRadius: '12px',
+                                        border: '1px solid #c4b5fd',
+                                    }}>
+                                        <p style={{ fontSize: '0.75rem', color: '#7c3aed', fontWeight: 600, marginBottom: '4px' }}>Unique Batches</p>
+                                        <p style={{ fontSize: '1.5rem', fontWeight: 700, color: '#6d28d9' }}>
+                                            {new Set(ppmModalData.map((m: any) => m.batchNumber)).size}
+                                        </p>
+                                    </div>
+                                </div>
+
+                                {/* Table View */}
+                                {ppmViewMode === 'table' && ppmModalData.length > 0 && (() => {
+                                    const togglePpmSort = (column: string) => {
+                                        if (ppmSortColumn === column) {
+                                            setPpmSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
+                                        } else {
+                                            setPpmSortColumn(column);
+                                            setPpmSortDirection('asc');
+                                        }
+                                    };
+
+                                    const sortedPpmData = [...ppmModalData].sort((a, b) => {
+                                        const valA = a[ppmSortColumn] ?? '';
+                                        const valB = b[ppmSortColumn] ?? '';
+                                        if (typeof valA === 'number' && typeof valB === 'number') {
+                                            return ppmSortDirection === 'asc' ? valA - valB : valB - valA;
+                                        }
+                                        const strA = String(valA).toLowerCase();
+                                        const strB = String(valB).toLowerCase();
+                                        if (strA < strB) return ppmSortDirection === 'asc' ? -1 : 1;
+                                        if (strA > strB) return ppmSortDirection === 'asc' ? 1 : -1;
+                                        return 0;
+                                    });
+
+                                    const columns = ppmModalType === 'matched' ? [
+                                        { id: 'matReqNo', label: 'Slip No', width: '85px' },
+                                        { id: 'batchNumber', label: 'Batch No', width: '90px' },
+                                        { id: 'mfcNo', label: 'MFC No', width: '100px' },
+                                        { id: 'materialName', label: 'Material Name', width: '1fr' },
+                                        { id: 'materialCode', label: 'Code', width: '80px' },
+                                        { id: 'arNo', label: 'AR No', width: '95px', highlight: true },
+                                        { id: 'quantityRequired', label: 'Qty Req', width: '75px' },
+                                        { id: 'quantityToIssue', label: 'Qty Issue', width: '75px' },
+                                        { id: 'labelClaim', label: 'Label', width: '60px' },
+                                        { id: 'ovgPercent', label: 'OVG%', width: '55px' },
+                                    ] : [
+                                        { id: 'batchNumber', label: 'Batch No', width: '120px' },
+                                        { id: 'itemCode', label: 'Item Code', width: '120px' },
+                                        { id: 'itemName', label: 'Item Name', width: '1fr' },
+                                        { id: 'mfgDate', label: 'Mfg Date', width: '100px' },
+                                        { id: 'expiryDate', label: 'Expiry Date', width: '100px' },
+                                        { id: 'batchSize', label: 'Batch Size', width: '100px' },
+                                    ];
+
+                                    return (
+                                        <div style={{ overflowX: 'auto' }}>
+                                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                                                <thead>
+                                                    <tr style={{ background: '#eff6ff' }}>
+                                                        {columns.map(col => (
+                                                            <th
+                                                                key={col.id}
+                                                                onClick={() => togglePpmSort(col.id)}
+                                                                style={{
+                                                                    padding: '12px 10px',
+                                                                    textAlign: 'left',
+                                                                    fontWeight: 600,
+                                                                    borderBottom: '2px solid #bfdbfe',
+                                                                    cursor: 'pointer',
+                                                                    color: ppmSortColumn === col.id ? '#2563eb' : '#64748b',
+                                                                    whiteSpace: 'nowrap',
+                                                                    background: (col as any).highlight ? '#fef3c7' : undefined,
+                                                                }}
+                                                            >
+                                                                {col.label} {ppmSortColumn === col.id && (ppmSortDirection === 'asc' ? '↑' : '↓')}
+                                                            </th>
+                                                        ))}
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {sortedPpmData.slice(0, 500).map((item, idx) => (
+                                                        <tr key={idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
+                                                            {columns.map(col => (
+                                                                <td
+                                                                    key={col.id}
+                                                                    style={{
+                                                                        padding: '10px',
+                                                                        fontWeight: col.id === 'batchNumber' ? 600 : 400,
+                                                                        color: col.id === 'batchNumber' ? '#2563eb' : (col as any).highlight ? '#d97706' : '#374151',
+                                                                        background: (col as any).highlight ? '#fefce8' : undefined,
+                                                                    }}
+                                                                >
+                                                                    {typeof item[col.id] === 'number' ? item[col.id].toLocaleString() : (item[col.id] || 'N/A')}
+                                                                </td>
+                                                            ))}
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                            {sortedPpmData.length > 500 && (
+                                                <div style={{ textAlign: 'center', padding: '12px', color: '#64748b', fontSize: '0.85rem', borderTop: '1px solid #e2e8f0' }}>
+                                                    Showing first 500 of {sortedPpmData.length.toLocaleString()} materials
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })()}
+
+                                {/* File View */}
+                                {ppmViewMode === 'file' && ppmModalData.length > 0 && (
+                                    <div style={{ color: '#64748b', textAlign: 'center', padding: '40px' }}>
+                                        📁 File view coming soon
+                                    </div>
+                                )}
+
+                                {ppmModalData.length === 0 && (
+                                    <div style={{ textAlign: 'center', padding: '40px', color: '#64748b' }}>
+                                        No {ppmModalType === 'matched' ? 'PPM materials found' : 'missing batches'} for MFC-linked products.
+                                    </div>
+                                )}
+                            </>
+                        )}
+                    </div>
+                </div>
+            )}
+
+            {/* PM Data Modal */}
+            {showPmDataModal && (
+                <div style={{
+                    position: 'fixed',
+                    top: '50%',
+                    left: '50%',
+                    transform: 'translate(-50%, -50%)',
+                    zIndex: 1000,
+                    width: '95%',
+                    maxWidth: '1200px',
+                    maxHeight: '90vh',
+                    overflowY: 'auto',
+                    background: 'white',
+                    borderRadius: '16px',
+                    boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(0, 0, 0, 0.05)',
+                    border: '2px solid #e5e7eb',
+                }}>
+                    {/* Modal Header */}
+                    <div style={{
+                        position: 'sticky',
+                        top: 0,
+                        background: pmModalType === 'matched'
+                            ? 'linear-gradient(135deg, #6d28d9 0%, #7c3aed 100%)'
+                            : 'linear-gradient(135deg, #dc2626 0%, #ef4444 100%)',
+                        padding: '16px 24px',
+                        borderRadius: '14px 14px 0 0',
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        zIndex: 10,
+                    }}>
+                        <div>
+                            <h3 style={{ color: 'white', fontSize: '1.1rem', fontWeight: 700, margin: 0 }}>
+                                📦 PM (Packing Material) Requisition Data
+                            </h3>
+                            <p style={{ color: 'rgba(255,255,255,0.9)', fontSize: '0.85rem', marginTop: '4px' }}>
+                                {pmModalType === 'matched'
+                                    ? `✓ ${pmModalData.length} batches with PM data`
+                                    : `✗ ${pmModalData.length} batches without PM data`
+                                }
+                            </p>
+                        </div>
+                        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                            {/* View Mode Toggle */}
+                            <div style={{
+                                display: 'flex',
+                                background: 'rgba(255,255,255,0.2)',
+                                borderRadius: '8px',
+                                padding: '3px',
+                            }}>
+                                <button
+                                    onClick={() => setPmViewMode('table')}
+                                    style={{
+                                        padding: '6px 12px',
+                                        border: 'none',
+                                        borderRadius: '6px',
+                                        fontSize: '0.8rem',
+                                        fontWeight: 600,
+                                        cursor: 'pointer',
+                                        background: pmViewMode === 'table' ? 'white' : 'transparent',
+                                        color: pmViewMode === 'table' ? (pmModalType === 'matched' ? '#7c3aed' : '#dc2626') : 'white',
+                                        transition: 'all 0.2s',
+                                    }}
+                                >
+                                    📊 Table
+                                </button>
+                                <button
+                                    onClick={() => setPmViewMode('file')}
+                                    style={{
+                                        padding: '6px 12px',
+                                        border: 'none',
+                                        borderRadius: '6px',
+                                        fontSize: '0.8rem',
+                                        fontWeight: 600,
+                                        cursor: 'pointer',
+                                        background: pmViewMode === 'file' ? 'white' : 'transparent',
+                                        color: pmViewMode === 'file' ? (pmModalType === 'matched' ? '#7c3aed' : '#dc2626') : 'white',
+                                        transition: 'all 0.2s',
+                                    }}
+                                >
+                                    📁 File
+                                </button>
+                            </div>
+                            <button
+                                onClick={closePmDataModal}
+                                style={{
+                                    padding: '8px 16px',
+                                    background: 'white',
+                                    border: 'none',
+                                    borderRadius: '8px',
+                                    cursor: 'pointer',
+                                    fontWeight: 600,
+                                    color: pmModalType === 'matched' ? '#7c3aed' : '#dc2626',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '6px',
+                                }}
+                            >
+                                ✕ Close
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* Modal Body */}
+                    <div style={{ padding: '20px' }}>
+                        {isPmModalLoading ? (
+                            <div style={{ textAlign: 'center', padding: '60px', color: '#64748b' }}>
+                                <div style={{ width: '48px', height: '48px', border: '4px solid #e2e8f0', borderTopColor: '#7c3aed', borderRadius: '50%', animation: 'spin 1s linear infinite', margin: '0 auto 20px' }} />
+                                Loading PM data...
+                            </div>
+                        ) : pmModalError ? (
+                            <div style={{ textAlign: 'center', padding: '60px', color: '#ef4444' }}>
+                                ❌ {pmModalError}
+                            </div>
+                        ) : (
+                            <>
+                                {/* Stats Cards */}
+                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '16px', marginBottom: '20px' }}>
+                                    <div style={{
+                                        background: pmModalType === 'matched'
+                                            ? 'linear-gradient(135deg, #f5f3ff 0%, #ede9fe 100%)'
+                                            : 'linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%)',
+                                        padding: '12px 16px',
+                                        borderRadius: '12px',
+                                        border: pmModalType === 'matched' ? '1px solid #c4b5fd' : '1px solid #fecaca',
+                                    }}>
+                                        <p style={{ fontSize: '0.75rem', color: pmModalType === 'matched' ? '#7c3aed' : '#dc2626', fontWeight: 600, marginBottom: '4px' }}>
+                                            {pmModalType === 'matched' ? 'Total PM Materials' : 'Batches Missing PM Data'}
+                                        </p>
+                                        <p style={{ fontSize: '1.5rem', fontWeight: 700, color: pmModalType === 'matched' ? '#6d28d9' : '#b91c1c' }}>
+                                            {pmModalData.length}
+                                        </p>
+                                    </div>
+                                    <div style={{
+                                        background: 'linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%)',
+                                        padding: '12px 16px',
+                                        borderRadius: '12px',
+                                        border: '1px solid #a7f3d0',
+                                    }}>
+                                        <p style={{ fontSize: '0.75rem', color: '#059669', fontWeight: 600, marginBottom: '4px' }}>Unique Batches</p>
+                                        <p style={{ fontSize: '1.5rem', fontWeight: 700, color: '#047857' }}>
+                                            {new Set(pmModalData.map((m: any) => m.batchNumber)).size}
+                                        </p>
+                                    </div>
+                                </div>
+
+                                {/* Table View */}
+                                {pmViewMode === 'table' && pmModalData.length > 0 && (() => {
+                                    const togglePmSort = (column: string) => {
+                                        if (pmSortColumn === column) {
+                                            setPmSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
+                                        } else {
+                                            setPmSortColumn(column);
+                                            setPmSortDirection('asc');
+                                        }
+                                    };
+
+                                    const sortedPmData = [...pmModalData].sort((a, b) => {
+                                        const valA = a[pmSortColumn] ?? '';
+                                        const valB = b[pmSortColumn] ?? '';
+                                        if (typeof valA === 'number' && typeof valB === 'number') {
+                                            return pmSortDirection === 'asc' ? valA - valB : valB - valA;
+                                        }
+                                        const strA = String(valA).toLowerCase();
+                                        const strB = String(valB).toLowerCase();
+                                        if (strA < strB) return pmSortDirection === 'asc' ? -1 : 1;
+                                        if (strA > strB) return pmSortDirection === 'asc' ? 1 : -1;
+                                        return 0;
+                                    });
+
+                                    const columns = pmModalType === 'matched' ? [
+                                        { id: 'matReqNo', label: 'Slip No', width: '85px' },
+                                        { id: 'batchNumber', label: 'Batch No', width: '90px' },
+                                        { id: 'mfcNo', label: 'MFC No', width: '100px' },
+                                        { id: 'materialName', label: 'Material Name', width: '1fr' },
+                                        { id: 'materialCode', label: 'Code', width: '80px' },
+                                        { id: 'arNo', label: 'AR No', width: '95px', highlight: true },
+                                        { id: 'quantityRequired', label: 'Qty Req', width: '75px' },
+                                        { id: 'quantityToIssue', label: 'Qty Issue', width: '75px' },
+                                        { id: 'labelClaim', label: 'Label', width: '60px' },
+                                        { id: 'ovgPercent', label: 'OVG%', width: '55px' },
+                                    ] : [
+                                        { id: 'batchNumber', label: 'Batch No', width: '120px' },
+                                        { id: 'itemCode', label: 'Item Code', width: '120px' },
+                                        { id: 'itemName', label: 'Item Name', width: '1fr' },
+                                        { id: 'mfgDate', label: 'Mfg Date', width: '100px' },
+                                        { id: 'expiryDate', label: 'Expiry Date', width: '100px' },
+                                        { id: 'batchSize', label: 'Batch Size', width: '100px' },
+                                    ];
+
+                                    return (
+                                        <div style={{ overflowX: 'auto' }}>
+                                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                                                <thead>
+                                                    <tr style={{ background: '#f5f3ff' }}>
+                                                        {columns.map(col => (
+                                                            <th
+                                                                key={col.id}
+                                                                onClick={() => togglePmSort(col.id)}
+                                                                style={{
+                                                                    padding: '12px 10px',
+                                                                    textAlign: 'left',
+                                                                    fontWeight: 600,
+                                                                    borderBottom: '2px solid #ddd6fe',
+                                                                    cursor: 'pointer',
+                                                                    color: pmSortColumn === col.id ? '#7c3aed' : '#64748b',
+                                                                    whiteSpace: 'nowrap',
+                                                                    background: (col as any).highlight ? '#fef3c7' : undefined,
+                                                                }}
+                                                            >
+                                                                {col.label} {pmSortColumn === col.id && (pmSortDirection === 'asc' ? '↑' : '↓')}
+                                                            </th>
+                                                        ))}
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {sortedPmData.slice(0, 500).map((item, idx) => (
+                                                        <tr key={idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
+                                                            {columns.map(col => (
+                                                                <td
+                                                                    key={col.id}
+                                                                    style={{
+                                                                        padding: '10px',
+                                                                        fontWeight: col.id === 'batchNumber' ? 600 : 400,
+                                                                        color: col.id === 'batchNumber' ? '#7c3aed' : (col as any).highlight ? '#d97706' : '#374151',
+                                                                        background: (col as any).highlight ? '#fefce8' : undefined,
+                                                                    }}
+                                                                >
+                                                                    {typeof item[col.id] === 'number' ? item[col.id].toLocaleString() : (item[col.id] || 'N/A')}
+                                                                </td>
+                                                            ))}
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                            {sortedPmData.length > 500 && (
+                                                <div style={{ textAlign: 'center', padding: '12px', color: '#64748b', fontSize: '0.85rem', borderTop: '1px solid #e2e8f0' }}>
+                                                    Showing first 500 of {sortedPmData.length.toLocaleString()} materials
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })()}
+
+                                {/* File View */}
+                                {pmViewMode === 'file' && pmModalData.length > 0 && (
+                                    <div style={{ color: '#64748b', textAlign: 'center', padding: '40px' }}>
+                                        📁 File view coming soon
+                                    </div>
+                                )}
+
+                                {pmModalData.length === 0 && (
+                                    <div style={{ textAlign: 'center', padding: '40px', color: '#64748b' }}>
+                                        No {pmModalType === 'matched' ? 'PM materials found' : 'missing batches'} for MFC-linked products.
+                                    </div>
+                                )}
+                            </>
+                        )}
+                    </div>
+                </div>
+            )}
+
+            {/* Material Qualification Data Modal */}
+            {showMatDataModal && (
+                <div
+                    style={{
+                        position: 'fixed',
+                        inset: 0,
+                        background: 'rgba(0, 0, 0, 0.6)',
+                        backdropFilter: 'blur(4px)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        zIndex: 1000,
+                        padding: '20px',
+                    }}
+                    onClick={closeMatDataModal}
+                >
+                    <div
+                        onClick={(e) => e.stopPropagation()}
+                        style={{
+                            background: 'white',
+                            borderRadius: '16px',
+                            boxShadow: '0 25px 50px rgba(0, 0, 0, 0.25)',
+                            width: '100%',
+                            maxWidth: '1200px',
+                            maxHeight: '90vh',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            overflow: 'hidden',
+                        }}
+                    >
+                        {/* Header */}
+                        <div style={{
+                            padding: '24px 28px',
+                            borderBottom: '1px solid #e2e8f0',
+                            background: 'linear-gradient(to right, #ecfeff, #f0fdfa)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                        }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                                <div style={{
+                                    width: '48px',
+                                    height: '48px',
+                                    borderRadius: '12px',
+                                    background: matModalType === 'qualified'
+                                        ? 'linear-gradient(135deg, #10b981, #059669)'
+                                        : 'linear-gradient(135deg, #ef4444, #dc2626)',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    color: 'white',
+                                    fontSize: '24px',
+                                }}>
+                                    {matModalType === 'qualified' ? '✓' : '✗'}
+                                </div>
+                                <div>
+                                    <h2 style={{ fontSize: '1.5rem', fontWeight: 700, color: '#0f172a', margin: 0 }}>
+                                        Material Qualification - {matModalType === 'qualified' ? 'Qualified' : 'Unqualified'} Batches
+                                    </h2>
+                                    <p style={{ fontSize: '0.9rem', color: '#64748b', margin: '4px 0 0 0' }}>
+                                        {matModalType === 'qualified'
+                                            ? 'Batches where all formula materials are found in requisition'
+                                            : 'Batches missing one or more formula materials from requisition'}
+                                    </p>
+                                </div>
+                            </div>
+                            <button
+                                onClick={closeMatDataModal}
+                                style={{
+                                    width: '40px',
+                                    height: '40px',
+                                    borderRadius: '10px',
+                                    border: 'none',
+                                    background: '#f1f5f9',
+                                    color: '#64748b',
+                                    fontSize: '20px',
+                                    cursor: 'pointer',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                }}
+                            >
+                                ×
+                            </button>
+                        </div>
+
+                        {/* Stats Bar */}
+                        <div style={{
+                            padding: '16px 28px',
+                            background: '#f8fafc',
+                            borderBottom: '1px solid #e2e8f0',
+                            display: 'flex',
+                            gap: '24px',
+                            flexWrap: 'wrap',
+                        }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <span style={{
+                                    padding: '6px 14px',
+                                    background: '#0891b2',
+                                    color: 'white',
+                                    borderRadius: '8px',
+                                    fontWeight: 700,
+                                    fontSize: '1.1rem',
+                                }}>
+                                    {(() => {
+                                        const arNos = new Set(matModalData.map((m: any) => m.arNo));
+                                        return arNos.size;
+                                    })()}
+                                </span>
+                                <span style={{ color: '#64748b', fontWeight: 500 }}>AR Numbers</span>
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <span style={{
+                                    padding: '6px 14px',
+                                    background: '#06b6d4',
+                                    color: 'white',
+                                    borderRadius: '8px',
+                                    fontWeight: 700,
+                                    fontSize: '1.1rem',
+                                }}>
+                                    {(() => {
+                                        const batches = new Set(matModalData.map((m: any) => m.batchNumber));
+                                        return batches.size;
+                                    })()}
+                                </span>
+                                <span style={{ color: '#64748b', fontWeight: 500 }}>Batches</span>
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <span style={{
+                                    padding: '6px 14px',
+                                    background: '#0e7490',
+                                    color: 'white',
+                                    borderRadius: '8px',
+                                    fontWeight: 700,
+                                    fontSize: '1.1rem',
+                                }}>
+                                    {matModalData.length.toLocaleString()}
+                                </span>
+                                <span style={{ color: '#64748b', fontWeight: 500 }}>Total Materials</span>
+                            </div>
+                        </div>
+
+                        {/* Content */}
+                        <div style={{ flex: 1, overflow: 'auto', padding: '20px 28px' }}>
+                            {isMatModalLoading && (
+                                <div style={{ textAlign: 'center', padding: '60px', color: '#64748b' }}>
+                                    <div style={{ fontSize: '2rem', marginBottom: '16px' }}>⏳</div>
+                                    Loading material qualification data...
+                                </div>
+                            )}
+
+                            {matModalError && (
+                                <div style={{
+                                    textAlign: 'center',
+                                    padding: '40px',
+                                    color: '#dc2626',
+                                    background: '#fef2f2',
+                                    borderRadius: '12px',
+                                    border: '1px solid #fecaca',
+                                }}>
+                                    ❌ {matModalError}
+                                </div>
+                            )}
+
+                            {!isMatModalLoading && !matModalError && matModalData.length > 0 && (() => {
+                                // Group by AR Number
+                                const groupedByArNo: Record<string, any[]> = {};
+                                matModalData.forEach((m: any) => {
+                                    const arNo = m.arNo || 'N/A';
+                                    if (!groupedByArNo[arNo]) {
+                                        groupedByArNo[arNo] = [];
+                                    }
+                                    groupedByArNo[arNo].push(m);
+                                });
+
+                                const arNumbers = Object.keys(groupedByArNo).sort();
+
+                                return (
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                                        {arNumbers.map(arNo => {
+                                            const materials = groupedByArNo[arNo];
+                                            const isExpanded = expandedMatArNumbers.has(arNo);
+                                            const uniqueBatches = new Set(materials.map(m => m.batchNumber)).size;
+
+                                            return (
+                                                <div
+                                                    key={arNo}
+                                                    style={{
+                                                        border: '1px solid #e2e8f0',
+                                                        borderRadius: '12px',
+                                                        overflow: 'hidden',
+                                                        background: 'white',
+                                                    }}
+                                                >
+                                                    {/* AR Number Header - Prominently Highlighted */}
+                                                    <div
+                                                        role="button"
+                                                        tabIndex={0}
+                                                        onClick={() => {
+                                                            setExpandedMatArNumbers(prev => {
+                                                                const next = new Set(prev);
+                                                                if (next.has(arNo)) {
+                                                                    next.delete(arNo);
+                                                                } else {
+                                                                    next.add(arNo);
+                                                                }
+                                                                return next;
+                                                            });
+                                                        }}
+                                                        onKeyDown={(e) => {
+                                                            if (e.key === 'Enter' || e.key === ' ') {
+                                                                e.preventDefault();
+                                                                setExpandedMatArNumbers(prev => {
+                                                                    const next = new Set(prev);
+                                                                    if (next.has(arNo)) {
+                                                                        next.delete(arNo);
+                                                                    } else {
+                                                                        next.add(arNo);
+                                                                    }
+                                                                    return next;
+                                                                });
+                                                            }
+                                                        }}
+                                                        style={{
+                                                            padding: '16px 20px',
+                                                            background: 'linear-gradient(to right, #fef3c7, #fef9c3)',
+                                                            borderBottom: isExpanded ? '1px solid #fde68a' : 'none',
+                                                            display: 'flex',
+                                                            alignItems: 'center',
+                                                            justifyContent: 'space-between',
+                                                            cursor: 'pointer',
+                                                        }}
+                                                    >
+                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                                                            <div style={{
+                                                                width: '32px',
+                                                                height: '32px',
+                                                                borderRadius: '8px',
+                                                                background: '#f59e0b',
+                                                                display: 'flex',
+                                                                alignItems: 'center',
+                                                                justifyContent: 'center',
+                                                                color: 'white',
+                                                                fontWeight: 700,
+                                                                fontSize: '0.9rem',
+                                                                transform: isExpanded ? 'rotate(90deg)' : 'none',
+                                                                transition: 'transform 0.2s ease',
+                                                            }}>
+                                                                ▶
+                                                            </div>
+                                                            <div>
+                                                                <div style={{
+                                                                    fontSize: '1.25rem',
+                                                                    fontWeight: 700,
+                                                                    color: '#b45309',
+                                                                    fontFamily: 'monospace',
+                                                                }}>
+                                                                    AR No: {arNo}
+                                                                </div>
+                                                                <div style={{
+                                                                    fontSize: '0.85rem',
+                                                                    color: '#92400e',
+                                                                    marginTop: '2px',
+                                                                }}>
+                                                                    {uniqueBatches} batches • {materials.length} materials
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                        <div style={{
+                                                            padding: '8px 16px',
+                                                            background: '#f59e0b',
+                                                            color: 'white',
+                                                            borderRadius: '8px',
+                                                            fontWeight: 600,
+                                                            fontSize: '0.9rem',
+                                                        }}>
+                                                            {materials.length} items
+                                                        </div>
+                                                    </div>
+
+                                                    {/* Expanded Content */}
+                                                    {isExpanded && (
+                                                        <div style={{ padding: '16px' }}>
+                                                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                                                                <thead>
+                                                                    <tr style={{ background: '#f8fafc' }}>
+                                                                        <th style={{ padding: '10px', textAlign: 'left', fontWeight: 600, borderBottom: '2px solid #e2e8f0' }}>Batch No</th>
+                                                                        <th style={{ padding: '10px', textAlign: 'left', fontWeight: 600, borderBottom: '2px solid #e2e8f0' }}>Material Code</th>
+                                                                        <th style={{ padding: '10px', textAlign: 'left', fontWeight: 600, borderBottom: '2px solid #e2e8f0' }}>Material Name</th>
+                                                                        <th style={{ padding: '10px', textAlign: 'left', fontWeight: 600, borderBottom: '2px solid #e2e8f0' }}>Type</th>
+                                                                        <th style={{ padding: '10px', textAlign: 'right', fontWeight: 600, borderBottom: '2px solid #e2e8f0' }}>Qty Req</th>
+                                                                        <th style={{ padding: '10px', textAlign: 'right', fontWeight: 600, borderBottom: '2px solid #e2e8f0' }}>Qty Issue</th>
+                                                                        <th style={{ padding: '10px', textAlign: 'left', fontWeight: 600, borderBottom: '2px solid #e2e8f0' }}>UOM</th>
+                                                                    </tr>
+                                                                </thead>
+                                                                <tbody>
+                                                                    {materials.slice(0, 100).map((m, idx) => (
+                                                                        <tr key={idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
+                                                                            <td style={{ padding: '10px', fontWeight: 600, color: '#0891b2', fontFamily: 'monospace' }}>{m.batchNumber}</td>
+                                                                            <td style={{ padding: '10px', fontFamily: 'monospace', color: '#374151' }}>{m.materialCode}</td>
+                                                                            <td style={{ padding: '10px', color: '#374151' }}>{m.materialName}</td>
+                                                                            <td style={{ padding: '10px' }}>
+                                                                                <span style={{
+                                                                                    padding: '2px 8px',
+                                                                                    background: m.materialType === 'RM' ? '#dcfce7' : m.materialType === 'PM' ? '#f3e8ff' : '#dbeafe',
+                                                                                    color: m.materialType === 'RM' ? '#166534' : m.materialType === 'PM' ? '#7c3aed' : '#1d4ed8',
+                                                                                    borderRadius: '4px',
+                                                                                    fontSize: '0.75rem',
+                                                                                    fontWeight: 600,
+                                                                                }}>
+                                                                                    {m.materialType}
+                                                                                </span>
+                                                                            </td>
+                                                                            <td style={{ padding: '10px', textAlign: 'right', fontFamily: 'monospace' }}>{m.quantityRequired?.toLocaleString() || 0}</td>
+                                                                            <td style={{ padding: '10px', textAlign: 'right', fontFamily: 'monospace' }}>{m.quantityToIssue?.toLocaleString() || 0}</td>
+                                                                            <td style={{ padding: '10px', color: '#64748b' }}>{m.uom}</td>
+                                                                        </tr>
+                                                                    ))}
+                                                                </tbody>
+                                                            </table>
+                                                            {materials.length > 100 && (
+                                                                <div style={{ textAlign: 'center', padding: '12px', color: '#64748b', fontSize: '0.85rem', borderTop: '1px solid #e2e8f0' }}>
+                                                                    Showing first 100 of {materials.length} materials
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                );
+                            })()}
+
+                            {!isMatModalLoading && !matModalError && matModalData.length === 0 && (
+                                <div style={{ textAlign: 'center', padding: '40px', color: '#64748b' }}>
+                                    No material data found for {matModalType} batches.
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

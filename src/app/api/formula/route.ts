@@ -260,6 +260,42 @@ export async function GET(request: NextRequest): Promise<NextResponse<FormulasLi
     ]);
     const rmBatchNumbers = new Set<string>(batchesWithRMData.map((b: { _id: string }) => b._id));
 
+    // Step 2.6: Get batch numbers that have PPM (Primary Packing Material) requisition data
+    const batchesWithPPMData = await Requisition.aggregate([
+      { $unwind: "$batches" },
+      { $unwind: "$batches.materials" },
+      { $match: { "batches.materials.materialType": "PPM" } },
+      { $group: { _id: "$batches.batchNumber" } }
+    ]);
+    const ppmBatchNumbers = new Set<string>(batchesWithPPMData.map((b: { _id: string }) => b._id));
+
+    // Step 2.7: Get batch numbers that have PM (Packing Material) requisition data
+    const batchesWithPMData = await Requisition.aggregate([
+      { $unwind: "$batches" },
+      { $unwind: "$batches.materials" },
+      { $match: { "batches.materials.materialType": "PM" } },
+      { $group: { _id: "$batches.batchNumber" } }
+    ]);
+    const pmBatchNumbers = new Set<string>(batchesWithPMData.map((b: { _id: string }) => b._id));
+
+    // Step 2.8: Get material codes from requisition data grouped by batch number
+    // This is for material qualification - comparing Formula Master materials against requisition materials
+    const materialCodesByBatch = await Requisition.aggregate([
+      { $unwind: "$batches" },
+      { $unwind: "$batches.materials" },
+      {
+        $group: {
+          _id: "$batches.batchNumber",
+          materialCodes: { $addToSet: "$batches.materials.materialCode" }
+        }
+      }
+    ]);
+    // Map: batchNumber -> Set of material codes found in requisition
+    const requisitionMaterialsByBatch: Record<string, Set<string>> = materialCodesByBatch.reduce((acc, curr) => {
+      acc[curr._id] = new Set(curr.materialCodes || []);
+      return acc;
+    }, {} as Record<string, Set<string>>);
+
     // Step 3: Collect Formula Product Codes (Main + Filling) and calculate total batch counts
     const formulaProductCodes = new Set<string>();
 
@@ -325,7 +361,116 @@ export async function GET(request: NextRequest): Promise<NextResponse<FormulasLi
       const rmDataMatched = uniqueBatchNumbers.filter(bn => rmBatchNumbers.has(bn)).length;
       const rmDataUnmatched = uniqueBatchNumbers.filter(bn => !rmBatchNumbers.has(bn)).length;
 
-      return { ...f, hasBatch, totalBatchCount, rmDataMatched, rmDataUnmatched };
+      // Step 3.6: Calculate PPM Data matching for this formula (based on total batches, not unique)
+      // For PPM and PM, we count all batch records, not just unique batches
+      const ppmDataMatched = allBatchNumbers.filter(bn => ppmBatchNumbers.has(bn)).length;
+      const ppmDataUnmatched = allBatchNumbers.filter(bn => !ppmBatchNumbers.has(bn)).length;
+
+      // Step 3.7: Calculate PM Data matching for this formula (based on total batches, not unique)
+      const pmDataMatched = allBatchNumbers.filter(bn => pmBatchNumbers.has(bn)).length;
+      const pmDataUnmatched = allBatchNumbers.filter(bn => !pmBatchNumbers.has(bn)).length;
+
+      // Step 3.8: Calculate Material Qualification for this formula
+      // Extract all material codes defined in the Formula Master
+      const formulaMaterialCodes = new Set<string>();
+      
+      // From main materials
+      if (f.materials && Array.isArray(f.materials)) {
+        f.materials.forEach((m: any) => {
+          if (m.materialCode && m.materialCode !== 'N/A') {
+            formulaMaterialCodes.add(m.materialCode);
+          }
+        });
+      }
+      
+      // From filling details packing materials
+      if (f.fillingDetails && Array.isArray(f.fillingDetails)) {
+        f.fillingDetails.forEach((fd: any) => {
+          if (fd.packingMaterials && Array.isArray(fd.packingMaterials)) {
+            fd.packingMaterials.forEach((pm: any) => {
+              if (pm.materialCode && pm.materialCode !== 'N/A') {
+                formulaMaterialCodes.add(pm.materialCode);
+              }
+            });
+          }
+        });
+      }
+      
+      // From processes materials
+      if (f.processes && Array.isArray(f.processes)) {
+        f.processes.forEach((p: any) => {
+          if (p.materials && Array.isArray(p.materials)) {
+            p.materials.forEach((m: any) => {
+              if (m.materialCode && m.materialCode !== 'N/A') {
+                formulaMaterialCodes.add(m.materialCode);
+              }
+            });
+          }
+          // From aseptic filling products materials
+          if (p.fillingProducts && Array.isArray(p.fillingProducts)) {
+            p.fillingProducts.forEach((fp: any) => {
+              if (fp.materials && Array.isArray(fp.materials)) {
+                fp.materials.forEach((m: any) => {
+                  if (m.materialCode && m.materialCode !== 'N/A') {
+                    formulaMaterialCodes.add(m.materialCode);
+                  }
+                });
+              }
+            });
+          }
+        });
+      }
+      
+      // From packing materials
+      if (f.packingMaterials && Array.isArray(f.packingMaterials)) {
+        f.packingMaterials.forEach((pm: any) => {
+          if (pm.materialCode && pm.materialCode !== 'N/A') {
+            formulaMaterialCodes.add(pm.materialCode);
+          }
+        });
+      }
+
+      // For each batch, check if ALL Formula Master material codes are found in requisition
+      // materialQualified = batches where ALL formula materials are in requisition
+      // materialUnqualified = batches where some formula materials are missing from requisition
+      let materialQualified = 0;
+      let materialUnqualified = 0;
+      
+      if (formulaMaterialCodes.size > 0) {
+        uniqueBatchNumbers.forEach(batchNum => {
+          const requisitionMaterials = requisitionMaterialsByBatch[batchNum] || new Set<string>();
+          
+          // Check if all formula materials are found in this batch's requisition
+          let allFound = true;
+          formulaMaterialCodes.forEach(code => {
+            if (!requisitionMaterials.has(code)) {
+              allFound = false;
+            }
+          });
+          
+          if (allFound && requisitionMaterials.size > 0) {
+            materialQualified++;
+          } else {
+            materialUnqualified++;
+          }
+        });
+      }
+
+      return { 
+        ...f, 
+        hasBatch, 
+        totalBatchCount, 
+        rmDataMatched, 
+        rmDataUnmatched, 
+        ppmDataMatched,
+        ppmDataUnmatched,
+        pmDataMatched,
+        pmDataUnmatched,
+        materialQualified,
+        materialUnqualified,
+        formulaMaterialCount: formulaMaterialCodes.size,
+        uniqueBatchNumbers 
+      };
 
     });
 
@@ -361,8 +506,102 @@ export async function GET(request: NextRequest): Promise<NextResponse<FormulasLi
     const paginatedFormulas = enhancedFormulas.slice(startIndex, startIndex + limit);
 
     // Step 7: Calculate global RM matching totals for section headers
-    const globalRmDataMatched = enhancedFormulas.reduce((sum, f) => sum + (f.rmDataMatched || 0), 0);
-    const globalRmDataUnmatched = enhancedFormulas.reduce((sum, f) => sum + (f.rmDataUnmatched || 0), 0);
+    // IMPORTANT: Collect all unique batch numbers across ALL formulas first (deduplicated)
+    // This prevents double-counting when the same batch appears in multiple MFCs
+    const allGlobalUniqueBatchNumbers = new Set<string>();
+    enhancedFormulas.forEach(f => {
+      (f.uniqueBatchNumbers || []).forEach((bn: string) => allGlobalUniqueBatchNumbers.add(bn));
+    });
+    
+    // Calculate global RM counts from the deduplicated set
+    const globalRmDataMatched = [...allGlobalUniqueBatchNumbers].filter(bn => rmBatchNumbers.has(bn)).length;
+    const globalRmDataUnmatched = [...allGlobalUniqueBatchNumbers].filter(bn => !rmBatchNumbers.has(bn)).length;
+
+    // Step 7.5: Calculate Material Qualification based on UNIQUE batches (like RM)
+    // Build a map: batchNumber -> Set of required material codes from its formula
+    const batchMaterialRequirements = new Map<string, Set<string>>();
+    
+    enhancedFormulas.forEach((f: any) => {
+      // Extract all material codes from this formula
+      const formulaMaterialCodes = new Set<string>();
+      
+      if (f.materials && Array.isArray(f.materials)) {
+        f.materials.forEach((m: any) => {
+          if (m.materialCode && m.materialCode !== 'N/A') {
+            formulaMaterialCodes.add(m.materialCode);
+          }
+        });
+      }
+      if (f.fillingDetails && Array.isArray(f.fillingDetails)) {
+        f.fillingDetails.forEach((fd: any) => {
+          if (fd.packingMaterials && Array.isArray(fd.packingMaterials)) {
+            fd.packingMaterials.forEach((pm: any) => {
+              if (pm.materialCode && pm.materialCode !== 'N/A') {
+                formulaMaterialCodes.add(pm.materialCode);
+              }
+            });
+          }
+        });
+      }
+      if (f.processes && Array.isArray(f.processes)) {
+        f.processes.forEach((p: any) => {
+          if (p.materials && Array.isArray(p.materials)) {
+            p.materials.forEach((m: any) => {
+              if (m.materialCode && m.materialCode !== 'N/A') {
+                formulaMaterialCodes.add(m.materialCode);
+              }
+            });
+          }
+          if (p.fillingProducts && Array.isArray(p.fillingProducts)) {
+            p.fillingProducts.forEach((fp: any) => {
+              if (fp.materials && Array.isArray(fp.materials)) {
+                fp.materials.forEach((m: any) => {
+                  if (m.materialCode && m.materialCode !== 'N/A') {
+                    formulaMaterialCodes.add(m.materialCode);
+                  }
+                });
+              }
+            });
+          }
+        });
+      }
+      if (f.packingMaterials && Array.isArray(f.packingMaterials)) {
+        f.packingMaterials.forEach((pm: any) => {
+          if (pm.materialCode && pm.materialCode !== 'N/A') {
+            formulaMaterialCodes.add(pm.materialCode);
+          }
+        });
+      }
+      
+      // Assign these material requirements to each batch of this formula
+      if (formulaMaterialCodes.size > 0) {
+        (f.uniqueBatchNumbers || []).forEach((bn: string) => {
+          if (!batchMaterialRequirements.has(bn)) {
+            batchMaterialRequirements.set(bn, new Set());
+          }
+          // Merge material requirements (a batch may be in multiple formulas)
+          formulaMaterialCodes.forEach(code => batchMaterialRequirements.get(bn)!.add(code));
+        });
+      }
+    });
+    
+    // Check each unique batch against requisition materials
+    const materialQualifiedBatchNumbers = new Set<string>();
+    batchMaterialRequirements.forEach((requiredMaterials, batchNum) => {
+      const requisitionMaterials = requisitionMaterialsByBatch[batchNum] || new Set<string>();
+      
+      // Check if ALL required materials are found in requisition
+      let allFound = true;
+      requiredMaterials.forEach(code => {
+        if (!requisitionMaterials.has(code)) {
+          allFound = false;
+        }
+      });
+      
+      if (allFound && requisitionMaterials.size > 0) {
+        materialQualifiedBatchNumbers.add(batchNum);
+      }
+    });
 
     return NextResponse.json({
       success: true,
@@ -372,8 +611,15 @@ export async function GET(request: NextRequest): Promise<NextResponse<FormulasLi
           ...rest,
           _id: f._id.toString(),
           totalBatchCount: f.totalBatchCount,
-          rmDataMatched: f.rmDataMatched || 0,     // Batches with RM requisition data
-          rmDataUnmatched: f.rmDataUnmatched || 0, // Batches without RM requisition data
+          rmDataMatched: f.rmDataMatched || 0,
+          rmDataUnmatched: f.rmDataUnmatched || 0,
+          ppmDataMatched: f.ppmDataMatched || 0,
+          ppmDataUnmatched: f.ppmDataUnmatched || 0,
+          pmDataMatched: f.pmDataMatched || 0,
+          pmDataUnmatched: f.pmDataUnmatched || 0,
+          materialQualified: f.materialQualified || 0,
+          materialUnqualified: f.materialUnqualified || 0,
+          formulaMaterialCount: f.formulaMaterialCount || 0,
         };
       }),
       total: formulas.length,
@@ -381,10 +627,14 @@ export async function GET(request: NextRequest): Promise<NextResponse<FormulasLi
       limit,
       batchCounts,
       unmatchedBatches,
-      // Global RM data matching for section headers
       globalRmDataMatched,
       globalRmDataUnmatched,
-      totalRmBatchesInSystem: rmBatchNumbers.size, // Total batches that have any RM requisition data
+      totalRmBatchesInSystem: rmBatchNumbers.size,
+      rmBatchNumbersList: [...rmBatchNumbers],
+      ppmBatchNumbersList: [...ppmBatchNumbers],
+      pmBatchNumbersList: [...pmBatchNumbers],
+      // Material Qualification batch numbers list (like rmBatchNumbersList but for material qualification)
+      materialQualifiedBatchNumbersList: [...materialQualifiedBatchNumbers],
     });
 
   } catch (error) {

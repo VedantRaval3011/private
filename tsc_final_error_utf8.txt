@@ -1,0 +1,2 @@
+﻿src/lib/xmlParser.ts(741,31): error TS2345: Argument of type '{ productCode: string; productName: string; packingSize: string; actualFillingQuantity: string; numberOfSyringes: string; syringeType: string; }' is not assignable to parameter of type 'AsepticFillingProduct'.
+  Type '{ productCode: string; productName: string; packingSize: string; actualFillingQuantity: string; numberOfSyringes: string; syringeType: string; }' is missing the following properties from type 'AsepticFillingProduct': actualFillingQty, actualFillingMl, materials

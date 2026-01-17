@@ -737,16 +737,6 @@ function extractProcesses(data: unknown): ProcessData[] {
        const iRecord = item as Record<string, unknown>;
        
        const itmCode = findValueCaseInsensitive(iRecord, ['ITMCODE1'], '').trim();
-       if (itmCode) {
-         fillingProducts.push({
-           productCode: itmCode,
-           productName: findValueCaseInsensitive(iRecord, ['ITMDETAIL'], ''),
-           packingSize: findValueCaseInsensitive(iRecord, ['ITMPACK'], ''),
-           actualFillingQuantity: findValueCaseInsensitive(iRecord, ['ACTFILLING1'], ''),
-           numberOfSyringes: findValueCaseInsensitive(iRecord, ['ACTFILLING2'], ''),
-           syringeType: findValueCaseInsensitive(iRecord, ['UNIT'], ''),
-         });
-       }
        
        // Get materials in this item
        let listG2 = iRecord['LIST_G_2'] as Record<string, unknown> | Array<unknown>;
@@ -764,6 +754,8 @@ function extractProcesses(data: unknown): ProcessData[] {
          }
        }
        
+       const currentProductMaterials: ProcessMaterialItem[] = [];
+
        for (const mat of matElements) {
          if (!mat || typeof mat !== 'object') continue;
          const mRecord = mat as Record<string, unknown>;
@@ -771,21 +763,33 @@ function extractProcesses(data: unknown): ProcessData[] {
          const matCode = findValueCaseInsensitive(mRecord, ['MATCODE', 'MATERIAL_CODE'], '').trim();
          
          if (matCode) {
-           processMaterials.push({
+           const matItem: ProcessMaterialItem = {
               srNo: parseInt(findValueCaseInsensitive(mRecord, ['SRNO'], '0')) || processMaterials.length + 1,
               materialCode: matCode,
               materialName: findValueCaseInsensitive(mRecord, ['MATDETAIL'], '').trim(),
               potencyCorrection: findValueCaseInsensitive(mRecord, ['POTENCOR'], 'N'),
               reqQty: findValueCaseInsensitive(mRecord, ['REQQTY'], ''), 
               unit: findValueCaseInsensitive(mRecord, ['CUOM'], ''),
-              // Preserve extra raw data for extractPackingMaterials
-              // We'll sneak it in via type casting if needed or better, add to interface later. 
-              // For now, extractPackingMaterials logic uses raw access anyway.
-           });
-           
-           // Hack: attach raw record to object for later use by extractPackingMaterials robust logic if it re-uses specific instances
-           // But since extractPackingMaterials does its own traversal in my previous update, this is fine just for display.
+           };
+
+           processMaterials.push(matItem);
+           currentProductMaterials.push(matItem);
          }
+       }
+
+       if (itmCode) {
+         const actFillingVal = findValueCaseInsensitive(iRecord, ['ACTFILLING1'], '');
+         fillingProducts.push({
+           productCode: itmCode,
+           productName: findValueCaseInsensitive(iRecord, ['ITMDETAIL'], ''),
+           packingSize: findValueCaseInsensitive(iRecord, ['ITMPACK'], ''),
+           actualFillingQuantity: actFillingVal,
+           actualFillingQty: actFillingVal,
+           actualFillingMl: 'N/A', // Not found in XML structure currently
+           numberOfSyringes: findValueCaseInsensitive(iRecord, ['ACTFILLING2'], ''),
+           syringeType: findValueCaseInsensitive(iRecord, ['UNIT'], ''),
+           materials: currentProductMaterials,
+         });
        }
     }
     
