@@ -220,6 +220,14 @@ export interface FormulaRecord extends FormulaMasterData {
   ppmDataUnmatched?: number; // Number of batches without PPM requisition data
   pmDataMatched?: number;   // Number of batches with PM (Packing Material) requisition data
   pmDataUnmatched?: number; // Number of batches without PM requisition data
+  materialQualified?: number;   // Number of materials with RM COA data
+  materialUnqualified?: number; // Number of materials without RM COA data
+  pmCoaQualified?: number;      // Number of materials with PM COA data
+  pmCoaUnqualified?: number;    // Number of materials without PM COA data
+  ppmCoaQualified?: number;     // Number of materials with PPM COA data
+  ppmCoaUnqualified?: number;   // Number of materials without PPM COA data
+  bulkCoaQualified?: number;    // Number of batches with Bulk COA data
+  bulkCoaUnqualified?: number;  // Number of batches without Bulk COA data
 }
 
 // ============================================
@@ -244,6 +252,18 @@ export interface FormulasListResponse {
   globalRmDataMatched?: number;
   globalRmDataUnmatched?: number;
   totalRmBatchesInSystem?: number;
+  // Global material qualification for section headers
+  globalMaterialQualified?: number;
+  globalMaterialUnqualified?: number;
+  // Global PM COA data for section headers
+  globalPmCoaQualified?: number;
+  globalPmCoaUnqualified?: number;
+  // Global PPM COA data for section headers
+  globalPpmCoaQualified?: number;
+  globalPpmCoaUnqualified?: number;
+  // Global Bulk COA data for section headers
+  globalBulkCoaQualified?: number;
+  globalBulkCoaUnqualified?: number;
 }
 
 export interface FormulaDetailResponse {

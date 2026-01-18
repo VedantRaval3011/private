@@ -8,6 +8,10 @@ import { connectToDatabase } from '@/lib/mongodb';
 import Batch from '@/models/Batch';
 import Formula from '@/models/Formula';
 import Requisition from '@/models/Requisition';
+import RMCOA from '@/models/RMCOA';
+import PMCOA from '@/models/PMCOA';
+import PPMCOA from '@/models/PPMCOA';
+import COA from '@/models/COA';
 import ProcessingLog from '@/models/ProcessingLog';
 import { parseFormulaXml, validateXmlContent, createFormulaRecord } from '@/lib/xmlParser';
 import { generateNormalizedHash } from '@/lib/contentHash';
@@ -278,23 +282,35 @@ export async function GET(request: NextRequest): Promise<NextResponse<FormulasLi
     ]);
     const pmBatchNumbers = new Set<string>(batchesWithPMData.map((b: { _id: string }) => b._id));
 
-    // Step 2.8: Get material codes from requisition data grouped by batch number
-    // This is for material qualification - comparing Formula Master materials against requisition materials
-    const materialCodesByBatch = await Requisition.aggregate([
-      { $unwind: "$batches" },
-      { $unwind: "$batches.materials" },
-      {
-        $group: {
-          _id: "$batches.batchNumber",
-          materialCodes: { $addToSet: "$batches.materials.materialCode" }
-        }
+    // Step 2.8: Get material codes that have RM COA data
+    // This is for material qualification - comparing Formula Master materials against RM COA data
+    // Green = materials with RM COA, Red = materials without RM COA
+    const rmCoaMaterialCodes = await RMCOA.distinct('materialCode');
+    const rmCoaMaterialCodeSet = new Set<string>(rmCoaMaterialCodes);
+
+    // Also get all RM COA data for detailed view (material code -> AR numbers)
+    const rmCoaData = await RMCOA.find({}).select('materialCode materialName arNo').lean();
+    const rmCoaByMaterialCode: Record<string, { arNo: string; materialName: string }[]> = {};
+    rmCoaData.forEach((coa: any) => {
+      if (!rmCoaByMaterialCode[coa.materialCode]) {
+        rmCoaByMaterialCode[coa.materialCode] = [];
       }
-    ]);
-    // Map: batchNumber -> Set of material codes found in requisition
-    const requisitionMaterialsByBatch: Record<string, Set<string>> = materialCodesByBatch.reduce((acc, curr) => {
-      acc[curr._id] = new Set(curr.materialCodes || []);
-      return acc;
-    }, {} as Record<string, Set<string>>);
+      rmCoaByMaterialCode[coa.materialCode].push({ arNo: coa.arNo, materialName: coa.materialName });
+    });
+
+    // Step 2.9: Get material codes that have PM COA data
+    const pmCoaMaterialCodes = await PMCOA.distinct('materialCode');
+    const pmCoaMaterialCodeSet = new Set<string>(pmCoaMaterialCodes);
+
+    // Step 2.10: Get material codes that have PPM COA data
+    const ppmCoaMaterialCodes = await PPMCOA.distinct('materialCode');
+    const ppmCoaMaterialCodeSet = new Set<string>(ppmCoaMaterialCodes);
+
+    // Step 2.11: Get batch numbers that have Bulk COA data (stage='BULK')
+    // This is for the Bulk COA capsule - checking if batches have Bulk stage COA records
+    const bulkCoaBatchNumbers = await COA.distinct('batchNumber', { stage: 'BULK' });
+    const bulkCoaBatchSet = new Set<string>(bulkCoaBatchNumbers);
+
 
     // Step 3: Collect Formula Product Codes (Main + Filling) and calculate total batch counts
     const formulaProductCodes = new Set<string>();
@@ -373,7 +389,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<FormulasLi
       // Step 3.8: Calculate Material Qualification for this formula
       // Extract all material codes defined in the Formula Master
       const formulaMaterialCodes = new Set<string>();
-      
+
       // From main materials
       if (f.materials && Array.isArray(f.materials)) {
         f.materials.forEach((m: any) => {
@@ -382,7 +398,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<FormulasLi
           }
         });
       }
-      
+
       // From filling details packing materials
       if (f.fillingDetails && Array.isArray(f.fillingDetails)) {
         f.fillingDetails.forEach((fd: any) => {
@@ -395,7 +411,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<FormulasLi
           }
         });
       }
-      
+
       // From processes materials
       if (f.processes && Array.isArray(f.processes)) {
         f.processes.forEach((p: any) => {
@@ -420,7 +436,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<FormulasLi
           }
         });
       }
-      
+
       // From packing materials
       if (f.packingMaterials && Array.isArray(f.packingMaterials)) {
         f.packingMaterials.forEach((pm: any) => {
@@ -430,46 +446,81 @@ export async function GET(request: NextRequest): Promise<NextResponse<FormulasLi
         });
       }
 
-      // For each batch, check if ALL Formula Master material codes are found in requisition
-      // materialQualified = batches where ALL formula materials are in requisition
-      // materialUnqualified = batches where some formula materials are missing from requisition
+      // For each batch, check if ALL Formula Master material codes have RM COA data
+      // materialQualified = batches where ALL formula materials have RM COA
+      // materialUnqualified = batches where some formula materials are missing RM COA
       let materialQualified = 0;
       let materialUnqualified = 0;
-      
+
+      // Count materials with and without RM COA
+      const materialsWithRmCoa = [...formulaMaterialCodes].filter(code => rmCoaMaterialCodeSet.has(code)).length;
+      const materialsWithoutRmCoa = formulaMaterialCodes.size - materialsWithRmCoa;
+
+      // Calculate PM COA qualification (similar to RM COA)
+      const materialsWithPmCoa = [...formulaMaterialCodes].filter(code => pmCoaMaterialCodeSet.has(code)).length;
+      const materialsWithoutPmCoa = formulaMaterialCodes.size - materialsWithPmCoa;
+
+      // Calculate PPM COA qualification (similar to RM COA)
+      const materialsWithPpmCoa = [...formulaMaterialCodes].filter(code => ppmCoaMaterialCodeSet.has(code)).length;
+      const materialsWithoutPpmCoa = formulaMaterialCodes.size - materialsWithPpmCoa;
+
+      // Count batches based on COA qualification (similar to RM COA)
+      let pmCoaQualified = 0;
+      let pmCoaUnqualified = 0;
+      let ppmCoaQualified = 0;
+      let ppmCoaUnqualified = 0;
+
+      // Calculate Bulk COA matching (based on batch number presence in Bulk COA)
+      const bulkCoaQualified = uniqueBatchNumbers.filter(bn => bulkCoaBatchSet.has(bn)).length;
+      const bulkCoaUnqualified = uniqueBatchNumbers.filter(bn => !bulkCoaBatchSet.has(bn)).length;
+
       if (formulaMaterialCodes.size > 0) {
-        uniqueBatchNumbers.forEach(batchNum => {
-          const requisitionMaterials = requisitionMaterialsByBatch[batchNum] || new Set<string>();
-          
-          // Check if all formula materials are found in this batch's requisition
-          let allFound = true;
-          formulaMaterialCodes.forEach(code => {
-            if (!requisitionMaterials.has(code)) {
-              allFound = false;
-            }
-          });
-          
-          if (allFound && requisitionMaterials.size > 0) {
+        // Check each unique batch
+        uniqueBatchNumbers.forEach(() => {
+          // RM COA: If ALL formula materials have RM COA, batch is qualified
+          if (materialsWithoutRmCoa === 0 && materialsWithRmCoa > 0) {
             materialQualified++;
           } else {
             materialUnqualified++;
           }
+
+          // PM COA: If ALL formula materials have PM COA, batch is qualified
+          if (materialsWithoutPmCoa === 0 && materialsWithPmCoa > 0) {
+            pmCoaQualified++;
+          } else {
+            pmCoaUnqualified++;
+          }
+
+          // PPM COA: If ALL formula materials have PPM COA, batch is qualified
+          if (materialsWithoutPpmCoa === 0 && materialsWithPpmCoa > 0) {
+            ppmCoaQualified++;
+          } else {
+            ppmCoaUnqualified++;
+          }
         });
       }
 
-      return { 
-        ...f, 
-        hasBatch, 
-        totalBatchCount, 
-        rmDataMatched, 
-        rmDataUnmatched, 
+
+      return {
+        ...f,
+        hasBatch,
+        totalBatchCount,
+        rmDataMatched,
+        rmDataUnmatched,
         ppmDataMatched,
         ppmDataUnmatched,
         pmDataMatched,
         pmDataUnmatched,
         materialQualified,
         materialUnqualified,
+        pmCoaQualified,
+        pmCoaUnqualified,
+        ppmCoaQualified,
+        ppmCoaUnqualified,
+        bulkCoaQualified,
+        bulkCoaUnqualified,
         formulaMaterialCount: formulaMaterialCodes.size,
-        uniqueBatchNumbers 
+        uniqueBatchNumbers
       };
 
     });
@@ -512,19 +563,19 @@ export async function GET(request: NextRequest): Promise<NextResponse<FormulasLi
     enhancedFormulas.forEach(f => {
       (f.uniqueBatchNumbers || []).forEach((bn: string) => allGlobalUniqueBatchNumbers.add(bn));
     });
-    
+
     // Calculate global RM counts from the deduplicated set
     const globalRmDataMatched = [...allGlobalUniqueBatchNumbers].filter(bn => rmBatchNumbers.has(bn)).length;
     const globalRmDataUnmatched = [...allGlobalUniqueBatchNumbers].filter(bn => !rmBatchNumbers.has(bn)).length;
 
-    // Step 7.5: Calculate Material Qualification based on UNIQUE batches (like RM)
-    // Build a map: batchNumber -> Set of required material codes from its formula
+    // Step 7.5: Calculate Material Qualification based on RM COA coverage
+    // A batch is "qualified" if ALL its required formula materials have RM COA data
     const batchMaterialRequirements = new Map<string, Set<string>>();
-    
+
     enhancedFormulas.forEach((f: any) => {
       // Extract all material codes from this formula
       const formulaMaterialCodes = new Set<string>();
-      
+
       if (f.materials && Array.isArray(f.materials)) {
         f.materials.forEach((m: any) => {
           if (m.materialCode && m.materialCode !== 'N/A') {
@@ -572,7 +623,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<FormulasLi
           }
         });
       }
-      
+
       // Assign these material requirements to each batch of this formula
       if (formulaMaterialCodes.size > 0) {
         (f.uniqueBatchNumbers || []).forEach((bn: string) => {
@@ -584,24 +635,28 @@ export async function GET(request: NextRequest): Promise<NextResponse<FormulasLi
         });
       }
     });
-    
-    // Check each unique batch against requisition materials
+
+    // Check each unique batch against RM COA material codes (not requisition)
+    // A batch is qualified if ALL its required materials have RM COA data
     const materialQualifiedBatchNumbers = new Set<string>();
     batchMaterialRequirements.forEach((requiredMaterials, batchNum) => {
-      const requisitionMaterials = requisitionMaterialsByBatch[batchNum] || new Set<string>();
-      
-      // Check if ALL required materials are found in requisition
+      // Check if ALL required materials have RM COA data
       let allFound = true;
       requiredMaterials.forEach(code => {
-        if (!requisitionMaterials.has(code)) {
+        if (!rmCoaMaterialCodeSet.has(code)) {
           allFound = false;
         }
       });
-      
-      if (allFound && requisitionMaterials.size > 0) {
+
+      // Batch is qualified only if ALL materials have RM COA and there is at least one RM COA
+      if (allFound && rmCoaMaterialCodeSet.size > 0) {
         materialQualifiedBatchNumbers.add(batchNum);
       }
     });
+
+    // Calculate global material qualification totals
+    const globalMaterialQualified = materialQualifiedBatchNumbers.size;
+    const globalMaterialUnqualified = allGlobalUniqueBatchNumbers.size - globalMaterialQualified;
 
     return NextResponse.json({
       success: true,
@@ -619,6 +674,12 @@ export async function GET(request: NextRequest): Promise<NextResponse<FormulasLi
           pmDataUnmatched: f.pmDataUnmatched || 0,
           materialQualified: f.materialQualified || 0,
           materialUnqualified: f.materialUnqualified || 0,
+          pmCoaQualified: f.pmCoaQualified || 0,
+          pmCoaUnqualified: f.pmCoaUnqualified || 0,
+          ppmCoaQualified: f.ppmCoaQualified || 0,
+          ppmCoaUnqualified: f.ppmCoaUnqualified || 0,
+          bulkCoaQualified: f.bulkCoaQualified || 0,
+          bulkCoaUnqualified: f.bulkCoaUnqualified || 0,
           formulaMaterialCount: f.formulaMaterialCount || 0,
         };
       }),
@@ -635,6 +696,20 @@ export async function GET(request: NextRequest): Promise<NextResponse<FormulasLi
       pmBatchNumbersList: [...pmBatchNumbers],
       // Material Qualification batch numbers list (like rmBatchNumbersList but for material qualification)
       materialQualifiedBatchNumbersList: [...materialQualifiedBatchNumbers],
+      // Global Material Qualification counts
+      globalMaterialQualified,
+      globalMaterialUnqualified,
+      // Global PM COA counts (sum across all formulas)
+      globalPmCoaQualified: enhancedFormulas.reduce((sum, f) => sum + (f.pmCoaQualified || 0), 0),
+      globalPmCoaUnqualified: enhancedFormulas.reduce((sum, f) => sum + (f.pmCoaUnqualified || 0), 0),
+      // Global PPM COA counts (sum across all formulas)
+      globalPpmCoaQualified: enhancedFormulas.reduce((sum, f) => sum + (f.ppmCoaQualified || 0), 0),
+      globalPpmCoaUnqualified: enhancedFormulas.reduce((sum, f) => sum + (f.ppmCoaUnqualified || 0), 0),
+      // Global Bulk COA counts (based on unique batch numbers with BULK stage COA)
+      globalBulkCoaQualified: [...allGlobalUniqueBatchNumbers].filter(bn => bulkCoaBatchSet.has(bn)).length,
+      globalBulkCoaUnqualified: [...allGlobalUniqueBatchNumbers].filter(bn => !bulkCoaBatchSet.has(bn)).length,
+      // RM COA material codes for frontend reference
+      rmCoaMaterialCodes: [...rmCoaMaterialCodeSet],
     });
 
   } catch (error) {
