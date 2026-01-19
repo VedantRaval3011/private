@@ -226,8 +226,6 @@ export interface FormulaRecord extends FormulaMasterData {
   pmCoaUnqualified?: number;    // Number of materials without PM COA data
   ppmCoaQualified?: number;     // Number of materials with PPM COA data
   ppmCoaUnqualified?: number;   // Number of materials without PPM COA data
-  bulkCoaQualified?: number;    // Number of batches with Bulk COA data
-  bulkCoaUnqualified?: number;  // Number of batches without Bulk COA data
 }
 
 // ============================================

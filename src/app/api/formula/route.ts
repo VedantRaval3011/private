@@ -470,10 +470,6 @@ export async function GET(request: NextRequest): Promise<NextResponse<FormulasLi
       let ppmCoaQualified = 0;
       let ppmCoaUnqualified = 0;
 
-      // Calculate Bulk COA matching (based on batch number presence in Bulk COA)
-      const bulkCoaQualified = uniqueBatchNumbers.filter(bn => bulkCoaBatchSet.has(bn)).length;
-      const bulkCoaUnqualified = uniqueBatchNumbers.filter(bn => !bulkCoaBatchSet.has(bn)).length;
-
       if (formulaMaterialCodes.size > 0) {
         // Check each unique batch
         uniqueBatchNumbers.forEach(() => {
@@ -517,8 +513,6 @@ export async function GET(request: NextRequest): Promise<NextResponse<FormulasLi
         pmCoaUnqualified,
         ppmCoaQualified,
         ppmCoaUnqualified,
-        bulkCoaQualified,
-        bulkCoaUnqualified,
         formulaMaterialCount: formulaMaterialCodes.size,
         uniqueBatchNumbers
       };
@@ -658,6 +652,14 @@ export async function GET(request: NextRequest): Promise<NextResponse<FormulasLi
     const globalMaterialQualified = materialQualifiedBatchNumbers.size;
     const globalMaterialUnqualified = allGlobalUniqueBatchNumbers.size - globalMaterialQualified;
 
+    // DEBUG: Log batch set sizes
+    console.log('BULK COA DEBUG:', {
+      allGlobalUniqueBatchNumbers: allGlobalUniqueBatchNumbers.size,
+      batchMaterialRequirements: batchMaterialRequirements.size,
+      bulkCoaBatchSet: bulkCoaBatchSet.size,
+      materialQualifiedBatchNumbers: materialQualifiedBatchNumbers.size,
+    });
+
     return NextResponse.json({
       success: true,
       data: paginatedFormulas.map(f => {
@@ -705,9 +707,12 @@ export async function GET(request: NextRequest): Promise<NextResponse<FormulasLi
       // Global PPM COA counts (sum across all formulas)
       globalPpmCoaQualified: enhancedFormulas.reduce((sum, f) => sum + (f.ppmCoaQualified || 0), 0),
       globalPpmCoaUnqualified: enhancedFormulas.reduce((sum, f) => sum + (f.ppmCoaUnqualified || 0), 0),
-      // Global Bulk COA counts (based on unique batch numbers with BULK stage COA)
-      globalBulkCoaQualified: [...allGlobalUniqueBatchNumbers].filter(bn => bulkCoaBatchSet.has(bn)).length,
-      globalBulkCoaUnqualified: [...allGlobalUniqueBatchNumbers].filter(bn => !bulkCoaBatchSet.has(bn)).length,
+      // Global Bulk COA counts (based on batches WITH material requirements - same subset as RM COA)
+      // batchMaterialRequirements.size should be 1286, not allGlobalUniqueBatchNumbers.size (1436+)
+      globalBulkCoaQualified: [...batchMaterialRequirements.keys()].filter(bn => bulkCoaBatchSet.has(bn)).length,
+      globalBulkCoaUnqualified: [...batchMaterialRequirements.keys()].filter(bn => !bulkCoaBatchSet.has(bn)).length,
+      // List of batch numbers with Bulk COA data (for frontend section-specific calculation)
+      bulkCoaQualifiedBatchNumbersList: [...batchMaterialRequirements.keys()].filter(bn => bulkCoaBatchSet.has(bn)),
       // RM COA material codes for frontend reference
       rmCoaMaterialCodes: [...rmCoaMaterialCodeSet],
     });

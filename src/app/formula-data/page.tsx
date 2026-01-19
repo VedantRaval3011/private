@@ -196,6 +196,7 @@ interface FormulaListResponse {
     globalPpmCoaUnqualified?: number;
     globalBulkCoaQualified?: number;
     globalBulkCoaUnqualified?: number;
+    bulkCoaQualifiedBatchNumbersList?: string[];
 }
 
 // ============================================
@@ -802,6 +803,8 @@ export default function FormulaDataPage() {
     // Global Bulk COA data for section header capsule
     const [globalBulkCoaQualified, setGlobalBulkCoaQualified] = useState<number>(0);
     const [globalBulkCoaUnqualified, setGlobalBulkCoaUnqualified] = useState<number>(0);
+    // Set of batch numbers that have Bulk COA data (for per-section calculation)
+    const [bulkCoaQualifiedBatchNumbers, setBulkCoaQualifiedBatchNumbers] = useState<Set<string>>(new Set());
 
     // RM Data Modal State (for viewing RM requisition details)
     const [showRmDataModal, setShowRmDataModal] = useState(false);
@@ -846,6 +849,8 @@ export default function FormulaDataPage() {
     const [matSortDirection, setMatSortDirection] = useState<'asc' | 'desc'>('asc');
     const [matViewMode, setMatViewMode] = useState<'table' | 'file'>('file');
     const [expandedMatArNumbers, setExpandedMatArNumbers] = useState<Set<string>>(new Set());
+    const [matModalSection, setMatModalSection] = useState<'main' | 'lowBatch' | 'noBatch' | 'placebo' | 'all'>('all');
+    const [matModalSubtitle, setMatModalSubtitle] = useState<string>('');
 
     // Per-Formula RM Modal State (for viewing RM data specific to one formula/MFC)
     const [perFormulaRmModalOpen, setPerFormulaRmModalOpen] = useState(false);
@@ -1205,6 +1210,8 @@ export default function FormulaDataPage() {
                 // Set global Bulk COA data for capsule indicator
                 if (data.globalBulkCoaQualified !== undefined) setGlobalBulkCoaQualified(data.globalBulkCoaQualified);
                 if (data.globalBulkCoaUnqualified !== undefined) setGlobalBulkCoaUnqualified(data.globalBulkCoaUnqualified);
+                // Store batch numbers that have Bulk COA data for per-section calculation
+                if (data.bulkCoaQualifiedBatchNumbersList) setBulkCoaQualifiedBatchNumbers(new Set(data.bulkCoaQualifiedBatchNumbersList));
             }
         } catch (error) {
             console.error('Error fetching formulas:', error);
@@ -1614,13 +1621,93 @@ export default function FormulaDataPage() {
     }, []);
 
     // Open Material Qualification Modal - show materials with/without RM COA data
-    const openMatDataModal = useCallback(async (type: 'qualified' | 'unqualified') => {
+    // Open Material Qualification Modal - show materials with/without RM COA data
+    const openMatDataModal = useCallback(async (
+        type: 'qualified' | 'unqualified',
+        section: 'main' | 'lowBatch' | 'noBatch' | 'placebo' | 'all' = 'all',
+        explicitFormulas: any[] = []
+    ) => {
         setShowMatDataModal(true);
         setMatModalType(type);
+        setMatModalSection(section);
         setIsMatModalLoading(true);
         setMatModalError(null);
         setMatModalData([]);
         setExpandedMatArNumbers(new Set());
+
+        // Set subtitle based on context
+        if (explicitFormulas && explicitFormulas.length === 1) {
+            const mfc = explicitFormulas[0].masterFormulaDetails?.masterCardNo || 'Unknown MFC';
+            const product = explicitFormulas[0].masterFormulaDetails?.productName || '';
+            setMatModalSubtitle(`Filtered by MFC: ${mfc} - ${product}`);
+        } else if (section !== 'all') {
+            setMatModalSubtitle(`Filtered by ${section === 'main' ? 'MFCs with 3+ batches' : section === 'lowBatch' ? 'Low Batch MFCs' : section === 'noBatch' ? 'No Batch MFCs' : 'Placebo & Media Fill'}`);
+        } else {
+            setMatModalSubtitle('');
+        }
+
+        // Get MFC numbers for the selected section
+        const getSectionMfcNumbers = (): Set<string> => {
+            const mfcNumbers = new Set<string>();
+
+            // If explicit formulas provided (preferred), use them
+            if (explicitFormulas && explicitFormulas.length > 0) {
+                explicitFormulas.forEach((f: any) => {
+                    const masterCardNo = (f.masterFormulaDetails?.masterCardNo || '').trim();
+                    if (masterCardNo) {
+                        mfcNumbers.add(masterCardNo);
+                    }
+                });
+                return mfcNumbers;
+            }
+
+            // Fallback: Get the relevant formulas based on section (using internal state)
+            let sectionFormulas: any[] = [];
+            if (section === 'main') {
+                sectionFormulas = formulas.filter((f: any) => {
+                    const masterCardNo = f.masterFormulaDetails?.masterCardNo || '';
+                    const batchCount = batchCounts[masterCardNo] || 0;
+                    const productName = (f.masterFormulaDetails?.productName || '').toUpperCase();
+                    const isPlacebo = productName.includes('PLACEBO') || productName.includes('MEDIA FILL') || productName.includes('MEDIAFILL');
+                    return batchCount >= 3 && !isPlacebo;
+                });
+            } else if (section === 'lowBatch') {
+                sectionFormulas = formulas.filter((f: any) => {
+                    const masterCardNo = f.masterFormulaDetails?.masterCardNo || '';
+                    const batchCount = batchCounts[masterCardNo] || 0;
+                    const productName = (f.masterFormulaDetails?.productName || '').toUpperCase();
+                    const isPlacebo = productName.includes('PLACEBO') || productName.includes('MEDIA FILL') || productName.includes('MEDIAFILL');
+                    return batchCount >= 1 && batchCount <= 2 && !isPlacebo;
+                });
+            } else if (section === 'noBatch') {
+                sectionFormulas = formulas.filter((f: any) => {
+                    const masterCardNo = f.masterFormulaDetails?.masterCardNo || '';
+                    const batchCount = batchCounts[masterCardNo] || 0;
+                    const productName = (f.masterFormulaDetails?.productName || '').toUpperCase();
+                    const isPlacebo = productName.includes('PLACEBO') || productName.includes('MEDIA FILL') || productName.includes('MEDIAFILL');
+                    return batchCount === 0 && !isPlacebo;
+                });
+            } else if (section === 'placebo') {
+                sectionFormulas = formulas.filter((f: any) => {
+                    const productName = (f.masterFormulaDetails?.productName || '').toUpperCase();
+                    return productName.includes('PLACEBO') || productName.includes('MEDIA FILL') || productName.includes('MEDIAFILL');
+                });
+            } else {
+                // 'all' - use all formulas
+                sectionFormulas = formulas;
+            }
+
+            sectionFormulas.forEach((f: any) => {
+                const masterCardNo = (f.masterFormulaDetails?.masterCardNo || '').trim();
+                if (masterCardNo) {
+                    mfcNumbers.add(masterCardNo);
+                }
+            });
+
+            return mfcNumbers;
+        };
+
+        const sectionMfcNumbers = getSectionMfcNumbers();
 
         try {
             if (type === 'qualified') {
@@ -1643,73 +1730,77 @@ export default function FormulaDataPage() {
                     setMatModalError(rmCoaData.message || 'Failed to fetch RM COA data');
                 }
             } else {
-                // Unqualified: Show formula materials that DON'T have RM COA data
-                // First get all RM COA material codes
+                // Unqualified: Show RM AR numbers that exist in Requisition but NOT in COA
+                // First get all AR numbers from RM COA
                 const rmCoaResponse = await fetch('/api/rmcoa');
                 const rmCoaData = await rmCoaResponse.json();
-                const rmCoaMaterialCodes = new Set<string>(
-                    rmCoaData.success ? rmCoaData.data.map((c: any) => c.materialCode) : []
-                );
 
-                // Get all unique materials from formulas
-                const materialsWithoutCoa: any[] = [];
-                formulas.forEach(formula => {
-                    // Main materials
-                    formula.materials?.forEach((m: any) => {
-                        if (m.materialCode && m.materialCode !== 'N/A' && !rmCoaMaterialCodes.has(m.materialCode)) {
-                            materialsWithoutCoa.push({
-                                arNo: 'Missing RM COA',
-                                materialCode: m.materialCode,
-                                materialName: m.materialName || 'Unknown',
-                                formulaMfc: formula.masterFormulaDetails?.masterCardNo || 'N/A',
-                                formulaName: formula.masterFormulaDetails?.productName || 'N/A',
-                                status: 'Missing',
-                            });
+                // Build a set of AR numbers that exist in RM COA
+                const rmCoaArNumbers = new Set<string>();
+                if (rmCoaData.success && rmCoaData.data) {
+                    rmCoaData.data.forEach((c: any) => {
+                        if (c.arNo && c.arNo.trim() !== '') {
+                            rmCoaArNumbers.add(c.arNo.trim());
                         }
                     });
+                }
 
-                    // Process materials
-                    formula.processes?.forEach((p: any) => {
-                        p.materials?.forEach((m: any) => {
-                            if (m.materialCode && m.materialCode !== 'N/A' && !rmCoaMaterialCodes.has(m.materialCode)) {
-                                materialsWithoutCoa.push({
-                                    arNo: 'Missing RM COA',
-                                    materialCode: m.materialCode,
+                // Fetch AR numbers from RM requisition data
+                const requisitionResponse = await fetch('/api/requisition/materials?type=RM&pageSize=100000');
+                const requisitionData = await requisitionResponse.json();
+
+                // Helper function to check if an AR number is an RM-type AR number
+                const isRmArNumber = (arNo: string): boolean => {
+                    const upper = arNo.toUpperCase();
+                    // Exclude AR numbers containing 'PRM' (PPM type)
+                    if (upper.includes('PRM')) return false;
+                    // Include AR numbers containing 'ORM' or 'ARM' (RM type)
+                    if (upper.includes('ORM') || upper.includes('ARM')) return true;
+                    return true;
+                };
+
+                // Build AR number-centric data structure
+                // Show AR numbers from Requisition that are NOT in COA
+                // Filter to only include entries for MFCs in the selected section
+                const arNumberData: any[] = [];
+
+
+                if (requisitionData.success && requisitionData.materials) {
+                    requisitionData.materials.forEach((m: any) => {
+                        if (m.arNo && m.arNo.trim() !== '') {
+                            const arNo = m.arNo.trim();
+                            const mfcNo = (m.mfcNo || '').trim();
+
+                            // Filter by section - only include if MFC is in the selected section
+                            // Also check with trimmed version
+                            const isMfcInSection = section === 'all' || sectionMfcNumbers.has(mfcNo);
+
+                            // Only include RM-type AR numbers that are NOT in COA and belong to section
+                            if (isRmArNumber(arNo) && !rmCoaArNumbers.has(arNo) && isMfcInSection) {
+                                arNumberData.push({
+                                    arNo: arNo,
+                                    materialCode: m.materialCode || 'N/A',
                                     materialName: m.materialName || 'Unknown',
-                                    formulaMfc: formula.masterFormulaDetails?.masterCardNo || 'N/A',
-                                    formulaName: formula.masterFormulaDetails?.productName || 'N/A',
-                                    status: 'Missing',
+                                    formulaMfc: mfcNo || 'N/A',
+                                    batchNumber: m.batchNumber || 'N/A',
+                                    itemName: m.itemName || 'N/A',
+                                    quantityRequired: m.quantityRequired || 0,
+                                    quantityToIssue: m.quantityToIssue || 0,
+                                    unit: m.unit || 'N/A',
+                                    grNo: m.grNo || 'N/A',
+                                    vendorCode: m.vendorCode || 'N/A',
+                                    expiryDate: m.expiryDate || 'N/A',
+                                    mfgDate: m.mfgDate || 'N/A',
+                                    binCode: m.binCode || 'N/A',
+                                    status: 'Missing in COA',
+                                    hasArInRequisition: true,
                                 });
                             }
-                        });
-                        p.fillingProducts?.forEach((fp: any) => {
-                            fp.materials?.forEach((m: any) => {
-                                if (m.materialCode && m.materialCode !== 'N/A' && !rmCoaMaterialCodes.has(m.materialCode)) {
-                                    materialsWithoutCoa.push({
-                                        arNo: 'Missing RM COA',
-                                        materialCode: m.materialCode,
-                                        materialName: m.materialName || 'Unknown',
-                                        formulaMfc: formula.masterFormulaDetails?.masterCardNo || 'N/A',
-                                        formulaName: formula.masterFormulaDetails?.productName || 'N/A',
-                                        status: 'Missing',
-                                    });
-                                }
-                            });
-                        });
-                    });
-                });
-
-                // Deduplicate by material code
-                const uniqueMaterials = Object.values(
-                    materialsWithoutCoa.reduce((acc: any, m: any) => {
-                        if (!acc[m.materialCode]) {
-                            acc[m.materialCode] = m;
                         }
-                        return acc;
-                    }, {})
-                );
+                    });
+                }
 
-                setMatModalData(uniqueMaterials);
+                setMatModalData(arNumberData);
             }
         } catch (error) {
             console.error('Error fetching material qualification data:', error);
@@ -1717,7 +1808,7 @@ export default function FormulaDataPage() {
         } finally {
             setIsMatModalLoading(false);
         }
-    }, [formulas]);
+    }, [formulas, batchCounts]);
 
     const closeMatDataModal = useCallback(() => {
         setShowMatDataModal(false);
@@ -2832,25 +2923,102 @@ export default function FormulaDataPage() {
         return counts;
     }, [allBatches, materialQualifiedBatchNumbers, mainFormulas, lowBatchFormulas, noBatchFormulas, placeboFormulas]);
 
-    // Calculate Bulk COA qualified/unqualified per section by summing per-formula values
+    // Calculate per-section Bulk COA data based on UNIQUE batches per section
+    // This matches the unique batch counts by checking which unique batches have Bulk COA data
     const sectionBulkCoaData = useMemo(() => {
-        const sumBulkCoa = (formulas: FormulaRecord[]) => {
-            let qualified = 0;
-            let unqualified = 0;
-            formulas.forEach((f: any) => {
-                qualified += f.bulkCoaQualified || 0;
-                unqualified += f.bulkCoaUnqualified || 0;
-            });
-            return { qualified, unqualified };
+        if (!allBatches || allBatches.length === 0) {
+            return {
+                main: { qualified: 0, unqualified: 0 },
+                lowBatch: { qualified: 0, unqualified: 0 },
+                noBatch: { qualified: 0, unqualified: 0 },
+                placebo: { qualified: 0, unqualified: 0 },
+            };
+        }
+
+        // Get unique batches by batch number
+        const uniqueBatchMap = new Map<string, { batchNumber: string; itemCode?: string }>();
+        allBatches.forEach(batch => {
+            if (batch.batchNumber && !uniqueBatchMap.has(batch.batchNumber)) {
+                uniqueBatchMap.set(batch.batchNumber, { batchNumber: batch.batchNumber, itemCode: batch.itemCode });
+            }
+        });
+
+        const uniqueBatches = Array.from(uniqueBatchMap.values());
+
+        // Build a map of product codes to their MFC category
+        const productCodeToCategory = new Map<string, 'main' | 'lowBatch' | 'noBatch' | 'placebo'>();
+        const getFormulaProductCodes = (f: FormulaRecord): string[] => {
+            const codes: string[] = [];
+            const mainCode = f.masterFormulaDetails?.productCode;
+            if (mainCode && mainCode !== 'N/A') codes.push(mainCode);
+            if (f.fillingDetails && Array.isArray(f.fillingDetails)) {
+                f.fillingDetails.forEach((fd: FillingDetail) => {
+                    if (fd.productCode && fd.productCode !== 'N/A' && !codes.includes(fd.productCode)) {
+                        codes.push(fd.productCode);
+                    }
+                });
+            }
+            if (f.processes && Array.isArray(f.processes)) {
+                f.processes.forEach((p: ProcessData) => {
+                    if (p.fillingProducts && Array.isArray(p.fillingProducts)) {
+                        p.fillingProducts.forEach((fp: AsepticFillingProduct) => {
+                            if (fp.productCode && !codes.includes(fp.productCode)) {
+                                codes.push(fp.productCode);
+                            }
+                        });
+                    }
+                });
+            }
+            return codes;
         };
 
-        return {
-            main: sumBulkCoa(mainFormulas),
-            lowBatch: sumBulkCoa(lowBatchFormulas),
-            noBatch: sumBulkCoa(noBatchFormulas),
-            placebo: sumBulkCoa(placeboFormulas),
+        mainFormulas.forEach(f => {
+            getFormulaProductCodes(f).forEach(code => {
+                if (!productCodeToCategory.has(code)) productCodeToCategory.set(code, 'main');
+            });
+        });
+        lowBatchFormulas.forEach(f => {
+            getFormulaProductCodes(f).forEach(code => {
+                if (!productCodeToCategory.has(code)) productCodeToCategory.set(code, 'lowBatch');
+            });
+        });
+        noBatchFormulas.forEach(f => {
+            getFormulaProductCodes(f).forEach(code => {
+                if (!productCodeToCategory.has(code)) productCodeToCategory.set(code, 'noBatch');
+            });
+        });
+        placeboFormulas.forEach(f => {
+            getFormulaProductCodes(f).forEach(code => {
+                if (!productCodeToCategory.has(code)) productCodeToCategory.set(code, 'placebo');
+            });
+        });
+
+        // Count Bulk COA qualified/unqualified per category
+        const counts = {
+            main: { qualified: 0, unqualified: 0 },
+            lowBatch: { qualified: 0, unqualified: 0 },
+            noBatch: { qualified: 0, unqualified: 0 },
+            placebo: { qualified: 0, unqualified: 0 },
         };
-    }, [mainFormulas, lowBatchFormulas, noBatchFormulas, placeboFormulas]);
+
+        uniqueBatches.forEach(batch => {
+            const itemCode = batch.itemCode;
+            if (!itemCode) return;
+
+            const category = productCodeToCategory.get(itemCode);
+            if (!category) return;
+
+            // Check if this batch has Bulk COA data
+            const hasBulkCoa = bulkCoaQualifiedBatchNumbers.has(batch.batchNumber);
+            if (hasBulkCoa) {
+                counts[category].qualified++;
+            } else {
+                counts[category].unqualified++;
+            }
+        });
+
+        return counts;
+    }, [allBatches, bulkCoaQualifiedBatchNumbers, mainFormulas, lowBatchFormulas, noBatchFormulas, placeboFormulas]);
 
     const toggleMfc = (mfcId: string) => {
         setExpandedMfc(expandedMfc === mfcId ? null : mfcId);
@@ -3119,6 +3287,10 @@ export default function FormulaDataPage() {
                                     size="medium"
                                     type="RM COA"
                                 />
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '1px', marginTop: '2px' }}>
+                                    <span style={{ fontSize: '0.65rem', fontWeight: '700', color: '#16a34a', lineHeight: 1 }}>Found: {materialQualified || 0}</span>
+                                    <span style={{ fontSize: '0.65rem', fontWeight: '700', color: '#dc2626', lineHeight: 1 }}>Missing: {materialUnqualified || 0}</span>
+                                </div>
                             </div>
                         )}
                         {/* Bulk COA Status Capsule - After PM and before RM COA */}
@@ -7098,8 +7270,8 @@ export default function FormulaDataPage() {
                                 onPmUnmatchedClick={() => openPmDataModal('unmatched')}
                                 materialQualified={sectionMaterialQualData.main.qualified}
                                 materialUnqualified={sectionMaterialQualData.main.unqualified}
-                                onMaterialQualifiedClick={() => openMatDataModal('qualified')}
-                                onMaterialUnqualifiedClick={() => openMatDataModal('unqualified')}
+                                onMaterialQualifiedClick={() => openMatDataModal('qualified', 'main', mainFormulas)}
+                                onMaterialUnqualifiedClick={() => openMatDataModal('unqualified', 'main', mainFormulas)}
                                 pmCoaQualified={0}
                                 pmCoaUnqualified={sectionMaterialQualData.main.qualified + sectionMaterialQualData.main.unqualified}
                                 onPmCoaQualifiedClick={() => { }}
@@ -7479,14 +7651,21 @@ export default function FormulaDataPage() {
                                                                 )}
 
                                                                 {/* RM COA Capsule (Cyan/Teal) */}
-                                                                <BatchStatusCapsule
-                                                                    type="RM COA"
-                                                                    matched={formula.materialQualified || 0}
-                                                                    unmatched={formula.materialUnqualified || 0}
-                                                                    onGreenClick={() => openMatDataModal('qualified')}
-                                                                    onRedClick={() => openMatDataModal('unqualified')}
-                                                                    size="small"
-                                                                />
+                                                                {/* RM COA Capsule (Cyan/Teal) */}
+                                                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                                                                    <BatchStatusCapsule
+                                                                        type="RM COA"
+                                                                        matched={formula.materialQualified || 0}
+                                                                        unmatched={formula.materialUnqualified || 0}
+                                                                        onGreenClick={() => openMatDataModal('qualified', 'main', [formula])}
+                                                                        onRedClick={() => openMatDataModal('unqualified', 'main', [formula])}
+                                                                        size="small"
+                                                                    />
+                                                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '1px', alignSelf: 'stretch', marginTop: '2px' }}>
+                                                                        <span style={{ fontSize: '0.6rem', fontWeight: '700', color: '#16a34a', lineHeight: 1, textAlign: 'center' }}>Found: {formula.materialQualified || 0}</span>
+                                                                        <span style={{ fontSize: '0.6rem', fontWeight: '700', color: '#dc2626', lineHeight: 1, textAlign: 'center' }}>Missing: {formula.materialUnqualified || 0}</span>
+                                                                    </div>
+                                                                </div>
 
                                                                 {/* PM COA Capsule (Red) */}
                                                                 <BatchStatusCapsule
@@ -8880,10 +9059,10 @@ export default function FormulaDataPage() {
                                     onPmUnmatchedClick={() => openPmDataModal('unmatched')}
                                     materialQualified={sectionMaterialQualData.lowBatch.qualified}
                                     materialUnqualified={sectionMaterialQualData.lowBatch.unqualified}
-                                    onMaterialQualifiedClick={() => openMatDataModal('qualified')}
-                                    onMaterialUnqualifiedClick={() => openMatDataModal('unqualified')}
-                                    bulkCoaQualified={sectionBulkCoaData.lowBatch.qualified}
-                                    bulkCoaUnqualified={sectionBulkCoaData.lowBatch.unqualified}
+                                    onMaterialQualifiedClick={() => openMatDataModal('qualified', 'lowBatch', lowBatchFormulas)}
+                                    onMaterialUnqualifiedClick={() => openMatDataModal('unqualified', 'lowBatch', lowBatchFormulas)}
+                                    bulkCoaQualified={globalBulkCoaQualified}
+                                    bulkCoaUnqualified={globalBulkCoaUnqualified}
                                     onBulkCoaQualifiedClick={() => openBulkCoaModal('matched')}
                                     onBulkCoaUnqualifiedClick={() => openBulkCoaModal('unmatched')}
                                 />
@@ -8994,10 +9173,10 @@ export default function FormulaDataPage() {
                                     onPmUnmatchedClick={() => openPmDataModal('unmatched')}
                                     materialQualified={sectionMaterialQualData.noBatch.qualified}
                                     materialUnqualified={sectionMaterialQualData.noBatch.unqualified}
-                                    onMaterialQualifiedClick={() => openMatDataModal('qualified')}
-                                    onMaterialUnqualifiedClick={() => openMatDataModal('unqualified')}
-                                    bulkCoaQualified={sectionBulkCoaData.noBatch.qualified}
-                                    bulkCoaUnqualified={sectionBulkCoaData.noBatch.unqualified}
+                                    onMaterialQualifiedClick={() => openMatDataModal('qualified', 'noBatch', noBatchFormulas)}
+                                    onMaterialUnqualifiedClick={() => openMatDataModal('unqualified', 'noBatch', noBatchFormulas)}
+                                    bulkCoaQualified={globalBulkCoaQualified}
+                                    bulkCoaUnqualified={globalBulkCoaUnqualified}
                                     onBulkCoaQualifiedClick={() => openBulkCoaModal('matched')}
                                     onBulkCoaUnqualifiedClick={() => openBulkCoaModal('unmatched')}
                                 />
@@ -9109,10 +9288,10 @@ export default function FormulaDataPage() {
                                     onPmUnmatchedClick={() => openPmDataModal('unmatched')}
                                     materialQualified={sectionMaterialQualData.placebo.qualified}
                                     materialUnqualified={sectionMaterialQualData.placebo.unqualified}
-                                    onMaterialQualifiedClick={() => openMatDataModal('qualified')}
-                                    onMaterialUnqualifiedClick={() => openMatDataModal('unqualified')}
-                                    bulkCoaQualified={sectionBulkCoaData.placebo.qualified}
-                                    bulkCoaUnqualified={sectionBulkCoaData.placebo.unqualified}
+                                    onMaterialQualifiedClick={() => openMatDataModal('qualified', 'placebo', placeboFormulas)}
+                                    onMaterialUnqualifiedClick={() => openMatDataModal('unqualified', 'placebo', placeboFormulas)}
+                                    bulkCoaQualified={globalBulkCoaQualified}
+                                    bulkCoaUnqualified={globalBulkCoaUnqualified}
                                     onBulkCoaQualifiedClick={() => openBulkCoaModal('matched')}
                                     onBulkCoaUnqualifiedClick={() => openBulkCoaModal('unmatched')}
                                 />
@@ -11131,11 +11310,26 @@ export default function FormulaDataPage() {
                                 <div>
                                     <h2 style={{ fontSize: '1.5rem', fontWeight: 700, color: '#0f172a', margin: 0 }}>
                                         RM COA - {matModalType === 'qualified' ? 'With COA Data' : 'Missing COA Data'}
+                                        {matModalSubtitle && (
+                                            <span style={{
+                                                fontSize: '0.9rem',
+                                                fontWeight: 500,
+                                                color: '#64748b',
+                                                marginLeft: '12px',
+                                                padding: '4px 10px',
+                                                background: matModalSection === 'main' ? '#dcfce7' :
+                                                    matModalSection === 'lowBatch' ? '#fef3c7' :
+                                                        matModalSection === 'noBatch' ? '#fee2e2' : '#e5e7eb',
+                                                borderRadius: '6px',
+                                            }}>
+                                                {matModalSubtitle}
+                                            </span>
+                                        )}
                                     </h2>
                                     <p style={{ fontSize: '0.9rem', color: '#64748b', margin: '4px 0 0 0' }}>
                                         {matModalType === 'qualified'
                                             ? 'Materials with RM COA (Certificate of Analysis) data available'
-                                            : 'Formula materials missing RM COA data'}
+                                            : `RM AR Numbers from Requisition that are not found in COA data`}
                                     </p>
                                 </div>
                             </div>
@@ -11171,22 +11365,45 @@ export default function FormulaDataPage() {
                             gap: '16px',
                         }}>
                             <div style={{ display: 'flex', gap: '24px', flexWrap: 'wrap' }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                    <span style={{
-                                        padding: '6px 14px',
-                                        background: '#0891b2',
-                                        color: 'white',
-                                        borderRadius: '8px',
-                                        fontWeight: 700,
-                                        fontSize: '1.1rem',
-                                    }}>
-                                        {(() => {
-                                            const arNos = new Set(matModalData.filter((m: any) => m.arNo && m.arNo !== 'Missing RM COA').map((m: any) => m.arNo));
-                                            return arNos.size;
-                                        })()}
-                                    </span>
-                                    <span style={{ color: '#64748b', fontWeight: 500 }}>AR Numbers</span>
-                                </div>
+                                {matModalType === 'unqualified' && (
+                                    <>
+                                        {/* RM AR Numbers missing in COA */}
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                            <span style={{
+                                                padding: '6px 14px',
+                                                background: '#dc2626',
+                                                color: 'white',
+                                                borderRadius: '8px',
+                                                fontWeight: 700,
+                                                fontSize: '1.1rem',
+                                            }}>
+                                                {(() => {
+                                                    const arNos = new Set(matModalData.map((m: any) => m.arNo));
+                                                    return arNos.size;
+                                                })()}
+                                            </span>
+                                            <span style={{ color: '#dc2626', fontWeight: 600 }}>Unique AR Numbers (Missing)</span>
+                                        </div>
+                                    </>
+                                )}
+                                {matModalType === 'qualified' && (
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                        <span style={{
+                                            padding: '6px 14px',
+                                            background: '#0891b2',
+                                            color: 'white',
+                                            borderRadius: '8px',
+                                            fontWeight: 700,
+                                            fontSize: '1.1rem',
+                                        }}>
+                                            {(() => {
+                                                const arNos = new Set(matModalData.filter((m: any) => m.arNo && m.arNo !== 'Missing RM COA').map((m: any) => m.arNo));
+                                                return arNos.size;
+                                            })()}
+                                        </span>
+                                        <span style={{ color: '#64748b', fontWeight: 500 }}>AR Numbers</span>
+                                    </div>
+                                )}
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                     <span style={{
                                         padding: '6px 14px',
@@ -11338,27 +11555,44 @@ export default function FormulaDataPage() {
                                                         </>
                                                     )}
                                                     {matModalType === 'unqualified' && (
-                                                        <th style={thStyle} onClick={() => handleSort('formulaMfc')}>
-                                                            Formula MFC{sortIcon('formulaMfc')}
-                                                        </th>
+                                                        <>
+                                                            <th style={thStyle} onClick={() => handleSort('batchNumber')}>
+                                                                Batch No{sortIcon('batchNumber')}
+                                                            </th>
+                                                            <th style={thStyle} onClick={() => handleSort('itemName')}>
+                                                                Item Name{sortIcon('itemName')}
+                                                            </th>
+                                                            <th style={thStyle} onClick={() => handleSort('grNo')}>
+                                                                GR No{sortIcon('grNo')}
+                                                            </th>
+                                                            <th style={thStyle} onClick={() => handleSort('formulaMfc')}>
+                                                                MFC No{sortIcon('formulaMfc')}
+                                                            </th>
+                                                            <th style={thStyle} onClick={() => handleSort('quantityRequired')}>
+                                                                Qty Req{sortIcon('quantityRequired')}
+                                                            </th>
+                                                            <th style={thStyle} onClick={() => handleSort('expiryDate')}>
+                                                                Expiry{sortIcon('expiryDate')}
+                                                            </th>
+                                                        </>
                                                     )}
                                                 </tr>
                                             </thead>
                                             <tbody>
-                                                {sortedData.slice(0, 500).map((m: any, idx: number) => (
+                                                {sortedData.map((m: any, idx: number) => (
                                                     <tr key={idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
                                                         <td style={{
                                                             padding: '12px',
                                                             fontFamily: 'monospace',
                                                             fontWeight: 600,
-                                                            color: m.arNo === 'Missing RM COA' ? '#dc2626' : '#059669',
+                                                            color: matModalType === 'qualified' ? '#059669' : '#dc2626',
                                                         }}>
                                                             {m.arNo}
                                                         </td>
                                                         <td style={{ padding: '12px', fontFamily: 'monospace', color: '#374151' }}>
                                                             {m.materialCode}
                                                         </td>
-                                                        <td style={{ padding: '12px', color: '#374151' }}>
+                                                        <td style={{ padding: '12px', color: '#374151', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                                             {m.materialName}
                                                         </td>
                                                         {matModalType === 'qualified' && (
@@ -11381,19 +11615,32 @@ export default function FormulaDataPage() {
                                                             </>
                                                         )}
                                                         {matModalType === 'unqualified' && (
-                                                            <td style={{ padding: '12px', fontFamily: 'monospace', color: '#64748b' }}>
-                                                                {m.formulaMfc}
-                                                            </td>
+                                                            <>
+                                                                <td style={{ padding: '12px', fontFamily: 'monospace', color: '#374151' }}>
+                                                                    {m.batchNumber}
+                                                                </td>
+                                                                <td style={{ padding: '12px', color: '#374151', maxWidth: '150px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                                                    {m.itemName}
+                                                                </td>
+                                                                <td style={{ padding: '12px', fontFamily: 'monospace', color: '#374151' }}>
+                                                                    {m.grNo}
+                                                                </td>
+                                                                <td style={{ padding: '12px', fontFamily: 'monospace', color: '#64748b' }}>
+                                                                    {m.formulaMfc}
+                                                                </td>
+                                                                <td style={{ padding: '12px', color: '#374151', textAlign: 'right' }}>
+                                                                    {typeof m.quantityRequired === 'number' ? m.quantityRequired.toLocaleString() : m.quantityRequired}
+                                                                </td>
+                                                                <td style={{ padding: '12px', color: '#64748b' }}>
+                                                                    {m.expiryDate}
+                                                                </td>
+                                                            </>
                                                         )}
                                                     </tr>
                                                 ))}
                                             </tbody>
                                         </table>
-                                        {sortedData.length > 500 && (
-                                            <div style={{ textAlign: 'center', padding: '12px', color: '#64748b', fontSize: '0.85rem', borderTop: '1px solid #e2e8f0' }}>
-                                                Showing first 500 of {sortedData.length} materials
-                                            </div>
-                                        )}
+
                                     </div>
                                 );
                             })()}
@@ -11408,6 +11655,9 @@ export default function FormulaDataPage() {
                                     }
                                     groupedByArNo[arNo].push(m);
                                 });
+
+                                // Helper function for styling based on modal type
+                                const isQualified = matModalType === 'qualified';
 
                                 // Sort AR numbers
                                 const arNumbers = Object.keys(groupedByArNo).sort((a, b) => {
@@ -11464,9 +11714,9 @@ export default function FormulaDataPage() {
                                                         }}
                                                         style={{
                                                             padding: '16px 20px',
-                                                            background: arNo === 'Missing RM COA'
-                                                                ? 'linear-gradient(to right, #fef2f2, #fee2e2)'
-                                                                : 'linear-gradient(to right, #ecfdf5, #d1fae5)',
+                                                            background: isQualified
+                                                                ? 'linear-gradient(to right, #ecfdf5, #d1fae5)'
+                                                                : 'linear-gradient(to right, #fef2f2, #fee2e2)',
                                                             borderBottom: isExpanded ? '1px solid #e2e8f0' : 'none',
                                                             display: 'flex',
                                                             alignItems: 'center',
@@ -11487,7 +11737,7 @@ export default function FormulaDataPage() {
                                                                 width: '32px',
                                                                 height: '32px',
                                                                 borderRadius: '8px',
-                                                                background: arNo === 'Missing RM COA' ? '#dc2626' : '#059669',
+                                                                background: isQualified ? '#059669' : '#dc2626',
                                                                 display: 'flex',
                                                                 alignItems: 'center',
                                                                 justifyContent: 'center',
@@ -11503,7 +11753,7 @@ export default function FormulaDataPage() {
                                                                 <div style={{
                                                                     fontSize: '1.25rem',
                                                                     fontWeight: 700,
-                                                                    color: arNo === 'Missing RM COA' ? '#dc2626' : '#059669',
+                                                                    color: isQualified ? '#059669' : '#dc2626',
                                                                     fontFamily: 'monospace',
                                                                 }}>
                                                                     {arNo}
@@ -11519,7 +11769,7 @@ export default function FormulaDataPage() {
                                                         </div>
                                                         <div style={{
                                                             padding: '8px 16px',
-                                                            background: arNo === 'Missing RM COA' ? '#dc2626' : '#059669',
+                                                            background: isQualified ? '#059669' : '#dc2626',
                                                             color: 'white',
                                                             borderRadius: '8px',
                                                             fontWeight: 600,
@@ -11537,19 +11787,22 @@ export default function FormulaDataPage() {
                                                                     <tr style={{ background: '#f8fafc' }}>
                                                                         <th style={{ padding: '10px', textAlign: 'left', fontWeight: 600, borderBottom: '2px solid #e2e8f0' }}>Material Code</th>
                                                                         <th style={{ padding: '10px', textAlign: 'left', fontWeight: 600, borderBottom: '2px solid #e2e8f0' }}>Material Name</th>
+                                                                        <th style={{ padding: '10px', textAlign: 'left', fontWeight: 600, borderBottom: '2px solid #e2e8f0' }}>Batch No</th>
                                                                         {matModalType === 'qualified' && (
                                                                             <th style={{ padding: '10px', textAlign: 'left', fontWeight: 600, borderBottom: '2px solid #e2e8f0' }}>Status</th>
                                                                         )}
                                                                         {matModalType === 'unqualified' && (
                                                                             <th style={{ padding: '10px', textAlign: 'left', fontWeight: 600, borderBottom: '2px solid #e2e8f0' }}>Formula</th>
                                                                         )}
+                                                                        <th style={{ padding: '10px', textAlign: 'left', fontWeight: 600, borderBottom: '2px solid #e2e8f0' }}>Qty Req</th>
                                                                     </tr>
                                                                 </thead>
                                                                 <tbody>
-                                                                    {materials.slice(0, 100).map((m: any, idx: number) => (
+                                                                    {materials.map((m: any, idx: number) => (
                                                                         <tr key={idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
                                                                             <td style={{ padding: '10px', fontFamily: 'monospace', color: '#374151' }}>{m.materialCode}</td>
                                                                             <td style={{ padding: '10px', color: '#374151' }}>{m.materialName}</td>
+                                                                            <td style={{ padding: '10px', fontFamily: 'monospace', color: '#64748b' }}>{m.batchNumber || 'N/A'}</td>
                                                                             {matModalType === 'qualified' && (
                                                                                 <td style={{ padding: '10px' }}>
                                                                                     <span style={{
@@ -11567,6 +11820,9 @@ export default function FormulaDataPage() {
                                                                             {matModalType === 'unqualified' && (
                                                                                 <td style={{ padding: '10px', fontFamily: 'monospace', color: '#64748b' }}>{m.formulaMfc || 'N/A'}</td>
                                                                             )}
+                                                                            <td style={{ padding: '10px', color: '#374151', textAlign: 'right' }}>
+                                                                                {typeof m.quantityRequired === 'number' ? m.quantityRequired.toLocaleString() : m.quantityRequired}
+                                                                            </td>
                                                                         </tr>
                                                                     ))}
                                                                 </tbody>
