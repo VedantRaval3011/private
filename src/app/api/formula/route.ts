@@ -291,11 +291,17 @@ export async function GET(request: NextRequest): Promise<NextResponse<FormulasLi
     // Also get all RM COA data for detailed view (material code -> AR numbers)
     const rmCoaData = await RMCOA.find({}).select('materialCode materialName arNo').lean();
     const rmCoaByMaterialCode: Record<string, { arNo: string; materialName: string }[]> = {};
+    // Collect unique AR numbers for footer display
+    const uniqueArNumbers = new Set<string>();
     rmCoaData.forEach((coa: any) => {
       if (!rmCoaByMaterialCode[coa.materialCode]) {
         rmCoaByMaterialCode[coa.materialCode] = [];
       }
       rmCoaByMaterialCode[coa.materialCode].push({ arNo: coa.arNo, materialName: coa.materialName });
+      // Track unique AR numbers
+      if (coa.arNo) {
+        uniqueArNumbers.add(coa.arNo);
+      }
     });
 
     // Step 2.9: Get material codes that have PM COA data
@@ -715,6 +721,72 @@ export async function GET(request: NextRequest): Promise<NextResponse<FormulasLi
       bulkCoaQualifiedBatchNumbersList: [...batchMaterialRequirements.keys()].filter(bn => bulkCoaBatchSet.has(bn)),
       // RM COA material codes for frontend reference
       rmCoaMaterialCodes: [...rmCoaMaterialCodeSet],
+      // Unique AR numbers count for RM COA footer display
+      // Found: count of unique AR numbers available in RM COA collection
+      // Missing: count of formula material codes that don't have RM COA coverage
+      globalRmCoaUniqueArNumbersFound: uniqueArNumbers.size,
+      // Calculate missing: get all formula material codes that don't have RM COA
+      globalRmCoaUniqueArNumbersMissing: (() => {
+        // Collect all unique material codes from all formulas
+        const allFormulaMaterialCodes = new Set<string>();
+        enhancedFormulas.forEach((f: any) => {
+          if (f.materials && Array.isArray(f.materials)) {
+            f.materials.forEach((m: any) => {
+              if (m.materialCode && m.materialCode !== 'N/A') {
+                allFormulaMaterialCodes.add(m.materialCode);
+              }
+            });
+          }
+          if (f.fillingDetails && Array.isArray(f.fillingDetails)) {
+            f.fillingDetails.forEach((fd: any) => {
+              if (fd.packingMaterials && Array.isArray(fd.packingMaterials)) {
+                fd.packingMaterials.forEach((pm: any) => {
+                  if (pm.materialCode && pm.materialCode !== 'N/A') {
+                    allFormulaMaterialCodes.add(pm.materialCode);
+                  }
+                });
+              }
+            });
+          }
+          if (f.processes && Array.isArray(f.processes)) {
+            f.processes.forEach((p: any) => {
+              if (p.materials && Array.isArray(p.materials)) {
+                p.materials.forEach((m: any) => {
+                  if (m.materialCode && m.materialCode !== 'N/A') {
+                    allFormulaMaterialCodes.add(m.materialCode);
+                  }
+                });
+              }
+              if (p.fillingProducts && Array.isArray(p.fillingProducts)) {
+                p.fillingProducts.forEach((fp: any) => {
+                  if (fp.materials && Array.isArray(fp.materials)) {
+                    fp.materials.forEach((m: any) => {
+                      if (m.materialCode && m.materialCode !== 'N/A') {
+                        allFormulaMaterialCodes.add(m.materialCode);
+                      }
+                    });
+                  }
+                });
+              }
+            });
+          }
+          if (f.packingMaterials && Array.isArray(f.packingMaterials)) {
+            f.packingMaterials.forEach((pm: any) => {
+              if (pm.materialCode && pm.materialCode !== 'N/A') {
+                allFormulaMaterialCodes.add(pm.materialCode);
+              }
+            });
+          }
+        });
+        // Count how many formula material codes DON'T have RM COA
+        let missingCount = 0;
+        allFormulaMaterialCodes.forEach(code => {
+          if (!rmCoaMaterialCodeSet.has(code)) {
+            missingCount++;
+          }
+        });
+        return missingCount;
+      })(),
     });
 
   } catch (error) {
