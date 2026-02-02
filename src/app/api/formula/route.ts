@@ -238,7 +238,8 @@ export async function GET(request: NextRequest): Promise<NextResponse<FormulasLi
         $group: {
           _id: "$batches.itemCode",
           count: { $sum: 1 },
-          batchNumbers: { $addToSet: "$batches.batchNumber" }
+          batchNumbers: { $addToSet: "$batches.batchNumber" },  // Unique batch numbers
+          allBatchNumbers: { $push: "$batches.batchNumber" }    // ALL batch numbers (with duplicates)
         }
       }
     ]);
@@ -248,9 +249,15 @@ export async function GET(request: NextRequest): Promise<NextResponse<FormulasLi
       return acc;
     }, {});
 
-    // Map: itemCode -> array of batch numbers (for RM matching)
+    // Map: itemCode -> array of UNIQUE batch numbers (for RM matching)
     const batchNumbersByItemCode: Record<string, string[]> = batchAggregation.reduce((acc, curr) => {
       acc[curr._id] = curr.batchNumbers || [];
+      return acc;
+    }, {} as Record<string, string[]>);
+
+    // Map: itemCode -> array of ALL batch numbers with duplicates (for Finish COA total batch calculation)
+    const allBatchNumbersByItemCode: Record<string, string[]> = batchAggregation.reduce((acc, curr) => {
+      acc[curr._id] = curr.allBatchNumbers || [];
       return acc;
     }, {} as Record<string, string[]>);
 
@@ -316,6 +323,11 @@ export async function GET(request: NextRequest): Promise<NextResponse<FormulasLi
     // This is for the Bulk COA capsule - checking if batches have Bulk stage COA records
     const bulkCoaBatchNumbers = await COA.distinct('batchNumber', { stage: 'BULK' });
     const bulkCoaBatchSet = new Set<string>(bulkCoaBatchNumbers);
+
+    // Step 2.12: Get batch numbers that have Finish COA data (stage='FINISH')
+    // This is for the Finish COA capsule - checking if batches have Finish stage COA records
+    const finishCoaBatchNumbers = await COA.distinct('batchNumber', { stage: 'FINISH' });
+    const finishCoaBatchSet = new Set<string>(finishCoaBatchNumbers);
 
 
     // Step 3: Collect Formula Product Codes (Main + Filling) and calculate total batch counts
@@ -520,7 +532,12 @@ export async function GET(request: NextRequest): Promise<NextResponse<FormulasLi
         ppmCoaQualified,
         ppmCoaUnqualified,
         formulaMaterialCount: formulaMaterialCodes.size,
-        uniqueBatchNumbers
+        uniqueBatchNumbers,
+        allBatchNumbers, // Total batches (with duplicates)
+        finishCoaQualified: allBatchNumbers.filter(bn => finishCoaBatchSet.has(bn)).length,
+        finishCoaUnqualified: allBatchNumbers.filter(bn => !finishCoaBatchSet.has(bn)).length,
+        bulkCoaQualified: uniqueBatchNumbers.filter(bn => bulkCoaBatchSet.has(bn)).length,
+        bulkCoaUnqualified: uniqueBatchNumbers.filter(bn => !bulkCoaBatchSet.has(bn)).length
       };
 
     });
@@ -719,6 +736,54 @@ export async function GET(request: NextRequest): Promise<NextResponse<FormulasLi
       globalBulkCoaUnqualified: [...batchMaterialRequirements.keys()].filter(bn => !bulkCoaBatchSet.has(bn)).length,
       // List of batch numbers with Bulk COA data (for frontend section-specific calculation)
       bulkCoaQualifiedBatchNumbersList: [...batchMaterialRequirements.keys()].filter(bn => bulkCoaBatchSet.has(bn)),
+      // Global Finish COA counts - calculated against TOTAL batches (not unique)
+      // This ensures: globalFinishCoaQualified + globalFinishCoaUnqualified = total batch count
+      // We use allBatchNumbersByItemCode which has ALL occurrences (with duplicates)
+      globalFinishCoaQualified: (() => {
+        let count = 0;
+        // For each product code in formula, check EACH batch occurrence against finishCoaBatchSet
+        formulaProductCodes.forEach(itemCode => {
+          const batches = allBatchNumbersByItemCode[itemCode] || [];
+          batches.forEach(bn => {
+            if (finishCoaBatchSet.has(bn)) {
+              count++;
+            }
+          });
+        });
+        return count;
+      })(),
+      globalFinishCoaUnqualified: (() => {
+        let count = 0;
+        // For each product code in formula, check EACH batch occurrence against finishCoaBatchSet
+        formulaProductCodes.forEach(itemCode => {
+          const batches = allBatchNumbersByItemCode[itemCode] || [];
+          batches.forEach(bn => {
+            if (!finishCoaBatchSet.has(bn)) {
+              count++;
+            }
+          });
+        });
+        return count;
+      })(),
+      // Total batch count (for verification: qualified + unqualified should equal this)
+      totalBatchCount: (() => {
+        let total = 0;
+        formulaProductCodes.forEach(itemCode => {
+          total += batchCounts[itemCode] || 0;
+        });
+        return total;
+      })(),
+      // List of batch numbers with Finish COA data (for frontend section-specific calculation)
+      finishCoaQualifiedBatchNumbersList: [...batchMaterialRequirements.keys()].filter(bn => finishCoaBatchSet.has(bn)),
+      // All batch numbers list for frontend modal (with duplicates for total count matching)
+      allBatchNumbersList: (() => {
+        const allBatches: string[] = [];
+        formulaProductCodes.forEach(itemCode => {
+          const batches = allBatchNumbersByItemCode[itemCode] || [];
+          allBatches.push(...batches);
+        });
+        return allBatches;
+      })(),
       // RM COA material codes for frontend reference
       rmCoaMaterialCodes: [...rmCoaMaterialCodeSet],
       // Unique AR numbers count for RM COA footer display
