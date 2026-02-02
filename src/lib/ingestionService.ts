@@ -11,16 +11,19 @@ import { generateNormalizedHash } from './contentHash';
 import { detectXmlType, getFileTypeName } from './xmlTypeDetector';
 import { parseBatchRegistryXml, parseFormulaXml, parseMultipleFormulasXml } from './xmlParser';
 import { parseCOAXml } from './coaParser';
+
 import { parseRequisitionXml } from './requisitionParser';
+import { parseInwardRegisterXml } from './inwardParser';
 import ProcessingLog from '@/models/ProcessingLog';
 import Batch from '@/models/Batch';
 import Formula from '@/models/Formula';
 import COA from '@/models/COA';
 import Requisition from '@/models/Requisition';
+import InwardRegister from '@/models/InwardRegister';
 import { v4 as uuidv4 } from 'uuid';
-import type { 
-  XmlFileInfo, 
-  IngestionResult, 
+import type {
+  XmlFileInfo,
+  IngestionResult,
   IngestionStatus,
   XmlFileType,
   ItemLevelStats,
@@ -45,21 +48,21 @@ const MAX_RAW_CONTENT_SIZE = 14 * 1024 * 1024;
 async function cleanupOrphanedLogs(): Promise<number> {
   try {
     // Get all processing logs with SUCCESS or DUPLICATE status (both can become orphaned)
-    const logs = await ProcessingLog.find({ 
-      status: { $in: ['SUCCESS', 'DUPLICATE'] } 
+    const logs = await ProcessingLog.find({
+      status: { $in: ['SUCCESS', 'DUPLICATE'] }
     }).lean();
-    
+
     const orphanedLogIds: string[] = [];
-    
+
     for (const log of logs) {
       const contentHash = log.contentHash;
       const fileName = log.fileName;
       const fileType = log.fileType;
-      
+
       // Check if the corresponding record still exists
       // Try to find by contentHash first, then by fileName as fallback
       let recordExists = false;
-      
+
       if (fileType === 'BATCH') {
         // Check by contentHash OR fileName
         const batch = await Batch.findOne({
@@ -79,22 +82,22 @@ async function cleanupOrphanedLogs(): Promise<number> {
         }).lean();
         recordExists = !!formula;
       }
-      
+
       // If record doesn't exist, mark log as orphaned
       if (!recordExists && log._id) {
         orphanedLogIds.push(log._id.toString());
       }
     }
-    
+
     // Delete orphaned logs
     if (orphanedLogIds.length > 0) {
-      const result = await ProcessingLog.deleteMany({ 
-        _id: { $in: orphanedLogIds } 
+      const result = await ProcessingLog.deleteMany({
+        _id: { $in: orphanedLogIds }
       });
       console.log(`Cleaned up ${result.deletedCount} orphaned processing log(s)`);
       return result.deletedCount || 0;
     }
-    
+
     return 0;
   } catch (error) {
     console.error('Error cleaning up orphaned logs:', error);
@@ -107,28 +110,28 @@ async function cleanupOrphanedLogs(): Promise<number> {
  */
 export async function scanFilesFolder(): Promise<XmlFileInfo[]> {
   const xmlFiles: XmlFileInfo[] = [];
-  
+
   try {
     // Check if folder exists
     await fs.access(FILES_FOLDER);
-    
+
     // Read all files in the folder
     const files = await fs.readdir(FILES_FOLDER);
-    
+
     for (const fileName of files) {
       // Only process XML files
       if (!fileName.toLowerCase().endsWith('.xml')) {
         continue;
       }
-      
+
       const filePath = path.join(FILES_FOLDER, fileName);
       const stats = await fs.stat(filePath);
-      
+
       // Only process files (not directories)
       if (!stats.isFile()) {
         continue;
       }
-      
+
       // Read file content with error handling for large files
       try {
         // Read file content
@@ -138,7 +141,7 @@ export async function scanFilesFolder(): Promise<XmlFileInfo[]> {
         if (stats.size > 50 * 1024 * 1024) {
           console.log(`   ✅ Large file read successfully (${(stats.size / 1024 / 1024).toFixed(1)}MB)`);
         }
-        
+
         xmlFiles.push({
           fileName,
           filePath,
@@ -154,7 +157,7 @@ export async function scanFilesFolder(): Promise<XmlFileInfo[]> {
   } catch (error) {
     console.error('Error scanning files folder:', error);
   }
-  
+
   return xmlFiles;
 }
 
@@ -163,21 +166,21 @@ export async function scanFilesFolder(): Promise<XmlFileInfo[]> {
  */
 export async function processXmlFile(fileInfo: XmlFileInfo): Promise<IngestionResult> {
   const { fileName, fileSize, content } = fileInfo;
-  
+
   try {
     // Step 1: Generate content hash
     const contentHash = generateNormalizedHash(content);
-    
+
     // Step 2: Check if already processed (hash exists)
     // Only skip early for BATCH files (they have item-level duplicate detection)
     // For FORMULA files with same hash, we still need to parse and check each formula
     const existingLog = await ProcessingLog.findOne({ contentHash });
     const fileType = detectXmlType(content);
-    
+
     // Log file type detection
     console.log(`\n📁 Processing: ${fileName}`);
     console.log(`   Detected Type: ${fileType}`);
-    
+
     // Skip early if already processed for BATCH, COA, and REQUISITION (exact duplicates)
     // BUT only if previous processing was NOT an error
     if (existingLog && existingLog.status !== 'ERROR' && (fileType === 'BATCH' || fileType === 'COA' || fileType === 'REQUISITION')) {
@@ -190,9 +193,9 @@ export async function processXmlFile(fileInfo: XmlFileInfo): Promise<IngestionRe
         businessKey: existingLog.businessKey,
       };
     }
-    
+
     // fileType is already detected above
-    
+
     if (fileType === 'UNKNOWN') {
       // Log the error using findOneAndUpdate to prevent duplicate key error
       await ProcessingLog.findOneAndUpdate(
@@ -208,7 +211,7 @@ export async function processXmlFile(fileInfo: XmlFileInfo): Promise<IngestionRe
         },
         { upsert: true }
       );
-      
+
       return {
         fileName,
         fileType: 'UNKNOWN',
@@ -216,23 +219,23 @@ export async function processXmlFile(fileInfo: XmlFileInfo): Promise<IngestionRe
         message: 'Could not determine XML file type from content',
       };
     }
-    
+
     // Step 4: Parse based on detected type
     let businessKey: string | undefined;
     let recordId: string | undefined;
-    
+
     if (fileType === 'BATCH') {
       const result = await processBatchXml(content, fileName, fileSize, contentHash);
       businessKey = result.businessKey;
       recordId = result.recordId;
-      
+
       if (result.duplicate) {
         // Build detailed message with item stats
         let duplicateMessage = `All items already exist`;
         if (result.itemStats) {
           duplicateMessage = `All ${result.itemStats.totalItems} items are duplicates (already in database)`;
         }
-        
+
         await ProcessingLog.findOneAndUpdate(
           { contentHash },
           {
@@ -247,7 +250,7 @@ export async function processXmlFile(fileInfo: XmlFileInfo): Promise<IngestionRe
           },
           { upsert: true }
         );
-        
+
         return {
           fileName,
           fileType: 'BATCH',
@@ -257,7 +260,7 @@ export async function processXmlFile(fileInfo: XmlFileInfo): Promise<IngestionRe
           itemStats: result.itemStats,  // Include in result
         };
       }
-      
+
       // Partial success - some items were new, some were duplicates
       if (result.itemStats && result.itemStats.duplicateItems > 0) {
         await ProcessingLog.findOneAndUpdate(
@@ -274,7 +277,7 @@ export async function processXmlFile(fileInfo: XmlFileInfo): Promise<IngestionRe
           },
           { upsert: true }
         );
-        
+
         return {
           fileName,
           fileType: 'BATCH',
@@ -289,14 +292,14 @@ export async function processXmlFile(fileInfo: XmlFileInfo): Promise<IngestionRe
       const result = await processFormulaXml(content, fileName, fileSize, contentHash);
       businessKey = result.businessKey;
       recordId = result.recordId;
-      
+
       if (result.duplicate) {
         // All formulas were duplicates
         const stats = result.formulaStats;
-        const message = stats 
+        const message = stats
           ? `All ${stats.totalFormulas} formula(s) already exist in database`
           : `Formula already exists with key: ${businessKey}`;
-        
+
         await ProcessingLog.findOneAndUpdate(
           { contentHash },
           {
@@ -311,7 +314,7 @@ export async function processXmlFile(fileInfo: XmlFileInfo): Promise<IngestionRe
           },
           { upsert: true }
         );
-        
+
         return {
           fileName,
           fileType: 'FORMULA',
@@ -321,7 +324,7 @@ export async function processXmlFile(fileInfo: XmlFileInfo): Promise<IngestionRe
           formulaStats: stats,
         };
       }
-      
+
       // Some or all formulas were new
       const stats = result.formulaStats;
       if (stats && stats.duplicateFormulas > 0) {
@@ -340,7 +343,7 @@ export async function processXmlFile(fileInfo: XmlFileInfo): Promise<IngestionRe
           },
           { upsert: true }
         );
-        
+
         return {
           fileName,
           fileType: 'FORMULA',
@@ -355,7 +358,7 @@ export async function processXmlFile(fileInfo: XmlFileInfo): Promise<IngestionRe
       const result = await processCOAXml(content, fileName, fileSize, contentHash);
       businessKey = result.businessKey;
       recordId = result.recordId;
-      
+
       if (result.duplicate) {
         await ProcessingLog.findOneAndUpdate(
           { contentHash },
@@ -370,7 +373,7 @@ export async function processXmlFile(fileInfo: XmlFileInfo): Promise<IngestionRe
           },
           { upsert: true }
         );
-        
+
         return {
           fileName,
           fileType: 'COA',
@@ -383,7 +386,7 @@ export async function processXmlFile(fileInfo: XmlFileInfo): Promise<IngestionRe
       const result = await processRequisitionXml(content, fileName, fileSize, contentHash);
       businessKey = result.businessKey;
       recordId = result.recordId;
-      
+
       if (result.duplicate) {
         await ProcessingLog.findOneAndUpdate(
           { contentHash },
@@ -399,11 +402,11 @@ export async function processXmlFile(fileInfo: XmlFileInfo): Promise<IngestionRe
           },
           { upsert: true }
         );
-        
-        const duplicateMessage = result.itemStats 
+
+        const duplicateMessage = result.itemStats
           ? `All ${result.itemStats.totalItems} materials are duplicates`
           : 'Requisition already processed';
-        
+
         return {
           fileName,
           fileType: 'REQUISITION',
@@ -413,7 +416,7 @@ export async function processXmlFile(fileInfo: XmlFileInfo): Promise<IngestionRe
           itemStats: result.itemStats,
         };
       }
-      
+
       // Partial success - some items were new, some were duplicates
       if (result.itemStats && result.itemStats.duplicateItems > 0) {
         await ProcessingLog.findOneAndUpdate(
@@ -430,7 +433,7 @@ export async function processXmlFile(fileInfo: XmlFileInfo): Promise<IngestionRe
           },
           { upsert: true }
         );
-        
+
         return {
           fileName,
           fileType: 'REQUISITION',
@@ -441,8 +444,37 @@ export async function processXmlFile(fileInfo: XmlFileInfo): Promise<IngestionRe
           itemStats: result.itemStats,
         };
       }
+    } else if (fileType === 'INWARD_REGISTER') {
+      const result = await processInwardRegisterXml(content, fileName, fileSize, contentHash);
+      businessKey = result.businessKey;
+      recordId = result.recordId;
+
+      if (result.duplicate) {
+        // Log duplicate
+        await ProcessingLog.findOneAndUpdate(
+          { contentHash },
+          {
+            contentHash,
+            fileName,
+            fileType: 'INWARD_REGISTER',
+            status: 'DUPLICATE',
+            businessKey,
+            fileSize,
+            processedAt: new Date(),
+          },
+          { upsert: true }
+        );
+
+        return {
+          fileName,
+          fileType: 'INWARD_REGISTER',
+          status: 'DUPLICATE',
+          message: result.message || 'Inward Register file already processed',
+          businessKey,
+        };
+      }
     }
-    
+
     // Step 5: Log successful processing
     // Use findOneAndUpdate for all files to handle reprocessing and avoid duplicate key errors
     await ProcessingLog.findOneAndUpdate(
@@ -458,7 +490,7 @@ export async function processXmlFile(fileInfo: XmlFileInfo): Promise<IngestionRe
       },
       { upsert: true }
     );
-    
+
     return {
       fileName,
       fileType,
@@ -467,10 +499,10 @@ export async function processXmlFile(fileInfo: XmlFileInfo): Promise<IngestionRe
       businessKey,
       recordId,
     };
-    
+
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    
+
     // Try to log the error
     try {
       const contentHash = generateNormalizedHash(content);
@@ -490,7 +522,7 @@ export async function processXmlFile(fileInfo: XmlFileInfo): Promise<IngestionRe
     } catch (logError) {
       console.error('Failed to log error to ProcessingLog:', logError);
     }
-    
+
     return {
       fileName,
       fileType: 'UNKNOWN',
@@ -508,27 +540,27 @@ export async function processXmlFile(fileInfo: XmlFileInfo): Promise<IngestionRe
  * - Files are still tracked for reference, but items are deduplicated
  */
 async function processBatchXml(
-  content: string, 
-  fileName: string, 
+  content: string,
+  fileName: string,
   fileSize: number,
   contentHash: string
-): Promise<{ 
-  businessKey?: string; 
-  recordId?: string; 
+): Promise<{
+  businessKey?: string;
+  recordId?: string;
   duplicate: boolean;
   itemStats?: ItemLevelStats;
 }> {
   const parseResult = await parseBatchRegistryXml(content);
-  
+
   if (!parseResult.success || !parseResult.data) {
     throw new Error(parseResult.errors.join(', ') || 'Failed to parse Batch XML');
   }
-  
+
   const data = parseResult.data;
-  
+
   // Generate business key from file name and date range
   const businessKey = `BATCH-${fileName}`;
-  
+
   // Check for exact file duplicate (same content hash)
   const existingExactMatch = await Batch.findOne({ contentHash });
   if (existingExactMatch) {
@@ -543,9 +575,9 @@ async function processBatchXml(
       reason: 'Exact file already processed',
       existingFileName: existingExactMatch.fileName
     }));
-    
-    return { 
-      businessKey, 
+
+    return {
+      businessKey,
       duplicate: true,
       itemStats: {
         totalItems: data.batches.length,
@@ -556,13 +588,13 @@ async function processBatchXml(
       }
     };
   }
-  
+
   // ITEM-LEVEL DUPLICATE DETECTION
   // Check each batch item individually against ALL existing records
   const newBatches: typeof data.batches = [];
   const duplicateDetails: DuplicateItemDetail[] = [];
   const successfulDetails: SuccessfulItemDetail[] = [];  // Track successfully processed items
-  
+
   for (const batchItem of data.batches) {
     // Check if this specific batchNumber + itemCode combination exists anywhere
     const existingItem = await Batch.findOne({
@@ -573,7 +605,7 @@ async function processBatchXml(
         }
       }
     });
-    
+
     if (existingItem) {
       // This item already exists - add to duplicate details
       duplicateDetails.push({
@@ -599,7 +631,7 @@ async function processBatchXml(
       });
     }
   }
-  
+
   const itemStats: ItemLevelStats = {
     totalItems: data.batches.length,
     newItems: newBatches.length,
@@ -607,30 +639,30 @@ async function processBatchXml(
     duplicateDetails,
     successfulDetails
   };
-  
+
   // If ALL items are duplicates, don't create a new record
   if (newBatches.length === 0) {
-    return { 
-      businessKey, 
+    return {
+      businessKey,
       duplicate: true,
-      itemStats 
+      itemStats
     };
   }
-  
+
   // Recalculate counts for new items only
   const exportCount = newBatches.filter(b => b.type === 'Export').length;
   const importCount = newBatches.filter(b => b.type === 'Import').length;
-  
+
   // Re-assign serial numbers for the new items
   const reindexedBatches = newBatches.map((batch, index) => ({
     ...batch,
     srNo: index + 1
   }));
-  
+
   // Store only the new items in database
   // Skip storing raw XML for files larger than 14MB (MongoDB 16MB limit)
   const shouldStoreRawContent = content.length <= MAX_RAW_CONTENT_SIZE;
-  
+
   const batch = await Batch.create({
     fileName,
     fileSize,
@@ -649,9 +681,9 @@ async function processBatchXml(
     exportCount,
     importCount,
   });
-  
-  return { 
-    businessKey, 
+
+  return {
+    businessKey,
     recordId: batch._id.toString(),
     duplicate: false,
     itemStats
@@ -663,38 +695,38 @@ async function processBatchXml(
  * Implements FORMULA-LEVEL duplicate detection with detailed tracking
  */
 async function processFormulaXml(
-  content: string, 
-  fileName: string, 
+  content: string,
+  fileName: string,
   fileSize: number,
   contentHash: string
-): Promise<{ 
-  businessKey?: string; 
-  recordId?: string; 
+): Promise<{
+  businessKey?: string;
+  recordId?: string;
   duplicate: boolean;
   formulaStats?: FormulaLevelStats;
 }> {
   // Use multi-formula parser to extract ALL formulas from the file
   const parseResult = await parseMultipleFormulasXml(content);
-  
+
   if (!parseResult.success || parseResult.formulas.length === 0) {
     throw new Error(parseResult.errors.join(', ') || 'Failed to parse Formula XML - no formulas found');
   }
-  
+
   console.log(`Processing ${parseResult.formulas.length} formula(s) from ${fileName}`);
-  
+
   // Skip storing raw XML for files larger than 14MB (MongoDB 16MB limit)
   const shouldStoreRawContent = content.length <= MAX_RAW_CONTENT_SIZE;
-  
+
   // Track statistics with detailed information
   const storedIds: string[] = [];
   const businessKeys: string[] = [];
   const duplicateDetails: DuplicateFormulaDetail[] = [];
   const successfulDetails: SuccessfulFormulaDetail[] = [];
-  
+
   // Process each formula individually
   for (let i = 0; i < parseResult.formulas.length; i++) {
     const data = parseResult.formulas[i];
-    
+
     // Extract formula details
     const productCode = data.masterFormulaDetails.productCode;
     const productName = data.masterFormulaDetails.productName || 'N/A';
@@ -703,18 +735,18 @@ async function processFormulaXml(
     const manufacturer = data.masterFormulaDetails.manufacturer;
     const businessKey = `FORMULA-${productCode}-REV${revisionNo}`;
     const uniqueIdentifier = `${productCode}_${revisionNo}_${uuidv4().slice(0, 8)}`;
-    
+
     // Check for business-level duplicate
     // FIRST: Check by masterCardNo (MFC number) - this is the true unique identifier
     const masterCardNo = data.masterFormulaDetails.masterCardNo?.trim();
     let existing = null;
-    
+
     if (masterCardNo && masterCardNo !== 'N/A') {
       existing = await Formula.findOne({
         'masterFormulaDetails.masterCardNo': masterCardNo
       });
     }
-    
+
     // FALLBACK: If no masterCardNo match, check by productCode + revisionNo
     if (!existing) {
       existing = await Formula.findOne({
@@ -722,11 +754,11 @@ async function processFormulaXml(
         'masterFormulaDetails.revisionNo': revisionNo
       });
     }
-    
+
     if (existing) {
       // MERGE STRATEGY: Instead of skipping, merge new item codes into existing formula
       // This ensures we don't lose unique item codes that exist in different files
-      
+
       // Collect existing item codes from fillingDetails
       const existingItemCodes = new Set<string>();
       if (existing.fillingDetails && Array.isArray(existing.fillingDetails)) {
@@ -736,7 +768,7 @@ async function processFormulaXml(
           }
         });
       }
-      
+
       // Collect existing item codes from processes (fillingProducts)
       if (existing.processes && Array.isArray(existing.processes)) {
         existing.processes.forEach((p: any) => {
@@ -749,7 +781,7 @@ async function processFormulaXml(
           }
         });
       }
-      
+
       // Find NEW filling details that don't exist in the current formula
       const newFillingDetails: typeof data.fillingDetails = [];
       if (data.fillingDetails && Array.isArray(data.fillingDetails)) {
@@ -760,7 +792,7 @@ async function processFormulaXml(
           }
         }
       }
-      
+
       // Find NEW filling products from processes
       const newProcessesToMerge: typeof data.processes = [];
       if (data.processes && Array.isArray(data.processes)) {
@@ -769,14 +801,14 @@ async function processFormulaXml(
             const newFillingProducts = process.fillingProducts.filter((fp: any) => {
               return fp.productCode && !existingItemCodes.has(fp.productCode.trim());
             });
-            
+
             if (newFillingProducts.length > 0) {
               // Add these new filling products to the process
               newProcessesToMerge.push({
                 ...process,
                 fillingProducts: newFillingProducts
               });
-              
+
               // Track the new item codes
               newFillingProducts.forEach((fp: any) => {
                 if (fp.productCode) {
@@ -787,35 +819,35 @@ async function processFormulaXml(
           }
         }
       }
-      
+
       // If there are new items to add, update the existing formula
       if (newFillingDetails.length > 0 || newProcessesToMerge.length > 0) {
         const updatePayload: any = {};
-        
+
         // Add new filling details to existing ones
         if (newFillingDetails.length > 0) {
           updatePayload.$push = updatePayload.$push || {};
           updatePayload.$push.fillingDetails = { $each: newFillingDetails };
         }
-        
+
         // Merge new processes (add filling products to existing processes or add new processes)
         if (newProcessesToMerge.length > 0) {
           // For simplicity, we'll add the new filling products to existing processes
           // by matching process name, or add as new process if not found
           for (const newProcess of newProcessesToMerge) {
-            const existingProcess = existing.processes?.find((p: any) => 
+            const existingProcess = existing.processes?.find((p: any) =>
               p.processName === newProcess.processName || p.processNo === newProcess.processNo
             );
-            
+
             if (existingProcess) {
               // Add filling products to existing process
               await Formula.updateOne(
-                { 
+                {
                   _id: existing._id,
-                  'processes.processName': newProcess.processName 
+                  'processes.processName': newProcess.processName
                 },
-                { 
-                  $push: { 
+                {
+                  $push: {
                     'processes.$.fillingProducts': { $each: newProcess.fillingProducts || [] }
                   }
                 }
@@ -830,14 +862,14 @@ async function processFormulaXml(
             }
           }
         }
-        
+
         // Apply updates if any
         if (Object.keys(updatePayload).length > 0) {
           await Formula.updateOne({ _id: existing._id }, updatePayload);
         }
-        
+
         console.log(`Formula ${i + 1}/${parseResult.formulas.length}: MERGED ${newFillingDetails.length} new filling details, ${newProcessesToMerge.length} processes into existing ${masterCardNo || productCode}`);
-        
+
         // Track as partial success (merged)
         successfulDetails.push({
           productCode,
@@ -863,7 +895,7 @@ async function processFormulaXml(
       }
       continue;
     }
-    
+
     // Store this formula in database (new formula)
     try {
       const formula = await Formula.create({
@@ -888,10 +920,10 @@ async function processFormulaXml(
         processes: data.processes || [],  // Add process-based data (MIXING, ASEPTIC FILLING, etc.)
         packingMaterials: data.packingMaterials || [],  // Add packing materials (MATTYPE=PM)
       });
-      
+
       storedIds.push(formula._id.toString());
       businessKeys.push(businessKey);
-      
+
       // Track successful details
       successfulDetails.push({
         productCode,
@@ -900,13 +932,13 @@ async function processFormulaXml(
         genericName,
         manufacturer
       });
-      
+
       console.log(`Formula ${i + 1}/${parseResult.formulas.length}: Stored NEW - ${masterCardNo || productCode}`);
     } catch (saveError) {
       console.error(`Failed to store formula ${i + 1}:`, saveError);
     }
   }
-  
+
   // Build formula stats
   const formulaStats: FormulaLevelStats = {
     totalFormulas: parseResult.totalFound,
@@ -915,17 +947,17 @@ async function processFormulaXml(
     duplicateDetails,
     successfulDetails
   };
-  
+
   // If ALL formulas were duplicates
   if (successfulDetails.length === 0) {
-    return { 
+    return {
       businessKey: businessKeys[0] || `FORMULA-${fileName}`,
       duplicate: true,
       formulaStats
     };
   }
-  
-  return { 
+
+  return {
     businessKey: businessKeys.length > 1 ? `${businessKeys.length} formulas` : businessKeys[0],
     recordId: storedIds.length > 1 ? `${storedIds.length} records` : storedIds[0],
     duplicate: false,
@@ -939,11 +971,11 @@ async function processFormulaXml(
  */
 export async function runIngestion(): Promise<IngestionStatus> {
   await connectToDatabase();
-  
+
   // NOTE: We do NOT automatically clean up orphaned logs here.
   // ProcessingLog entries are the single source of truth for "has this file been processed".
   // When a user deletes a record from History, the DELETE handler cleans up the corresponding logs.
-  
+
   const status: IngestionStatus = {
     isProcessing: true,
     totalFiles: 0,
@@ -953,17 +985,17 @@ export async function runIngestion(): Promise<IngestionStatus> {
     errors: 0,
     results: [],
   };
-  
+
   // Scan for XML files
   const files = await scanFilesFolder();
   status.totalFiles = files.length;
-  
+
   // Process each file
   for (const file of files) {
     const result = await processXmlFile(file);
     status.results.push(result);
     status.processed++;
-    
+
     switch (result.status) {
       case 'SUCCESS':
         status.successful++;
@@ -976,7 +1008,7 @@ export async function runIngestion(): Promise<IngestionStatus> {
         break;
     }
   }
-  
+
   status.isProcessing = false;
   return status;
 }
@@ -998,13 +1030,13 @@ interface ProcessingLogRecord {
 }
 
 export async function getProcessingLogs(
-  page: number = 1, 
+  page: number = 1,
   limit: number = 20
 ): Promise<{ logs: ProcessingLogRecord[]; total: number }> {
   await connectToDatabase();
-  
+
   const skip = (page - 1) * limit;
-  
+
   const [logs, total] = await Promise.all([
     ProcessingLog.find()
       .sort({ processedAt: -1 })
@@ -1038,20 +1070,20 @@ async function processCOAXml(
   duplicate: boolean;
 }> {
   const parseResult = await parseCOAXml(content, fileName);
-  
+
   if (!parseResult.success || !parseResult.data) {
     throw new Error(parseResult.errors.join(', ') || 'Failed to parse COA XML');
   }
-  
+
   const record = parseResult.data;
   const businessKey = `${record.batchNumber}-${record.stage}`;
-  
+
   // Check for duplicate in database
-  const existing = await COA.findOne({ 
-    batchNumber: record.batchNumber, 
-    stage: record.stage 
+  const existing = await COA.findOne({
+    batchNumber: record.batchNumber,
+    stage: record.stage
   });
-  
+
   if (existing) {
     if (existing.contentHash === contentHash) {
       return { businessKey, duplicate: true };
@@ -1065,18 +1097,18 @@ async function processCOAXml(
       return { businessKey, recordId: existing._id.toString(), duplicate: false };
     }
   }
-  
+
   // Create new record
   const newRecord = await COA.create({
     ...record,
     uploadedAt: new Date(),
     contentHash,
   });
-  
-  return { 
-    businessKey, 
-    recordId: newRecord._id.toString(), 
-    duplicate: false 
+
+  return {
+    businessKey,
+    recordId: newRecord._id.toString(),
+    duplicate: false
   };
 }
 
@@ -1087,13 +1119,13 @@ async function processCOAXml(
  * - Only new (non-duplicate) items are stored
  */
 async function processRequisitionXml(
-  content: string, 
-  fileName: string, 
+  content: string,
+  fileName: string,
   fileSize: number,
   contentHash: string
-): Promise<{ 
-  businessKey?: string; 
-  recordId?: string; 
+): Promise<{
+  businessKey?: string;
+  recordId?: string;
   duplicate: boolean;
   itemStats?: ItemLevelStats;
 }> {
@@ -1103,16 +1135,16 @@ async function processRequisitionXml(
   console.log(`📄 File: ${fileName}`);
   console.log(`📊 Size: ${(fileSize / 1024).toFixed(2)} KB`);
   console.log(`🔑 Content Hash: ${contentHash.substring(0, 16)}...`);
-  
+
   const parseResult = await parseRequisitionXml(content);
-  
+
   if (!parseResult.success || !parseResult.data) {
     console.log('❌ PARSE FAILED:', parseResult.errors.join(', '));
     throw new Error(parseResult.errors.join(', ') || 'Failed to parse Requisition XML');
   }
-  
+
   const data = parseResult.data;
-  
+
   console.log('\n📋 PARSE RESULTS:');
   console.log(`   Location: ${data.locationCode}`);
   console.log(`   Make: ${data.make}`);
@@ -1121,23 +1153,23 @@ async function processRequisitionXml(
   console.log(`   Primary Packaging (PPM): ${data.primaryPackaging.length}`);
   console.log(`   Packing Materials (PM): ${data.packingMaterials.length}`);
   console.log(`   Total Materials: ${data.rawMaterials.length + data.primaryPackaging.length + data.packingMaterials.length}`);
-  
+
   if (parseResult.warnings.length > 0) {
     console.log('\n⚠️ WARNINGS:');
     parseResult.warnings.forEach(w => console.log(`   - ${w}`));
   }
-  
+
   // Generate business key from location and make
   const businessKey = `REQ-${data.locationCode || 'UNKNOWN'}-${data.make || 'UNKNOWN'}`;
   console.log(`\n🔑 Business Key: ${businessKey}`);
-  
+
   // Check for exact file duplicate (same content hash)
   console.log('\n🔍 CHECKING FOR EXACT FILE DUPLICATE...');
   const existingExactMatch = await Requisition.findOne({ contentHash });
   if (existingExactMatch) {
     console.log(`⚠️ EXACT DUPLICATE: File already processed as "${existingExactMatch.fileName}"`);
     const totalMaterials = data.rawMaterials.length + data.primaryPackaging.length + data.packingMaterials.length;
-    
+
     const duplicateDetails: DuplicateItemDetail[] = [
       ...data.rawMaterials,
       ...data.primaryPackaging,
@@ -1150,10 +1182,10 @@ async function processRequisitionXml(
       reason: 'Exact file already processed',
       existingFileName: existingExactMatch.fileName
     }));
-    
+
     console.log('========================================\n');
-    return { 
-      businessKey, 
+    return {
+      businessKey,
       duplicate: true,
       itemStats: {
         totalItems: totalMaterials,
@@ -1165,7 +1197,7 @@ async function processRequisitionXml(
     };
   }
   console.log('✅ No exact file duplicate found');
-  
+
   // ITEM-LEVEL DUPLICATE DETECTION - OPTIMIZED
   // Fetch all existing matReqDtlIds in ONE query instead of one per item
   console.log('\n🔍 ITEM-LEVEL DUPLICATE DETECTION (OPTIMIZED)...');
@@ -1175,14 +1207,14 @@ async function processRequisitionXml(
     ...data.packingMaterials,
   ];
   console.log(`   Total materials to check: ${allMaterials.length}`);
-  
+
   // Get all matReqDtlIds from this file
   const allMatReqDtlIds = allMaterials.map(m => m.matReqDtlId);
-  
+
   // Fetch existing IDs in ONE aggregation query
   console.log('   Fetching existing IDs from database...');
   const startTime = Date.now();
-  
+
   const existingRecords = await Requisition.aggregate([
     {
       $project: {
@@ -1200,24 +1232,24 @@ async function processRequisitionXml(
     { $match: { allIds: { $in: allMatReqDtlIds } } },
     { $group: { _id: '$allIds', fileName: { $first: '$fileName' } } }
   ]);
-  
+
   // Build a Set of existing IDs for O(1) lookup
   const existingIdMap = new Map<string, string>();
   for (const rec of existingRecords) {
     existingIdMap.set(rec._id, rec.fileName);
   }
-  
+
   console.log(`   Query completed in ${Date.now() - startTime}ms`);
   console.log(`   Found ${existingIdMap.size} existing duplicate IDs`);
-  
+
   const newMaterials: typeof allMaterials = [];
   const duplicateDetails: DuplicateItemDetail[] = [];
   const successfulDetails: SuccessfulItemDetail[] = [];
-  
+
   // Now check each material against the map (O(1) per item)
   for (const material of allMaterials) {
     const existingFileName = existingIdMap.get(material.matReqDtlId);
-    
+
     if (existingFileName) {
       duplicateDetails.push({
         batchNumber: material.matReqNo,
@@ -1237,7 +1269,7 @@ async function processRequisitionXml(
       });
     }
   }
-  
+
   const itemStats: ItemLevelStats = {
     totalItems: allMaterials.length,
     newItems: newMaterials.length,
@@ -1245,25 +1277,25 @@ async function processRequisitionXml(
     duplicateDetails,
     successfulDetails
   };
-  
+
   console.log('\n📊 DUPLICATE DETECTION RESULTS:');
   console.log(`   ✅ New Materials: ${newMaterials.length}`);
   console.log(`   ⚠️ Duplicate Materials: ${duplicateDetails.length}`);
-  
+
   // If ALL items are duplicates, don't create a new record
   if (newMaterials.length === 0) {
     console.log('\n❌ ALL ITEMS ARE DUPLICATES - No new record created');
     console.log('========================================\n');
-    return { 
-      businessKey, 
+    return {
+      businessKey,
       duplicate: true,
-      itemStats 
+      itemStats
     };
   }
-  
+
   // No longer categorizing materials into flat arrays here, they will be reconstructed from batches when queried
   // This avoids doubling the document size for large files (staying under BSON 16MB limit)
-  
+
   // Filter batches to only include those with new materials
   // AND perform Master Formula validation for comparison
   console.log('\n🔍 VALIDATING AGAINST MASTER FORMULA FOR COMPARISON...');
@@ -1274,24 +1306,24 @@ async function processRequisitionXml(
     if (mfcNo && mfcNo !== 'N/A') {
       formula = await Formula.findOne({ 'masterFormulaDetails.masterCardNo': mfcNo });
     }
-    
+
     // Process materials
     const updatedMaterials = await Promise.all(batch.materials.map(async (mat) => {
       // Only keep if it's a new material (not a duplicate)
       const isNew = newMaterials.some(nm => nm.matReqDtlId === mat.matReqDtlId);
       if (!isNew) return null;
-      
+
       // Validation logic
       if (formula) {
         // Try to find material in Formula by materialCode
         let formulaMatRequirement = null;
-        
+
         // 1. Check in regular materials (RM)
         const regularMat = formula.materials?.find((m: any) => m.materialCode === mat.materialCode);
         if (regularMat) {
           formulaMatRequirement = regularMat.requiredQuantityStandardBatch || regularMat.requiredQuantity;
         }
-        
+
         // 2. Check in packing materials (PM)
         if (!formulaMatRequirement) {
           const packingMat = formula.packingMaterials?.find((m: any) => m.materialCode === mat.materialCode);
@@ -1299,7 +1331,7 @@ async function processRequisitionXml(
             formulaMatRequirement = packingMat.reqAsPerStdBatchSize;
           }
         }
-        
+
         // 3. Check in filling products materials
         if (!formulaMatRequirement) {
           formula.processes?.forEach((p: any) => {
@@ -1310,18 +1342,18 @@ async function processRequisitionXml(
             });
           });
         }
-        
+
         if (formulaMatRequirement) {
           // Parse number from string like "37.5 GM" or "100"
           const formulaQty = parseFloat(String(formulaMatRequirement).replace(/[^\d.-]/g, ''));
           if (!isNaN(formulaQty)) {
             mat.masterFormulaQty = formulaQty;
-            
+
             // Validate: check if qtyToIssue matches formula requirement
             // We use a small tolerance for floating point numbers
             const diff = Math.abs(mat.quantityToIssue - formulaQty);
             const tolerance = 0.001;
-            
+
             if (diff <= tolerance) {
               mat.validationStatus = 'matched';
             } else {
@@ -1331,22 +1363,22 @@ async function processRequisitionXml(
           }
         }
       }
-      
+
       return mat;
     }));
-    
+
     // Filter out null materials (duplicates) and return updated batch
     const filteredMaterials = updatedMaterials.filter((m): m is RequisitionMaterial => m !== null);
-    
+
     return {
       ...batch,
       materials: filteredMaterials
     };
   }));
-  
+
   // Filter out batches that no longer have materials
   const finalBatches = batchesWithNewMaterials.filter(batch => batch.materials.length > 0);
-  
+
   // Calculate validation stats
   let totalValidated = 0;
   let totalMismatched = 0;
@@ -1356,10 +1388,10 @@ async function processRequisitionXml(
       if (m.validationStatus === 'mismatch') totalMismatched++;
     });
   });
-  
+
   // Skip storing raw XML for large files
   const shouldStoreRawContent = content.length <= MAX_RAW_CONTENT_SIZE;
-  
+
   // Store in database
   const requisition = await Requisition.create({
     uniqueIdentifier: `REQ-${uuidv4()}`,
@@ -1373,28 +1405,122 @@ async function processRequisitionXml(
       ...(duplicateDetails.length > 0 ? [`${duplicateDetails.length} duplicate items were skipped`] : []),
       ...(!shouldStoreRawContent ? [`Raw XML content not stored (file exceeds 14MB limit)`] : [])
     ],
-    
+
     batches: finalBatches,
-    
+
     totalBatches: finalBatches.length,
     totalMaterials: newMaterials.length,
     validatedCount: totalValidated,
     mismatchCount: totalMismatched,
-    
+
     locationCode: data.locationCode,
     make: data.make,
   });
-  
+
   console.log('\n✅ SUCCESSFULLY STORED IN DATABASE');
   console.log(`   Record ID: ${requisition._id.toString()}`);
   console.log(`   Batches Stored: ${finalBatches.length}`);
   console.log(`   Materials Stored: ${newMaterials.length}`);
   console.log('========================================\n');
-  
-  return { 
-    businessKey, 
+
+  return {
+    businessKey,
     recordId: requisition._id.toString(),
     duplicate: false,
     itemStats
+  };
+}
+
+/**
+ * Process Inward Register XML and store in database
+ */
+async function processInwardRegisterXml(
+  content: string,
+  fileName: string,
+  fileSize: number,
+  contentHash: string
+): Promise<{
+  businessKey?: string;
+  recordId?: string;
+  duplicate: boolean;
+  message?: string;
+}> {
+  const parseResult = await parseInwardRegisterXml(content, fileName);
+
+  if (!parseResult.success || !parseResult.data || parseResult.data.records.length === 0) {
+    throw new Error(parseResult.errors.join(', ') || 'Failed to parse Inward Register XML - no records found');
+  }
+
+  const records = parseResult.data.records;
+
+  // Business Key helps identify the file logical content (e.g. Month/Year)
+  // For Inward Register, we can use filename as a proxy if date range isn't clear in content
+  const businessKey = `INWARD-${fileName}`;
+
+  // Check for exact content duplicate
+  const existingExactMatch = await InwardRegister.findOne({ contentHash });
+
+  if (existingExactMatch) {
+    return {
+      businessKey,
+      duplicate: true,
+      message: 'Exact Inward Register file already processed'
+    };
+  }
+
+  // Record Level Deduplication
+  // Check if we have seen these inward numbers before
+  // We will insert NEW ones and skip existing ones, similar to Batch logic
+
+  let newCount = 0;
+  let duplicateCount = 0;
+
+  console.log(`[Ingestion] Found ${records.length} total records to process. Starting deduplication...`);
+
+  for (let i = 0; i < records.length; i++) {
+    const record = records[i];
+
+    // Log progress every 500 records
+    if ((i + 1) % 500 === 0) {
+      console.log(`[Ingestion] Processed ${i + 1}/${records.length} records... (${newCount} new, ${duplicateCount} skipped)`);
+    }
+
+    // Check duplication by Inward No + AR No + Vendor (to be safe)
+    const exists = await InwardRegister.findOne({
+      inwardNumber: record.inwardNumber,
+      arNumber: record.arNumber,
+      vendorName: record.vendorName
+    });
+
+    if (!exists) {
+      // Create new record
+      await InwardRegister.create({
+        ...record,
+        contentHash, // Tag with this file's hash
+      });
+      newCount++;
+    } else {
+      duplicateCount++;
+    }
+  }
+
+  console.log(`[Ingestion] Finished processing. Total New: ${newCount}, Total Skipped: ${duplicateCount}`);
+
+  if (newCount === 0 && duplicateCount > 0) {
+    return {
+      businessKey,
+      duplicate: true,
+      message: `All ${duplicateCount} records already exist`
+    };
+  }
+
+  // Determine parsing status based on if we had to skip any
+  const parsingStatus = duplicateCount > 0 ? 'partial' : 'success';
+  const parsingWarnings = duplicateCount > 0 ? [`${duplicateCount} duplicate records skipped`] : [];
+
+  return {
+    businessKey,
+    duplicate: false,
+    message: `Stored ${newCount} new records (${duplicateCount} duplicates skipped)`
   };
 }

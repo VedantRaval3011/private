@@ -13,7 +13,7 @@ import type { XmlFileType } from '@/types/ingestion';
 export function detectXmlType(xmlContent: string): XmlFileType {
   // Normalize content for reliable detection
   const content = xmlContent.toUpperCase();
-  
+
   // Check for Batch Creation XML (BATCHCRREGI format)
   // Look for characteristic tags
   const batchIndicators = [
@@ -26,11 +26,11 @@ export function detectXmlType(xmlContent: string): XmlFileType {
     '<CONVRAT>',      // Conversion ratio
     '<LIST_G_MATCODE>'
   ];
-  
-  const batchMatches = batchIndicators.filter(indicator => 
+
+  const batchMatches = batchIndicators.filter(indicator =>
     content.includes(indicator.toUpperCase())
   ).length;
-  
+
   // Check for Formula Master XML (FORMULAMAST format)
   const formulaIndicators = [
     'FORMULAMAST',
@@ -43,17 +43,17 @@ export function detectXmlType(xmlContent: string): XmlFileType {
     '<MATDETAIL>',
     '<SPECIFICATION>'
   ];
-  
-  const formulaMatches = formulaIndicators.filter(indicator => 
+
+  const formulaMatches = formulaIndicators.filter(indicator =>
     content.includes(indicator.toUpperCase())
   ).length;
-  
+
   // Determine type based on matches
   // Require at least 2 indicator matches for confidence
   if (batchMatches >= 2 && batchMatches > formulaMatches) {
     return 'BATCH';
   }
-  
+
   // Check for Requisition XML (MATREQ format) FIRST before Formula
   // MATREQ files have a unique root element and specific tags
   // They share some tags with Formula (like MCADNO) so we need to detect them first
@@ -66,27 +66,27 @@ export function detectXmlType(xmlContent: string): XmlFileType {
     '<MATREQRMK>',        // Requisition remark - unique to MATREQ
     '<MATTYPE1>',         // Material type field
   ];
-  
-  const requisitionMatches = requisitionIndicators.filter(indicator => 
+
+  const requisitionMatches = requisitionIndicators.filter(indicator =>
     content.includes(indicator.toUpperCase())
   ).length;
-  
+
   // Check for MATREQ root tag explicitly - this is definitive
   if (content.includes('<MATREQ>')) {
     return 'REQUISITION';
   }
-  
+
   // Fallback check with indicator count
   if (requisitionMatches >= 4 && requisitionMatches > batchMatches) {
     return 'REQUISITION';
   }
-  
+
   // Now check for Formula Master XML (FORMULAMAST format)
   if (formulaMatches >= 2 && formulaMatches > batchMatches) {
     return 'FORMULA';
   }
 
-  
+
   // Check for COA XML (FGANLCERT format)
   const coaIndicators = [
     'FGANLCERT',
@@ -98,24 +98,42 @@ export function detectXmlType(xmlContent: string): XmlFileType {
     '<ITMNAME>',
     '<LIST_G_SRNO1>'
   ];
-  
-  const coaMatches = coaIndicators.filter(indicator => 
+
+  const coaMatches = coaIndicators.filter(indicator =>
     content.includes(indicator.toUpperCase())
   ).length;
-  
+
   if (coaMatches >= 2 && coaMatches > batchMatches && coaMatches > formulaMatches) {
     return 'COA';
   }
-  
+
+  // Check for Inward Register XML (MATINW format)
+  const inwardIndicators = [
+    'LIST_G_MATINWDTLID',
+    'G_MATINWDTLID',
+    '<MATINWREGI>',
+    '<MATINWNO>',
+    '<G_MATID>',
+    '<MATINW>'
+  ];
+
+  const inwardMatches = inwardIndicators.filter(indicator =>
+    content.includes(indicator.toUpperCase())
+  ).length;
+
+  if (inwardMatches >= 1 || content.includes('LIST_G_MATINWDTLID')) {
+    return 'INWARD_REGISTER';
+  }
+
   // Check for report name in XML (secondary check)
   if (content.includes('BATCHCRREGI') || content.includes('BATCH_CREATION')) {
     return 'BATCH';
   }
-  
+
   if (content.includes('FORMULAMAST') || content.includes('FORMULA_MASTER')) {
     return 'FORMULA';
   }
-  
+
   return 'UNKNOWN';
 }
 
@@ -132,6 +150,8 @@ export function getFileTypeName(type: XmlFileType): string {
       return 'COA (Certificate of Analysis)';
     case 'REQUISITION':
       return 'Material Requisition';
+    case 'INWARD_REGISTER':
+      return 'Material Inward Register';
     default:
       return 'Unknown';
   }
