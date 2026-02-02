@@ -12,7 +12,7 @@ try {
 
     console.log('Searching for tags...');
 
-    const tags = ['G_MATINWDTLID', 'MATINW', 'INWNO', 'VENDORNAME', 'ARNO', 'AR_NO', 'LIST_G_MATINWDTLID'];
+    const tags = ['G_MATINWDTLID', 'MATINW', 'INWO', 'VENDORNAME', 'ARNO', 'AR_NO', 'LIST_G_MATINWDTLID'];
 
     tags.forEach(tag => {
         const index = content.indexOf(tag);

@@ -19,13 +19,26 @@ export interface ParseInwardResult {
 }
 
 /**
+ * Helper to decode HTML entities
+ */
+function decodeHtml(text: string): string {
+    if (!text) return text;
+    return text
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'");
+}
+
+/**
  * Helper to extract tag value
  */
 function extractTag(content: string, tagName: string): string {
     // Try exact match first
     const regex = new RegExp(`<${tagName}>([^<]*)<\/${tagName}>`, 'i');
     const match = content.match(regex);
-    if (match) return match[1].trim();
+    if (match) return decodeHtml(match[1].trim());
     return '';
 }
 
@@ -90,15 +103,21 @@ export async function parseInwardRegisterXml(xmlContent: string, fileName: strin
                 const cleanBlock = itemBlock.split('</G_MATINWDTLID>')[0];
 
                 // Extract Item Info
-                const arNumber = extractTag(cleanBlock, 'ARNO');
+                const arNumber = extractTag(cleanBlock, 'ARNO'); // Removed TSTNO fallback
                 const materialName = extractTag(cleanBlock, 'MATNAME');
-                const materialCode = extractTag(cleanBlock, 'MATCODE');
+                const materialCode = extractTag(cleanBlock, 'MATCODE') || extractTag(cleanBlock, 'MKMATCODE'); // Added fallback for code
 
-                // Batch tag might be RBATCH
-                const batchNumber = extractTag(cleanBlock, 'RBATCH') || extractTag(cleanBlock, 'BATCHNO');
+                // Batch tag might be RBATCH, BATCHNO, LOTNO or just BATCH
+                const batchNumber = extractTag(cleanBlock, 'RBATCH') ||
+                    extractTag(cleanBlock, 'BATCHNO') ||
+                    extractTag(cleanBlock, 'LOTNO') ||
+                    extractTag(cleanBlock, 'BATCH');
 
-                // Quantity - checking various possible tags
-                const qtyStr = extractTag(cleanBlock, 'CHLQTY') || extractTag(cleanBlock, 'INQTY') || '0';
+                // Quantity - Prioritize Actual Received Qty (ACTRECQTY/INQTY/BALQTY) over Challan Qty
+                const qtyStr = extractTag(cleanBlock, 'ACTRECQTY') ||
+                    extractTag(cleanBlock, 'INQTY') ||
+                    extractTag(cleanBlock, 'BALQTY') ||
+                    extractTag(cleanBlock, 'CHLQTY') || '0';
                 const receivedQuantity = parseFloat(qtyStr) || 0;
 
                 const unit = extractTag(cleanBlock, 'PUOM') || extractTag(cleanBlock, 'CUOM');
