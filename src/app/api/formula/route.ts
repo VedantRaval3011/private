@@ -13,6 +13,7 @@ import PMCOA from '@/models/PMCOA';
 import PPMCOA from '@/models/PPMCOA';
 import COA from '@/models/COA';
 import ProcessingLog from '@/models/ProcessingLog';
+import InwardRegister from '@/models/InwardRegister';
 import { parseFormulaXml, validateXmlContent, createFormulaRecord } from '@/lib/xmlParser';
 import { generateNormalizedHash } from '@/lib/contentHash';
 import type { UploadResponse, FormulasListResponse } from '@/types/formula';
@@ -328,6 +329,79 @@ export async function GET(request: NextRequest): Promise<NextResponse<FormulasLi
     // This is for the Finish COA capsule - checking if batches have Finish stage COA records
     const finishCoaBatchNumbers = await COA.distinct('batchNumber', { stage: 'FINISH' });
     const finishCoaBatchSet = new Set<string>(finishCoaBatchNumbers);
+
+    // ==========================================
+    // NEW: PM/PPM COA Match Logic (Inward Register Based)
+    // Checks if required materials (from Requisition) exist in Inward Register
+
+    // 1. Get PM requirements per batch
+    const pmRequirements = await Requisition.aggregate([
+      { $unwind: "$batches" },
+      { $unwind: "$batches.materials" },
+      { $match: { "batches.materials.materialType": "PM" } },
+      {
+        $group: {
+          _id: "$batches.batchNumber",
+          materials: { $addToSet: "$batches.materials.materialCode" }
+        }
+      }
+    ]);
+    const batchPmExpecations = new Map<string, Set<string>>();
+    pmRequirements.forEach((r: any) => {
+      // Filter out null/undefined codes
+      const validMaterials = r.materials.filter((c: any) => c && c !== 'N/A');
+      if (validMaterials.length > 0) {
+        batchPmExpecations.set(r._id, new Set(validMaterials));
+      }
+    });
+
+    // 2. Get PPM requirements per batch
+    const ppmRequirements = await Requisition.aggregate([
+      { $unwind: "$batches" },
+      { $unwind: "$batches.materials" },
+      { $match: { "batches.materials.materialType": "PPM" } },
+      {
+        $group: {
+          _id: "$batches.batchNumber",
+          materials: { $addToSet: "$batches.materials.materialCode" }
+        }
+      }
+    ]);
+    const batchPpmExpecations = new Map<string, Set<string>>();
+    ppmRequirements.forEach((r: any) => {
+      const validMaterials = r.materials.filter((c: any) => c && c !== 'N/A');
+      if (validMaterials.length > 0) {
+        batchPpmExpecations.set(r._id, new Set(validMaterials));
+      }
+    });
+
+    // 3. Get Inward Register Material Codes (Received Data)
+    const inwardMaterialCodes = await InwardRegister.distinct('materialCode');
+    const inwardMaterialCodeSet = new Set<string>(inwardMaterialCodes);
+
+    // 4. Calculate Inward-Qualified Batches
+    const pmCoaInwardQualifiedBatchNumbers = new Set<string>();
+    batchPmExpecations.forEach((materials, batchNumber) => {
+      let allFound = true;
+      materials.forEach(code => {
+        if (!inwardMaterialCodeSet.has(code)) allFound = false;
+      });
+      if (allFound) {
+        pmCoaInwardQualifiedBatchNumbers.add(batchNumber);
+      }
+    });
+
+    const ppmCoaInwardQualifiedBatchNumbers = new Set<string>();
+    batchPpmExpecations.forEach((materials, batchNumber) => {
+      let allFound = true;
+      materials.forEach(code => {
+        if (!inwardMaterialCodeSet.has(code)) allFound = false;
+      });
+      if (allFound) {
+        ppmCoaInwardQualifiedBatchNumbers.add(batchNumber);
+      }
+    });
+    // ==========================================
 
 
     // Step 3: Collect Formula Product Codes (Main + Filling) and calculate total batch counts
@@ -721,15 +795,18 @@ export async function GET(request: NextRequest): Promise<NextResponse<FormulasLi
       pmBatchNumbersList: [...pmBatchNumbers],
       // Material Qualification batch numbers list (like rmBatchNumbersList but for material qualification)
       materialQualifiedBatchNumbersList: [...materialQualifiedBatchNumbers],
+      // NEW: PM/PPM COA Inward-Qualified Batch Lists
+      pmCoaInwardQualifiedBatchNumbersList: [...pmCoaInwardQualifiedBatchNumbers],
+      ppmCoaInwardQualifiedBatchNumbersList: [...ppmCoaInwardQualifiedBatchNumbers],
       // Global Material Qualification counts
       globalMaterialQualified,
       globalMaterialUnqualified,
-      // Global PM COA counts (sum across all formulas)
-      globalPmCoaQualified: enhancedFormulas.reduce((sum, f) => sum + (f.pmCoaQualified || 0), 0),
-      globalPmCoaUnqualified: enhancedFormulas.reduce((sum, f) => sum + (f.pmCoaUnqualified || 0), 0),
-      // Global PPM COA counts (sum across all formulas)
-      globalPpmCoaQualified: enhancedFormulas.reduce((sum, f) => sum + (f.ppmCoaQualified || 0), 0),
-      globalPpmCoaUnqualified: enhancedFormulas.reduce((sum, f) => sum + (f.ppmCoaUnqualified || 0), 0),
+      // Global PM COA counts (using unique batches with PM requirements)
+      globalPmCoaQualified: pmCoaInwardQualifiedBatchNumbers.size,
+      globalPmCoaUnqualified: batchPmExpecations.size - pmCoaInwardQualifiedBatchNumbers.size,
+      // Global PPM COA counts (using unique batches with PPM requirements)
+      globalPpmCoaQualified: ppmCoaInwardQualifiedBatchNumbers.size,
+      globalPpmCoaUnqualified: batchPpmExpecations.size - ppmCoaInwardQualifiedBatchNumbers.size,
       // Global Bulk COA counts (based on batches WITH material requirements - same subset as RM COA)
       // batchMaterialRequirements.size should be 1286, not allGlobalUniqueBatchNumbers.size (1436+)
       globalBulkCoaQualified: [...batchMaterialRequirements.keys()].filter(bn => bulkCoaBatchSet.has(bn)).length,

@@ -1433,6 +1433,7 @@ async function processRequisitionXml(
 
 /**
  * Process Inward Register XML and store in database
+ * ENHANCED: Added detailed logging and retry logic for failed records
  */
 async function processInwardRegisterXml(
   content: string,
@@ -1445,9 +1446,16 @@ async function processInwardRegisterXml(
   duplicate: boolean;
   message?: string;
 }> {
+  console.log('\n========================================');
+  console.log('📦 INWARD REGISTER INGESTION STARTED');
+  console.log('========================================');
+  console.log(`📄 File: ${fileName}`);
+  console.log(`📊 Size: ${(fileSize / 1024).toFixed(2)} KB`);
+
   const parseResult = await parseInwardRegisterXml(content, fileName);
 
   if (!parseResult.success || !parseResult.data || parseResult.data.records.length === 0) {
+    console.log('❌ PARSE FAILED:', parseResult.errors.join(', '));
     throw new Error(parseResult.errors.join(', ') || 'Failed to parse Inward Register XML - no records found');
   }
 
@@ -1456,55 +1464,157 @@ async function processInwardRegisterXml(
   // Business Key helps identify the file logical content (e.g. Month/Year)
   // For Inward Register, we can use filename as a proxy if date range isn't clear in content
   const businessKey = `INWARD-${fileName}`;
+  console.log(`🔑 Business Key: ${businessKey}`);
+  console.log(`📋 Total Parsed Records: ${records.length}`);
 
   // Check for exact content duplicate
+  console.log('\n🔍 CHECKING FOR EXACT FILE DUPLICATE...');
   const existingExactMatch = await InwardRegister.findOne({ contentHash });
 
   if (existingExactMatch) {
+    console.log('⚠️ EXACT DUPLICATE: File already processed');
+    console.log('========================================\n');
     return {
       businessKey,
       duplicate: true,
       message: 'Exact Inward Register file already processed'
     };
   }
+  console.log('✅ No exact file duplicate found');
 
-  // Record Level Deduplication
-  // Check if we have seen these inward numbers before
-  // We will insert NEW ones and skip existing ones, similar to Batch logic
+  // Record Level Deduplication with Retry Logic
+  console.log('\n📥 STARTING RECORD INSERTION WITH DEDUPLICATION...');
 
   let newCount = 0;
   let duplicateCount = 0;
+  let errorCount = 0;
+  const failedRecords: { index: number; record: typeof records[0]; error: string }[] = [];
+  const successfulRecords: string[] = []; // Track inward numbers
 
-  console.log(`[Ingestion] Found ${records.length} total records to process. Starting deduplication...`);
+  const startTime = Date.now();
 
   for (let i = 0; i < records.length; i++) {
     const record = records[i];
 
     // Log progress every 500 records
     if ((i + 1) % 500 === 0) {
-      console.log(`[Ingestion] Processed ${i + 1}/${records.length} records... (${newCount} new, ${duplicateCount} skipped)`);
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+      console.log(`   📊 Progress: ${i + 1}/${records.length} (${newCount} new, ${duplicateCount} dup, ${errorCount} err) [${elapsed}s]`);
     }
 
-    // Check duplication by Inward No + AR No + Vendor (to be safe)
-    const exists = await InwardRegister.findOne({
-      inwardNumber: record.inwardNumber,
-      arNumber: record.arNumber,
-      vendorName: record.vendorName
-    });
-
-    if (!exists) {
-      // Create new record
-      await InwardRegister.create({
-        ...record,
-        contentHash, // Tag with this file's hash
+    try {
+      // Check duplication by Inward No + AR No + Vendor + Material Name + Batch No
+      const exists = await InwardRegister.findOne({
+        inwardNumber: record.inwardNumber,
+        arNumber: record.arNumber,
+        vendorName: record.vendorName,
+        materialName: record.materialName,
+        batchNumber: record.batchNumber
       });
-      newCount++;
-    } else {
-      duplicateCount++;
+
+      if (!exists) {
+        // Create new record
+        await InwardRegister.create({
+          ...record,
+          contentHash, // Tag with this file's hash
+        });
+        newCount++;
+        successfulRecords.push(record.inwardNumber);
+      } else {
+        duplicateCount++;
+      }
+    } catch (error) {
+      errorCount++;
+      const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+      failedRecords.push({ index: i, record, error: errorMsg });
+
+      if (errorCount <= 10) {
+        console.error(`   ❌ Error inserting record ${i}: ${record.inwardNumber} - ${errorMsg}`);
+      }
     }
   }
 
-  console.log(`[Ingestion] Finished processing. Total New: ${newCount}, Total Skipped: ${duplicateCount}`);
+  console.log(`\n✅ Initial Pass Complete: ${newCount} new, ${duplicateCount} duplicates, ${errorCount} errors`);
+
+  // RETRY LOGIC: Retry failed records up to 3 times
+  if (failedRecords.length > 0) {
+    console.log(`\n🔄 RETRYING ${failedRecords.length} FAILED RECORDS...`);
+
+    let retryAttempt = 1;
+    let recordsToRetry = [...failedRecords];
+
+    while (recordsToRetry.length > 0 && retryAttempt <= 3) {
+      console.log(`   Retry Attempt ${retryAttempt}/3: ${recordsToRetry.length} records`);
+
+      const stillFailed: typeof failedRecords = [];
+
+      for (const { index, record } of recordsToRetry) {
+        try {
+          // Check if already exists (may have been inserted in previous attempts)
+          const exists = await InwardRegister.findOne({
+            inwardNumber: record.inwardNumber,
+            arNumber: record.arNumber,
+            vendorName: record.vendorName,
+            materialName: record.materialName,
+            batchNumber: record.batchNumber
+          });
+
+          if (!exists) {
+            await InwardRegister.create({
+              ...record,
+              contentHash,
+            });
+            newCount++;
+            errorCount--;
+            successfulRecords.push(record.inwardNumber);
+            console.log(`   ✅ Retry success: ${record.inwardNumber}`);
+          } else {
+            // Now it's a duplicate (may have been inserted in another retry)
+            duplicateCount++;
+            errorCount--;
+          }
+        } catch (error) {
+          const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+          stillFailed.push({ index, record, error: errorMsg });
+        }
+      }
+
+      recordsToRetry = stillFailed;
+      retryAttempt++;
+    }
+
+    if (recordsToRetry.length > 0) {
+      console.log(`   ⚠️ ${recordsToRetry.length} records failed after all retries`);
+    } else {
+      console.log(`   ✅ All failed records recovered!`);
+    }
+  }
+
+  // Final Summary
+  const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+  console.log('\n========================================');
+  console.log('📊 INGESTION SUMMARY');
+  console.log('========================================');
+  console.log(`   📁 File: ${fileName}`);
+  console.log(`   📋 Total Records Parsed: ${records.length}`);
+  console.log(`   ✅ New Records Inserted: ${newCount}`);
+  console.log(`   ⏭️ Duplicates Skipped: ${duplicateCount}`);
+  console.log(`   ❌ Failed Records: ${failedRecords.length - (failedRecords.length - errorCount)}`);
+  console.log(`   ⏱️ Time Elapsed: ${elapsed}s`);
+
+  // Log sample of successfully fetched records
+  if (successfulRecords.length > 0) {
+    const uniqueInwards = [...new Set(successfulRecords)];
+    console.log(`\n   📝 Sample of new Inward Numbers (first 10):`);
+    uniqueInwards.slice(0, 10).forEach((inw, idx) => {
+      console.log(`      ${idx + 1}. ${inw}`);
+    });
+    if (uniqueInwards.length > 10) {
+      console.log(`      ... and ${uniqueInwards.length - 10} more unique inward numbers`);
+    }
+  }
+
+  console.log('========================================\n');
 
   if (newCount === 0 && duplicateCount > 0) {
     return {
@@ -1514,13 +1624,10 @@ async function processInwardRegisterXml(
     };
   }
 
-  // Determine parsing status based on if we had to skip any
-  const parsingStatus = duplicateCount > 0 ? 'partial' : 'success';
-  const parsingWarnings = duplicateCount > 0 ? [`${duplicateCount} duplicate records skipped`] : [];
-
   return {
     businessKey,
     duplicate: false,
-    message: `Stored ${newCount} new records (${duplicateCount} duplicates skipped)`
+    message: `Stored ${newCount} new records (${duplicateCount} duplicates skipped, ${errorCount} errors)`
   };
 }
+

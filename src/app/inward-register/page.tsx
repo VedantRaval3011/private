@@ -20,6 +20,11 @@ export default function InwardRegisterPage() {
     const [sortBy, setSortBy] = useState('uploadedAt');
     const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
 
+    // Reset operation state
+    const [isResetting, setIsResetting] = useState(false);
+    const [resetMessage, setResetMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+
     // Header definition for easier rendering
     const headers = [
         { key: 'inwardNumber', label: 'Inward No' },
@@ -80,6 +85,53 @@ export default function InwardRegisterPage() {
         fetchData();
     }, [fetchData]);
 
+    // Handle reset and re-import
+    const handleReset = async () => {
+        if (!confirm('Are you sure you want to reset the Inward Register database?\n\nThis will delete all current records and allow you to re-import the XML files with the fixed parser.')) {
+            return;
+        }
+
+        setIsResetting(true);
+        setResetMessage(null);
+
+        try {
+            // Step 1: Delete all inward records
+            const deleteResponse = await fetch('/api/inward/reset', { method: 'DELETE' });
+            const deleteData = await deleteResponse.json();
+
+            if (!deleteData.success) {
+                throw new Error(deleteData.error || 'Failed to reset database');
+            }
+
+            // Step 2: Trigger re-import via ingestion API
+            setResetMessage({ type: 'success', text: `Deleted ${deleteData.deletedCount} records. Re-importing...` });
+
+            const ingestResponse = await fetch('/api/ingestion', { method: 'POST' });
+            const ingestData = await ingestResponse.json();
+
+            if (!ingestData.success) {
+                throw new Error(ingestData.error || 'Failed to re-import data');
+            }
+
+            // Refresh data
+            await fetchData();
+
+            setResetMessage({
+                type: 'success',
+                text: `Successfully re-imported data! Check browser console for detailed logs.`
+            });
+
+        } catch (error) {
+            console.error('Reset error:', error);
+            setResetMessage({
+                type: 'error',
+                text: error instanceof Error ? error.message : 'Unknown error occurred'
+            });
+        } finally {
+            setIsResetting(false);
+        }
+    };
+
     const totalPages = Math.ceil(total / limit);
 
     return (
@@ -124,26 +176,87 @@ export default function InwardRegisterPage() {
                             View and manage inward material records
                         </p>
                     </div>
-                    <Link
-                        href="/"
-                        style={{
-                            padding: '0.625rem 1.25rem',
-                            background: 'rgba(255, 255, 255, 0.1)',
-                            color: 'white',
-                            borderRadius: 'var(--radius-md)',
-                            backdropFilter: 'blur(10px)',
-                            textDecoration: 'none',
-                            fontWeight: '500',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '0.5rem',
-                            border: '1px solid rgba(255,255,255,0.2)'
-                        }}
-                    >
-                        Back to Dashboard
-                    </Link>
+                    <div style={{ display: 'flex', gap: '0.75rem' }}>
+                        <button
+                            onClick={handleReset}
+                            disabled={isResetting}
+                            style={{
+                                padding: '0.625rem 1.25rem',
+                                background: isResetting ? 'rgba(255, 255, 255, 0.05)' : 'rgba(220, 38, 38, 0.8)',
+                                color: 'white',
+                                borderRadius: 'var(--radius-md)',
+                                backdropFilter: 'blur(10px)',
+                                textDecoration: 'none',
+                                fontWeight: '500',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '0.5rem',
+                                border: '1px solid rgba(255,255,255,0.2)',
+                                cursor: isResetting ? 'not-allowed' : 'pointer',
+                                opacity: isResetting ? 0.7 : 1,
+                            }}
+                        >
+                            {isResetting ? '🔄 Processing...' : '🗑️ Reset & Re-import'}
+                        </button>
+                        <Link
+                            href="/"
+                            style={{
+                                padding: '0.625rem 1.25rem',
+                                background: 'rgba(255, 255, 255, 0.1)',
+                                color: 'white',
+                                borderRadius: 'var(--radius-md)',
+                                backdropFilter: 'blur(10px)',
+                                textDecoration: 'none',
+                                fontWeight: '500',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '0.5rem',
+                                border: '1px solid rgba(255,255,255,0.2)'
+                            }}
+                        >
+                            Back to Dashboard
+                        </Link>
+                    </div>
                 </div>
             </header>
+
+            {/* Reset Status Message */}
+            {resetMessage && (
+                <div style={{
+                    maxWidth: '1400px',
+                    margin: '-1rem auto 1rem',
+                    padding: '0 2rem',
+                }}>
+                    <div style={{
+                        padding: '1rem 1.5rem',
+                        borderRadius: 'var(--radius-md)',
+                        background: resetMessage.type === 'success' ? 'var(--success-50)' : 'var(--error-50)',
+                        border: `1px solid ${resetMessage.type === 'success' ? 'var(--success-200)' : 'var(--error-200)'}`,
+                        color: resetMessage.type === 'success' ? 'var(--success-700)' : 'var(--error-700)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.75rem',
+                    }}>
+                        <span style={{ fontSize: '1.25rem' }}>
+                            {resetMessage.type === 'success' ? '✅' : '❌'}
+                        </span>
+                        {resetMessage.text}
+                        <button
+                            onClick={() => setResetMessage(null)}
+                            style={{
+                                marginLeft: 'auto',
+                                background: 'transparent',
+                                border: 'none',
+                                cursor: 'pointer',
+                                fontSize: '1.2rem',
+                                opacity: 0.7,
+                            }}
+                        >
+                            ×
+                        </button>
+                    </div>
+                </div>
+            )}
 
             {/* Content */}
             <main style={{
@@ -252,7 +365,9 @@ export default function InwardRegisterPage() {
                                             <td style={{ padding: '0.75rem 1rem', color: item.arNumber ? 'var(--foreground)' : 'var(--muted-foreground)' }}>
                                                 {item.arNumber || 'N/A'}
                                             </td>
-                                            <td style={{ padding: '0.75rem 1rem', textAlign: 'right' }}>{item.receivedQuantity}</td>
+                                            <td style={{ padding: '0.75rem 1rem', textAlign: 'right' }}>
+                                                {item.receivedQuantity} <span style={{ color: 'var(--muted-foreground)', fontSize: '0.85em' }}>{item.unit}</span>
+                                            </td>
                                             <td style={{ padding: '0.75rem 1rem', fontSize: '0.8rem', color: 'var(--muted-foreground)' }}>
                                                 {item.sourceFile.replace('.XML', '')}
                                             </td>
