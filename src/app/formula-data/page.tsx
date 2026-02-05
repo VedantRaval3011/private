@@ -1565,7 +1565,103 @@ export default function FormulaDataPage() {
                 setPerFormulaUniqueArCounts(perMfcCounts);
             }
 
+            // --- Helper for Batch Normalization & System Batches (Orphan Filtering) ---
+            const normalizeBatch = (b: string | null | undefined) => (b || '').trim().toUpperCase();
+            const systemBatchesNormalized = new Set<string>();
+            allBatches.forEach((batch: any) => {
+                if (batch.batchNumber) {
+                    const n = normalizeBatch(batch.batchNumber);
+                    if (n) systemBatchesNormalized.add(n);
+                }
+            });
+
             // --- Process PM Data ---
+            // Build productCodeToCategory map to match Modal logic (uses itemCode-based section mapping)
+            const getFormulaProductCodes = (f: any): string[] => {
+                const codes: string[] = [];
+                const mainCode = f.masterFormulaDetails?.productCode;
+                if (mainCode && mainCode !== 'N/A') codes.push(mainCode);
+                if (f.fillingDetails && Array.isArray(f.fillingDetails)) {
+                    f.fillingDetails.forEach((fd: any) => {
+                        if (fd.productCode && fd.productCode !== 'N/A' && !codes.includes(fd.productCode)) {
+                            codes.push(fd.productCode);
+                        }
+                    });
+                }
+                if (f.processes && Array.isArray(f.processes)) {
+                    f.processes.forEach((p: any) => {
+                        if (p.fillingProducts && Array.isArray(p.fillingProducts)) {
+                            p.fillingProducts.forEach((fp: any) => {
+                                if (fp.productCode && !codes.includes(fp.productCode)) {
+                                    codes.push(fp.productCode);
+                                }
+                            });
+                        }
+                    });
+                }
+                return codes;
+            };
+
+            // Separate formulas into categories (same as modal - uses f.totalBatchCount)
+            const mainFormulasLocal = formulas.filter((f: any) => {
+                const totalBatchCount = f.totalBatchCount || 0;
+                const productName = (f.masterFormulaDetails?.productName || '').toUpperCase();
+                const isPlacebo = productName.includes('PLACEBO') || productName.includes('MEDIA FILL') || productName.includes('MEDIAFILL');
+                return totalBatchCount >= 3 && !isPlacebo;
+            });
+            const lowBatchFormulasLocal = formulas.filter((f: any) => {
+                const totalBatchCount = f.totalBatchCount || 0;
+                const productName = (f.masterFormulaDetails?.productName || '').toUpperCase();
+                const isPlacebo = productName.includes('PLACEBO') || productName.includes('MEDIA FILL') || productName.includes('MEDIAFILL');
+                return totalBatchCount >= 1 && totalBatchCount <= 2 && !isPlacebo;
+            });
+            const noBatchFormulasLocal = formulas.filter((f: any) => {
+                const totalBatchCount = f.totalBatchCount || 0;
+                const productName = (f.masterFormulaDetails?.productName || '').toUpperCase();
+                const isPlacebo = productName.includes('PLACEBO') || productName.includes('MEDIA FILL') || productName.includes('MEDIAFILL');
+                return totalBatchCount === 0 && !isPlacebo;
+            });
+            const placeboFormulasLocal = formulas.filter((f: any) => {
+                const productName = (f.masterFormulaDetails?.productName || '').toUpperCase();
+                return productName.includes('PLACEBO') || productName.includes('MEDIA FILL') || productName.includes('MEDIAFILL');
+            });
+
+            // Build productCodeToCategory (main first - same priority as modal)
+            const productCodeToCategory = new Map<string, 'main' | 'lowBatch' | 'noBatch' | 'placebo'>();
+            mainFormulasLocal.forEach((f: any) => {
+                getFormulaProductCodes(f).forEach(code => {
+                    if (!productCodeToCategory.has(code)) productCodeToCategory.set(code, 'main');
+                });
+            });
+            lowBatchFormulasLocal.forEach((f: any) => {
+                getFormulaProductCodes(f).forEach(code => {
+                    if (!productCodeToCategory.has(code)) productCodeToCategory.set(code, 'lowBatch');
+                });
+            });
+            noBatchFormulasLocal.forEach((f: any) => {
+                getFormulaProductCodes(f).forEach(code => {
+                    if (!productCodeToCategory.has(code)) productCodeToCategory.set(code, 'noBatch');
+                });
+            });
+            placeboFormulasLocal.forEach((f: any) => {
+                getFormulaProductCodes(f).forEach(code => {
+                    if (!productCodeToCategory.has(code)) productCodeToCategory.set(code, 'placebo');
+                });
+            });
+
+            // Build batch to section mapping (same as modal)
+            const batchToSection = new Map<string, 'main' | 'lowBatch' | 'noBatch' | 'placebo'>();
+            allBatches.forEach((batch: any) => {
+                if (!batch.batchNumber) return;
+                const batchNoNorm = normalizeBatch(batch.batchNumber);
+                const itemCode = batch.itemCode;
+                if (!itemCode) return;
+                const category = productCodeToCategory.get(itemCode);
+                if (category) {
+                    batchToSection.set(batchNoNorm, category);
+                }
+            });
+
             if (pmRequisitionData.success && pmRequisitionData.materials) {
                 const sectionPmArSets = {
                     main: { found: new Set<string>(), missing: new Set<string>() },
@@ -1576,22 +1672,37 @@ export default function FormulaDataPage() {
 
                 const perMfcPmArSets = new Map<string, { found: Set<string>; missing: Set<string> }>();
 
+                // Build normalized set of qualified batches (same as modal logic)
+                const qualifiedBatchesNormalized = new Set<string>();
+                pmCoaInwardQualifiedBatchNumbers.forEach(bn => {
+                    const normalized = normalizeBatch(bn);
+                    if (normalized && systemBatchesNormalized.has(normalized)) {
+                        qualifiedBatchesNormalized.add(normalized);
+                    }
+                });
+
                 pmRequisitionData.materials.forEach((m: any) => {
                     if (!m.arNo || m.arNo.trim() === '') return;
 
                     const arNo = m.arNo.trim();
                     const mfcNo = (m.mfcNo || m.formulaMfc || '').trim().toUpperCase();
+                    const batchNo = m.batchNumber;
+                    const batchNoNorm = normalizeBatch(batchNo);
 
-                    // Note: No isPmArNumber filter needed since we're fetching from type=PM endpoint
+                    // Filter out orphan batches (not in system) to match Modal logic
+                    if (batchNo && !systemBatchesNormalized.has(batchNoNorm)) return;
 
-                    const isInCoa = pmCoaArNumbers.has(arNo);
-                    const statusKey = isInCoa ? 'found' : 'missing';
+                    // Use batch-level qualification (same as modal) instead of AR-level COA check
+                    const isQualifiedBatch = qualifiedBatchesNormalized.has(batchNoNorm);
+                    const statusKey = isQualifiedBatch ? 'found' : 'missing';
 
-                    const category = mfcToCategory.get(mfcNo);
+                    // Use batch-based section mapping (same as modal) instead of mfcNo
+                    const category = batchToSection.get(batchNoNorm);
                     if (category) {
                         sectionPmArSets[category][statusKey].add(arNo);
                     }
 
+                    // Per-MFC counts still use mfcNo for individual MFC card display
                     if (mfcNo) {
                         if (!perMfcPmArSets.has(mfcNo)) {
                             perMfcPmArSets.set(mfcNo, { found: new Set(), missing: new Set() });
@@ -1625,22 +1736,37 @@ export default function FormulaDataPage() {
 
                 const perMfcPpmArSets = new Map<string, { found: Set<string>; missing: Set<string> }>();
 
+                // Build normalized set of qualified batches for PPM (same as modal logic)
+                const ppmQualifiedBatchesNormalized = new Set<string>();
+                ppmCoaInwardQualifiedBatchNumbers.forEach(bn => {
+                    const normalized = normalizeBatch(bn);
+                    if (normalized && systemBatchesNormalized.has(normalized)) {
+                        ppmQualifiedBatchesNormalized.add(normalized);
+                    }
+                });
+
                 ppmRequisitionData.materials.forEach((m: any) => {
                     if (!m.arNo || m.arNo.trim() === '') return;
 
                     const arNo = m.arNo.trim();
                     const mfcNo = (m.mfcNo || m.formulaMfc || '').trim().toUpperCase();
+                    const batchNo = m.batchNumber;
+                    const batchNoNorm = normalizeBatch(batchNo);
 
-                    // Note: No isPpmArNumber filter needed since we're fetching from type=PPM endpoint
+                    // Filter out orphan batches (not in system) to match Modal logic
+                    if (batchNo && !systemBatchesNormalized.has(batchNoNorm)) return;
 
-                    const isInCoa = ppmCoaArNumbers.has(arNo);
-                    const statusKey = isInCoa ? 'found' : 'missing';
+                    // Use batch-level qualification (same as modal) instead of AR-level COA check
+                    const isQualifiedBatch = ppmQualifiedBatchesNormalized.has(batchNoNorm);
+                    const statusKey = isQualifiedBatch ? 'found' : 'missing';
 
-                    const category = mfcToCategory.get(mfcNo);
+                    // Use batch-based section mapping (same as modal) instead of mfcNo
+                    const category = batchToSection.get(batchNoNorm);
                     if (category) {
                         sectionPpmArSets[category][statusKey].add(arNo);
                     }
 
+                    // Per-MFC counts still use mfcNo for individual MFC card display
                     if (mfcNo) {
                         if (!perMfcPpmArSets.has(mfcNo)) {
                             perMfcPpmArSets.set(mfcNo, { found: new Set(), missing: new Set() });
@@ -1666,7 +1792,7 @@ export default function FormulaDataPage() {
         } catch (error) {
             console.error('Error calculating unique AR counts:', error);
         }
-    }, [formulas]);
+    }, [formulas, allBatches, pmCoaInwardQualifiedBatchNumbers, ppmCoaInwardQualifiedBatchNumbers]);
 
     // Recalculate unique AR counts when formulas change
     useEffect(() => {
