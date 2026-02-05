@@ -332,9 +332,10 @@ export async function GET(request: NextRequest): Promise<NextResponse<FormulasLi
 
     // ==========================================
     // NEW: PM/PPM COA Match Logic (Inward Register Based)
-    // Checks if required materials (from Requisition) exist in Inward Register
+    // Checks if required materials' AR numbers (from Requisition) exist in Inward Register
+    // FIXED: Now checks AR numbers instead of material codes
 
-    // 1. Get PM requirements per batch
+    // 1. Get PM requirements per batch (AR numbers, not material codes)
     const pmRequirements = await Requisition.aggregate([
       { $unwind: "$batches" },
       { $unwind: "$batches.materials" },
@@ -342,20 +343,20 @@ export async function GET(request: NextRequest): Promise<NextResponse<FormulasLi
       {
         $group: {
           _id: "$batches.batchNumber",
-          materials: { $addToSet: "$batches.materials.materialCode" }
+          arNumbers: { $addToSet: "$batches.materials.arNo" }  // Changed from materialCode to arNo
         }
       }
     ]);
     const batchPmExpecations = new Map<string, Set<string>>();
     pmRequirements.forEach((r: any) => {
-      // Filter out null/undefined codes
-      const validMaterials = r.materials.filter((c: any) => c && c !== 'N/A');
-      if (validMaterials.length > 0) {
-        batchPmExpecations.set(r._id, new Set(validMaterials));
+      // Filter out null/undefined/N/A AR numbers
+      const validArNumbers = r.arNumbers.filter((ar: any) => ar && ar !== 'N/A' && ar.trim() !== '');
+      if (validArNumbers.length > 0) {
+        batchPmExpecations.set(r._id, new Set(validArNumbers));
       }
     });
 
-    // 2. Get PPM requirements per batch
+    // 2. Get PPM requirements per batch (AR numbers, not material codes)
     const ppmRequirements = await Requisition.aggregate([
       { $unwind: "$batches" },
       { $unwind: "$batches.materials" },
@@ -363,28 +364,31 @@ export async function GET(request: NextRequest): Promise<NextResponse<FormulasLi
       {
         $group: {
           _id: "$batches.batchNumber",
-          materials: { $addToSet: "$batches.materials.materialCode" }
+          arNumbers: { $addToSet: "$batches.materials.arNo" }  // Changed from materialCode to arNo
         }
       }
     ]);
     const batchPpmExpecations = new Map<string, Set<string>>();
     ppmRequirements.forEach((r: any) => {
-      const validMaterials = r.materials.filter((c: any) => c && c !== 'N/A');
-      if (validMaterials.length > 0) {
-        batchPpmExpecations.set(r._id, new Set(validMaterials));
+      // Filter out null/undefined/N/A AR numbers
+      const validArNumbers = r.arNumbers.filter((ar: any) => ar && ar !== 'N/A' && ar.trim() !== '');
+      if (validArNumbers.length > 0) {
+        batchPpmExpecations.set(r._id, new Set(validArNumbers));
       }
     });
 
-    // 3. Get Inward Register Material Codes (Received Data)
-    const inwardMaterialCodes = await InwardRegister.distinct('materialCode');
-    const inwardMaterialCodeSet = new Set<string>(inwardMaterialCodes);
+    // 3. Get Inward Register AR Numbers (Received Data)
+    // FIXED: Changed from materialCode to arNumber
+    const inwardArNumbers = await InwardRegister.distinct('arNumber');
+    const inwardArNumberSet = new Set<string>(inwardArNumbers.filter(ar => ar && ar.trim() !== ''));
 
     // 4. Calculate Inward-Qualified Batches
+    // FIXED: Now checks AR numbers instead of material codes
     const pmCoaInwardQualifiedBatchNumbers = new Set<string>();
-    batchPmExpecations.forEach((materials, batchNumber) => {
+    batchPmExpecations.forEach((arNumbers, batchNumber) => {
       let allFound = true;
-      materials.forEach(code => {
-        if (!inwardMaterialCodeSet.has(code)) allFound = false;
+      arNumbers.forEach(arNo => {
+        if (!inwardArNumberSet.has(arNo)) allFound = false;
       });
       if (allFound) {
         pmCoaInwardQualifiedBatchNumbers.add(batchNumber);
@@ -392,10 +396,10 @@ export async function GET(request: NextRequest): Promise<NextResponse<FormulasLi
     });
 
     const ppmCoaInwardQualifiedBatchNumbers = new Set<string>();
-    batchPpmExpecations.forEach((materials, batchNumber) => {
+    batchPpmExpecations.forEach((arNumbers, batchNumber) => {
       let allFound = true;
-      materials.forEach(code => {
-        if (!inwardMaterialCodeSet.has(code)) allFound = false;
+      arNumbers.forEach(arNo => {
+        if (!inwardArNumberSet.has(arNo)) allFound = false;
       });
       if (allFound) {
         ppmCoaInwardQualifiedBatchNumbers.add(batchNumber);

@@ -2455,6 +2455,31 @@ export default function FormulaDataPage() {
         const sectionMfcNumbers = getSectionMfcNumbers();
 
         try {
+            // CRITICAL FIX: Fetch Inward Register AR numbers to properly identify what's actually missing
+            const inwardResponse = await fetch('/api/inward/ar-numbers');
+            const inwardData = await inwardResponse.json();
+
+            // Build set of AR numbers that exist in Inward Register
+            // CRITICAL: Handle version suffixes (.1, .2, etc.)
+            // Inward Register may have "IWAAJPM2400231.1" while Requisition has "IWAAJPM2400231"
+            const inwardArNumbersSet = new Set<string>();
+            if (inwardData.success && inwardData.arNumbers) {
+                inwardData.arNumbers.forEach((arNumber: string) => {
+                    if (arNumber && arNumber.trim() !== '') {
+                        const trimmedAr = arNumber.trim();
+                        // Add the full AR number
+                        inwardArNumbersSet.add(trimmedAr);
+
+                        // Also add the base AR number (without version suffix)
+                        // e.g., "IWAAJPM2400231.1" → "IWAAJPM2400231"
+                        const baseAr = trimmedAr.split('.')[0];
+                        if (baseAr && baseAr !== trimmedAr) {
+                            inwardArNumbersSet.add(baseAr);
+                        }
+                    }
+                });
+            }
+
             // New Logic: Fetch Requisition data and filter by Inward Qualified Batches
             // This ensures meaningful batch-level display for both Qualified and Unqualified states
             const requisitionResponse = await fetch('/api/requisition/materials?type=PM&pageSize=100000');
@@ -2462,7 +2487,7 @@ export default function FormulaDataPage() {
 
             if (requisitionData.success && requisitionData.materials) {
                 const filteredMaterials: any[] = [];
-                
+
                 // Normalize batch numbers for consistent comparison
                 // This handles whitespace and case differences between data sources
                 const normalizeBatch = (b: string | null | undefined) => (b || '').trim().toUpperCase();
@@ -2476,7 +2501,7 @@ export default function FormulaDataPage() {
                         if (n) systemBatchesNormalized.add(n);
                     }
                 });
-                
+
                 // Create normalized lookup Set from backend qualified batches
                 const qualifiedBatchesNormalized = new Set<string>();
                 pmCoaInwardQualifiedBatchNumbers.forEach(bn => {
@@ -2573,13 +2598,13 @@ export default function FormulaDataPage() {
                 allBatches.forEach((batch: any) => {
                     if (!batch.batchNumber) return;
                     const batchNoNorm = normalizeBatch(batch.batchNumber);
-                    
+
                     const itemCode = batch.itemCode;
                     if (!itemCode) return;
-                    
+
                     const category = productCodeToCategory.get(itemCode);
                     if (!category) return;
-                    
+
                     // Add to the specific section and to 'all'
                     sectionBatchNumbers.get(category)?.add(batchNoNorm);
                     sectionBatchNumbers.get('all')?.add(batchNoNorm);
@@ -2621,9 +2646,12 @@ export default function FormulaDataPage() {
                         }
                     } else {
                         // type === 'unqualified'
-                        // Only include materials from Unqualified Batches
-                        // (These are the materials that MIGHT be missing)
-                        if (!isQualifiedBatch && batchNo) {
+                        // FIXED: Only show materials whose AR numbers are actually MISSING from Inward Register
+                        // Don't show materials that exist in Inward Register
+                        const arNo = (m.arNo || '').trim();
+                        const isArMissingFromInward = arNo && arNo !== 'N/A' && !inwardArNumbersSet.has(arNo);
+
+                        if (!isQualifiedBatch && batchNo && isArMissingFromInward) {
                             filteredMaterials.push({
                                 arNo: m.arNo || 'N/A',
                                 materialCode: m.materialCode || 'N/A',
@@ -2634,8 +2662,8 @@ export default function FormulaDataPage() {
                                 formulaMfc: mfcNo || 'N/A',
                                 quantityToIssue: m.quantityToIssue || m.quantityRequired || 0,
                                 expiryDate: m.expiryDate || 'N/A',
-                                status: 'Missing / Incomplete Inward',
-                                sourceFile: 'Pending'
+                                status: 'Missing in Inward Register',
+                                sourceFile: 'Not Received'
                             });
                         }
                     }
@@ -2648,27 +2676,27 @@ export default function FormulaDataPage() {
                     const normBatch = (b: string | null | undefined) => (b || '').trim().toUpperCase();
 
                     filteredMaterials.forEach(row => {
-                       if (row.batchNumber) {
-                           addedBatchNumbers.add(normBatch(row.batchNumber));
-                       }
+                        if (row.batchNumber) {
+                            addedBatchNumbers.add(normBatch(row.batchNumber));
+                        }
                     });
 
                     // 2. Iterate the MASTER LIST of qualified batches from backend
                     pmCoaInwardQualifiedBatchNumbers.forEach(qualifiedBatchNo => {
                         const batchNoNorm = normBatch(qualifiedBatchNo);
-                        
+
                         // If this qualified batch was NOT found in the material scan above, it means:
                         // A) It has 0 PM requirements (Vacuously Qualified)
                         // B) It has requirements but for some reason they weren't in the requisition list (unlikely but possible)
                         // In either case, it MUST be shown to match the count.
-                        
+
                         // Ensure we only add System Batches
                         if (batchNoNorm && systemBatchesNormalized.has(batchNoNorm) && !addedBatchNumbers.has(batchNoNorm)) {
-                            
+
                             // Check if this batch belongs to the section using pre-computed sectionBatchNumbers
                             const sectionBatches = sectionBatchNumbers.get(section);
                             if (!sectionBatches || !sectionBatches.has(batchNoNorm)) return;
-                            
+
                             // Get MFC for display purposes
                             let batchMfc = 'Unknown';
                             const batchRecord = allBatches.find(b => normBatch(b.batchNumber) === batchNoNorm);
@@ -2706,15 +2734,15 @@ export default function FormulaDataPage() {
                     // because the capsule logic counts them: if (isQualified || !hasRequirements)
                     allBatches.forEach((batch: any) => {
                         const batchNoNorm = normBatch(batch.batchNumber);
-                        
+
                         // Skip if no batch number, already added, or if batch HAS PM requirements
                         if (!batchNoNorm || addedBatchNumbers.has(batchNoNorm)) return;
                         if (pmBatchNumbers.has(batch.batchNumber)) return;
-                        
+
                         // Check section membership using pre-computed sectionBatchNumbers
                         const sectionBatches = sectionBatchNumbers.get(section);
                         if (!sectionBatches || !sectionBatches.has(batchNoNorm)) return;
-                        
+
                         // Get MFC for display purposes
                         const itemCode = batch.itemCode;
                         let batchMfc = 'Unknown';
@@ -2729,7 +2757,7 @@ export default function FormulaDataPage() {
                                 batchMfc = (formula.masterFormulaDetails?.masterCardNo || '').trim().toUpperCase() || 'Unknown';
                             }
                         }
-                        
+
                         filteredMaterials.push({
                             arNo: 'N/A',
                             materialCode: 'N/A',
@@ -2859,6 +2887,31 @@ export default function FormulaDataPage() {
         const sectionMfcNumbers = getSectionMfcNumbers();
 
         try {
+            // CRITICAL FIX: Fetch Inward Register AR numbers to properly identify what's actually missing
+            const inwardResponse = await fetch('/api/inward/ar-numbers');
+            const inwardData = await inwardResponse.json();
+
+            // Build set of AR numbers that exist in Inward Register
+            // CRITICAL: Handle version suffixes (.1, .2, etc.)
+            // Inward Register may have "IWAAJPM2400231.1" while Requisition has "IWAAJPM2400231"
+            const inwardArNumbersSet = new Set<string>();
+            if (inwardData.success && inwardData.arNumbers) {
+                inwardData.arNumbers.forEach((arNumber: string) => {
+                    if (arNumber && arNumber.trim() !== '') {
+                        const trimmedAr = arNumber.trim();
+                        // Add the full AR number
+                        inwardArNumbersSet.add(trimmedAr);
+
+                        // Also add the base AR number (without version suffix)
+                        // e.g., "IWAAJPM2400231.1" → "IWAAJPM2400231"
+                        const baseAr = trimmedAr.split('.')[0];
+                        if (baseAr && baseAr !== trimmedAr) {
+                            inwardArNumbersSet.add(baseAr);
+                        }
+                    }
+                });
+            }
+
             // New Logic: Fetch Requisition data and filter by Inward Qualified Batches (PPM)
             const requisitionResponse = await fetch('/api/requisition/materials?type=PPM&pageSize=100000');
             const requisitionData = await requisitionResponse.json();
@@ -2895,8 +2948,13 @@ export default function FormulaDataPage() {
                             });
                         }
                     } else {
-                        // type === 'unqualified', show materials for Unqualified batches
-                        if (!isQualifiedBatch && batchNo) {
+                        // type === 'unqualified'
+                        // FIXED: Only show materials whose AR numbers are actually MISSING from Inward Register
+                        // Don't show materials that exist in Inward Register
+                        const arNo = (m.arNo || '').trim();
+                        const isArMissingFromInward = arNo && arNo !== 'N/A' && !inwardArNumbersSet.has(arNo);
+
+                        if (!isQualifiedBatch && batchNo && isArMissingFromInward) {
                             filteredMaterials.push({
                                 arNo: m.arNo || 'N/A',
                                 materialCode: m.materialCode || 'N/A',
@@ -2907,8 +2965,8 @@ export default function FormulaDataPage() {
                                 formulaMfc: mfcNo || 'N/A',
                                 quantityToIssue: m.quantityToIssue || m.quantityRequired || 0,
                                 expiryDate: m.expiryDate || 'N/A',
-                                status: 'Missing / Incomplete Inward',
-                                sourceFile: 'Pending'
+                                status: 'Missing in Inward Register',
+                                sourceFile: 'Not Received'
                             });
                         }
                     }
@@ -12842,7 +12900,7 @@ export default function FormulaDataPage() {
                                                     </tr>
                                                 </thead>
                                                 <tbody>
-                                                    {sortedPpmData.slice(0, 500).map((item, idx) => (
+                                                    {sortedPpmData.map((item, idx) => (
                                                         <tr key={idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
                                                             {columns.map(col => (
                                                                 <td
@@ -12861,11 +12919,7 @@ export default function FormulaDataPage() {
                                                     ))}
                                                 </tbody>
                                             </table>
-                                            {sortedPpmData.length > 500 && (
-                                                <div style={{ textAlign: 'center', padding: '12px', color: '#64748b', fontSize: '0.85rem', borderTop: '1px solid #e2e8f0' }}>
-                                                    Showing first 500 of {sortedPpmData.length.toLocaleString()} materials
-                                                </div>
-                                            )}
+
                                         </div>
                                     );
                                 })()}
@@ -13104,7 +13158,7 @@ export default function FormulaDataPage() {
                                                     </tr>
                                                 </thead>
                                                 <tbody>
-                                                    {sortedPmData.slice(0, 500).map((item, idx) => (
+                                                    {sortedPmData.map((item, idx) => (
                                                         <tr key={idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
                                                             {columns.map(col => (
                                                                 <td
@@ -13123,11 +13177,7 @@ export default function FormulaDataPage() {
                                                     ))}
                                                 </tbody>
                                             </table>
-                                            {sortedPmData.length > 500 && (
-                                                <div style={{ textAlign: 'center', padding: '12px', color: '#64748b', fontSize: '0.85rem', borderTop: '1px solid #e2e8f0' }}>
-                                                    Showing first 500 of {sortedPmData.length.toLocaleString()} materials
-                                                </div>
-                                            )}
+
                                         </div>
                                     );
                                 })()}

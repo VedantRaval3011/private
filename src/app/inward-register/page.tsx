@@ -49,7 +49,7 @@ export default function InwardRegisterPage() {
     // Debounce search
     useEffect(() => {
         const timer = setTimeout(() => {
-            setDebouncedSearch(search);
+            setDebouncedSearch(search.trim()); // Trim whitespace
             setPage(1);
         }, 500);
         return () => clearTimeout(timer);
