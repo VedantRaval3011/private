@@ -1028,6 +1028,32 @@ export default function FormulaDataPage() {
         placebo: { found: 0, missing: 0 },
     });
 
+    // ENHANCED: Track unique batch counts per section (for capsule display)
+    // This counts batches that have at least one found/missing AR
+    const [sectionPmUniqueBatchCounts, setSectionPmUniqueBatchCounts] = useState<{
+        main: { found: number; missing: number };
+        lowBatch: { found: number; missing: number };
+        noBatch: { found: number; missing: number };
+        placebo: { found: number; missing: number };
+    }>({
+        main: { found: 0, missing: 0 },
+        lowBatch: { found: 0, missing: 0 },
+        noBatch: { found: 0, missing: 0 },
+        placebo: { found: 0, missing: 0 },
+    });
+
+    const [sectionPpmUniqueBatchCounts, setSectionPpmUniqueBatchCounts] = useState<{
+        main: { found: number; missing: number };
+        lowBatch: { found: number; missing: number };
+        noBatch: { found: number; missing: number };
+        placebo: { found: number; missing: number };
+    }>({
+        main: { found: 0, missing: 0 },
+        lowBatch: { found: 0, missing: 0 },
+        noBatch: { found: 0, missing: 0 },
+        placebo: { found: 0, missing: 0 },
+    });
+
     // Inward Qualified Batches (PM/PPM)
     const [pmCoaInwardQualifiedBatchNumbers, setPmCoaInwardQualifiedBatchNumbers] = useState<Set<string>>(new Set());
     const [ppmCoaInwardQualifiedBatchNumbers, setPpmCoaInwardQualifiedBatchNumbers] = useState<Set<string>>(new Set());
@@ -1473,6 +1499,41 @@ export default function FormulaDataPage() {
             const ppmRequisitionResponse = await fetch('/api/requisition/materials?type=PPM&pageSize=100000');
             const ppmRequisitionData = await ppmRequisitionResponse.json();
 
+            // --- ENHANCED: Fetch Inward AR Numbers and Inward Numbers for AR-level matching ---
+            const inwardArResponse = await fetch('/api/inward/ar-numbers');
+            const inwardArData = await inwardArResponse.json();
+            const inwardNumbersResponse = await fetch('/api/inward/inward-numbers');
+            const inwardNumbersData = await inwardNumbersResponse.json();
+
+            // Build case-insensitive set of all AR numbers/Inward numbers in Inward Register
+            const inwardArNumbersSet = new Set<string>();
+            if (inwardArData.success && inwardArData.arNumbers) {
+                inwardArData.arNumbers.forEach((arNumber: string) => {
+                    if (arNumber && arNumber.trim() !== '') {
+                        const trimmedAr = arNumber.trim().toUpperCase();
+                        inwardArNumbersSet.add(trimmedAr);
+                        // Also add base without version suffix
+                        const baseAr = trimmedAr.split('.')[0];
+                        if (baseAr && baseAr !== trimmedAr) {
+                            inwardArNumbersSet.add(baseAr);
+                        }
+                    }
+                });
+            }
+            if (inwardNumbersData.success && inwardNumbersData.inwardNumbers) {
+                inwardNumbersData.inwardNumbers.forEach((inwardNo: string) => {
+                    if (inwardNo && inwardNo.trim() !== '') {
+                        const trimmedInward = inwardNo.trim().toUpperCase();
+                        inwardArNumbersSet.add(trimmedInward);
+                        const baseInward = trimmedInward.split('.')[0];
+                        if (baseInward && baseInward !== trimmedInward) {
+                            inwardArNumbersSet.add(baseInward);
+                        }
+                    }
+                });
+            }
+
+
             // --- Common Helpers & Maps ---
 
             const isRmArNumber = (arNo: string): boolean => {
@@ -1672,6 +1733,14 @@ export default function FormulaDataPage() {
 
                 const perMfcPmArSets = new Map<string, { found: Set<string>; missing: Set<string> }>();
 
+                // ENHANCED: Track which batches have found/missing ARs (for capsule batch counts)
+                const sectionPmBatchSets = {
+                    main: { found: new Set<string>(), missing: new Set<string>() },
+                    lowBatch: { found: new Set<string>(), missing: new Set<string>() },
+                    noBatch: { found: new Set<string>(), missing: new Set<string>() },
+                    placebo: { found: new Set<string>(), missing: new Set<string>() },
+                };
+
                 // Build normalized set of qualified batches (same as modal logic)
                 const qualifiedBatchesNormalized = new Set<string>();
                 pmCoaInwardQualifiedBatchNumbers.forEach(bn => {
@@ -1685,6 +1754,7 @@ export default function FormulaDataPage() {
                     if (!m.arNo || m.arNo.trim() === '') return;
 
                     const arNo = m.arNo.trim();
+                    const arNoUpper = arNo.toUpperCase();
                     const mfcNo = (m.mfcNo || m.formulaMfc || '').trim().toUpperCase();
                     const batchNo = m.batchNumber;
                     const batchNoNorm = normalizeBatch(batchNo);
@@ -1692,14 +1762,19 @@ export default function FormulaDataPage() {
                     // Filter out orphan batches (not in system) to match Modal logic
                     if (batchNo && !systemBatchesNormalized.has(batchNoNorm)) return;
 
-                    // Use batch-level qualification (same as modal) instead of AR-level COA check
-                    const isQualifiedBatch = qualifiedBatchesNormalized.has(batchNoNorm);
-                    const statusKey = isQualifiedBatch ? 'found' : 'missing';
+                    // ENHANCED: Use Inward AR Numbers for AR-level matching (same as modal)
+                    // Found = AR exists in Inward Register (either as AR Number or Inward Number)
+                    const isArInInward = inwardArNumbersSet.has(arNoUpper);
+                    const statusKey = isArInInward ? 'found' : 'missing';
 
                     // Use batch-based section mapping (same as modal) instead of mfcNo
                     const category = batchToSection.get(batchNoNorm);
                     if (category) {
                         sectionPmArSets[category][statusKey].add(arNo);
+                        // ENHANCED: Track batch for this category/status
+                        if (batchNo) {
+                            sectionPmBatchSets[category][statusKey].add(batchNo);
+                        }
                     }
 
                     // Per-MFC counts still use mfcNo for individual MFC card display
@@ -1723,6 +1798,42 @@ export default function FormulaDataPage() {
                     noBatch: { found: sectionPmArSets.noBatch.found.size, missing: sectionPmArSets.noBatch.missing.size },
                     placebo: { found: sectionPmArSets.placebo.found.size, missing: sectionPmArSets.placebo.missing.size },
                 });
+
+                // ENHANCED: Set unique batch counts per section
+                // A batch is "missing" if it has ANY missing AR
+                // Batches with no requisition data OR all ARs found = "found"
+                // This ensures total = found + missing = unique batches (all batches in section)
+                const computePmSectionBatchCounts = (
+                    batchSets: { found: Set<string>; missing: Set<string> },
+                    category: 'main' | 'lowBatch' | 'noBatch' | 'placebo'
+                ) => {
+                    // Count all batches in this section from allBatches
+                    const allBatchesInSection = new Set<string>();
+                    allBatches.forEach((batch: any) => {
+                        if (!batch.batchNumber) return;
+                        const itemCode = batch.itemCode;
+                        if (!itemCode) return;
+                        const batchCategory = productCodeToCategory.get(itemCode);
+                        if (batchCategory === category) {
+                            allBatchesInSection.add(batch.batchNumber);
+                        }
+                    });
+
+                    // Batches with at least one missing AR
+                    const missingBatches = batchSets.missing;
+                    
+                    // Found = all batches in section MINUS those with missing ARs
+                    const foundCount = allBatchesInSection.size - missingBatches.size;
+                    
+                    return { found: Math.max(0, foundCount), missing: missingBatches.size };
+                };
+
+                setSectionPmUniqueBatchCounts({
+                    main: computePmSectionBatchCounts(sectionPmBatchSets.main, 'main'),
+                    lowBatch: computePmSectionBatchCounts(sectionPmBatchSets.lowBatch, 'lowBatch'),
+                    noBatch: computePmSectionBatchCounts(sectionPmBatchSets.noBatch, 'noBatch'),
+                    placebo: computePmSectionBatchCounts(sectionPmBatchSets.placebo, 'placebo'),
+                });
             }
 
             // --- Process PPM Data ---
@@ -1735,6 +1846,14 @@ export default function FormulaDataPage() {
                 };
 
                 const perMfcPpmArSets = new Map<string, { found: Set<string>; missing: Set<string> }>();
+
+                // ENHANCED: Track which batches have found/missing ARs (for capsule batch counts)
+                const sectionPpmBatchSets = {
+                    main: { found: new Set<string>(), missing: new Set<string>() },
+                    lowBatch: { found: new Set<string>(), missing: new Set<string>() },
+                    noBatch: { found: new Set<string>(), missing: new Set<string>() },
+                    placebo: { found: new Set<string>(), missing: new Set<string>() },
+                };
 
                 // Build normalized set of qualified batches for PPM (same as modal logic)
                 const ppmQualifiedBatchesNormalized = new Set<string>();
@@ -1749,6 +1868,7 @@ export default function FormulaDataPage() {
                     if (!m.arNo || m.arNo.trim() === '') return;
 
                     const arNo = m.arNo.trim();
+                    const arNoUpper = arNo.toUpperCase();
                     const mfcNo = (m.mfcNo || m.formulaMfc || '').trim().toUpperCase();
                     const batchNo = m.batchNumber;
                     const batchNoNorm = normalizeBatch(batchNo);
@@ -1756,14 +1876,19 @@ export default function FormulaDataPage() {
                     // Filter out orphan batches (not in system) to match Modal logic
                     if (batchNo && !systemBatchesNormalized.has(batchNoNorm)) return;
 
-                    // Use batch-level qualification (same as modal) instead of AR-level COA check
-                    const isQualifiedBatch = ppmQualifiedBatchesNormalized.has(batchNoNorm);
-                    const statusKey = isQualifiedBatch ? 'found' : 'missing';
+                    // ENHANCED: Use Inward AR Numbers for AR-level matching (same as modal)
+                    // Found = AR exists in Inward Register (either as AR Number or Inward Number)
+                    const isArInInward = inwardArNumbersSet.has(arNoUpper);
+                    const statusKey = isArInInward ? 'found' : 'missing';
 
                     // Use batch-based section mapping (same as modal) instead of mfcNo
                     const category = batchToSection.get(batchNoNorm);
                     if (category) {
                         sectionPpmArSets[category][statusKey].add(arNo);
+                        // ENHANCED: Track batch for this category/status
+                        if (batchNo) {
+                            sectionPpmBatchSets[category][statusKey].add(batchNo);
+                        }
                     }
 
                     // Per-MFC counts still use mfcNo for individual MFC card display
@@ -1786,6 +1911,42 @@ export default function FormulaDataPage() {
                     lowBatch: { found: sectionPpmArSets.lowBatch.found.size, missing: sectionPpmArSets.lowBatch.missing.size },
                     noBatch: { found: sectionPpmArSets.noBatch.found.size, missing: sectionPpmArSets.noBatch.missing.size },
                     placebo: { found: sectionPpmArSets.placebo.found.size, missing: sectionPpmArSets.placebo.missing.size },
+                });
+
+                // ENHANCED: Set unique batch counts per section
+                // A batch is "missing" if it has ANY missing AR
+                // Batches with no requisition data OR all ARs found = "found"
+                // This ensures total = found + missing = unique batches (all batches in section)
+                const computePpmSectionBatchCounts = (
+                    batchSets: { found: Set<string>; missing: Set<string> },
+                    category: 'main' | 'lowBatch' | 'noBatch' | 'placebo'
+                ) => {
+                    // Count all batches in this section from allBatches
+                    const allBatchesInSection = new Set<string>();
+                    allBatches.forEach((batch: any) => {
+                        if (!batch.batchNumber) return;
+                        const itemCode = batch.itemCode;
+                        if (!itemCode) return;
+                        const batchCategory = productCodeToCategory.get(itemCode);
+                        if (batchCategory === category) {
+                            allBatchesInSection.add(batch.batchNumber);
+                        }
+                    });
+
+                    // Batches with at least one missing AR
+                    const missingBatches = batchSets.missing;
+                    
+                    // Found = all batches in section MINUS those with missing ARs
+                    const foundCount = allBatchesInSection.size - missingBatches.size;
+                    
+                    return { found: Math.max(0, foundCount), missing: missingBatches.size };
+                };
+
+                setSectionPpmUniqueBatchCounts({
+                    main: computePpmSectionBatchCounts(sectionPpmBatchSets.main, 'main'),
+                    lowBatch: computePpmSectionBatchCounts(sectionPpmBatchSets.lowBatch, 'lowBatch'),
+                    noBatch: computePpmSectionBatchCounts(sectionPpmBatchSets.noBatch, 'noBatch'),
+                    placebo: computePpmSectionBatchCounts(sectionPpmBatchSets.placebo, 'placebo'),
                 });
             }
 
@@ -2460,14 +2621,14 @@ export default function FormulaDataPage() {
             const inwardData = await inwardResponse.json();
 
             // Build set of AR numbers that exist in Inward Register
-            // CRITICAL: Handle version suffixes (.1, .2, etc.)
-            // Inward Register may have "IWAAJPM2400231.1" while Requisition has "IWAAJPM2400231"
+            // ENHANCED: Case-insensitive matching + handle version suffixes (.1, .2, etc.)
+            // Also fetch Inward Numbers since they can be used as AR Numbers
             const inwardArNumbersSet = new Set<string>();
             if (inwardData.success && inwardData.arNumbers) {
                 inwardData.arNumbers.forEach((arNumber: string) => {
                     if (arNumber && arNumber.trim() !== '') {
-                        const trimmedAr = arNumber.trim();
-                        // Add the full AR number
+                        const trimmedAr = arNumber.trim().toUpperCase();
+                        // Add the full AR number (uppercase for case-insensitive)
                         inwardArNumbersSet.add(trimmedAr);
 
                         // Also add the base AR number (without version suffix)
@@ -2479,6 +2640,24 @@ export default function FormulaDataPage() {
                     }
                 });
             }
+
+            // ENHANCED: Also fetch Inward Numbers since they're often used as AR numbers
+            const inwardNumbersResponse = await fetch('/api/inward/inward-numbers');
+            const inwardNumbersData = await inwardNumbersResponse.json();
+            if (inwardNumbersData.success && inwardNumbersData.inwardNumbers) {
+                inwardNumbersData.inwardNumbers.forEach((inwardNo: string) => {
+                    if (inwardNo && inwardNo.trim() !== '') {
+                        const trimmedInward = inwardNo.trim().toUpperCase();
+                        inwardArNumbersSet.add(trimmedInward);
+                        // Also add base without suffix
+                        const baseInward = trimmedInward.split('.')[0];
+                        if (baseInward && baseInward !== trimmedInward) {
+                            inwardArNumbersSet.add(baseInward);
+                        }
+                    }
+                });
+            }
+
 
             // New Logic: Fetch Requisition data and filter by Inward Qualified Batches
             // This ensures meaningful batch-level display for both Qualified and Unqualified states
@@ -2646,12 +2825,13 @@ export default function FormulaDataPage() {
                         }
                     } else {
                         // type === 'unqualified'
-                        // FIXED: Only show materials whose AR numbers are actually MISSING from Inward Register
-                        // Don't show materials that exist in Inward Register
+                        // Only show AR numbers that are genuinely missing from Inward Register
+                        // ENHANCED: Case-insensitive matching
                         const arNo = (m.arNo || '').trim();
-                        const isArMissingFromInward = arNo && arNo !== 'N/A' && !inwardArNumbersSet.has(arNo);
+                        const arNoUpper = arNo.toUpperCase();
+                        const isArMissingFromInward = arNo && arNo !== 'N/A' && !inwardArNumbersSet.has(arNoUpper);
 
-                        if (!isQualifiedBatch && batchNo && isArMissingFromInward) {
+                        if (batchNo && isArMissingFromInward) {
                             filteredMaterials.push({
                                 arNo: m.arNo || 'N/A',
                                 materialCode: m.materialCode || 'N/A',
@@ -2892,14 +3072,14 @@ export default function FormulaDataPage() {
             const inwardData = await inwardResponse.json();
 
             // Build set of AR numbers that exist in Inward Register
-            // CRITICAL: Handle version suffixes (.1, .2, etc.)
-            // Inward Register may have "IWAAJPM2400231.1" while Requisition has "IWAAJPM2400231"
+            // ENHANCED: Case-insensitive matching + handle version suffixes (.1, .2, etc.)
+            // Also fetch Inward Numbers since they can be used as AR Numbers
             const inwardArNumbersSet = new Set<string>();
             if (inwardData.success && inwardData.arNumbers) {
                 inwardData.arNumbers.forEach((arNumber: string) => {
                     if (arNumber && arNumber.trim() !== '') {
-                        const trimmedAr = arNumber.trim();
-                        // Add the full AR number
+                        const trimmedAr = arNumber.trim().toUpperCase();
+                        // Add the full AR number (uppercase for case-insensitive)
                         inwardArNumbersSet.add(trimmedAr);
 
                         // Also add the base AR number (without version suffix)
@@ -2911,6 +3091,24 @@ export default function FormulaDataPage() {
                     }
                 });
             }
+
+            // ENHANCED: Also fetch Inward Numbers since they're often used as AR numbers
+            const inwardNumbersResponse = await fetch('/api/inward/inward-numbers');
+            const inwardNumbersData = await inwardNumbersResponse.json();
+            if (inwardNumbersData.success && inwardNumbersData.inwardNumbers) {
+                inwardNumbersData.inwardNumbers.forEach((inwardNo: string) => {
+                    if (inwardNo && inwardNo.trim() !== '') {
+                        const trimmedInward = inwardNo.trim().toUpperCase();
+                        inwardArNumbersSet.add(trimmedInward);
+                        // Also add base without suffix
+                        const baseInward = trimmedInward.split('.')[0];
+                        if (baseInward && baseInward !== trimmedInward) {
+                            inwardArNumbersSet.add(baseInward);
+                        }
+                    }
+                });
+            }
+
 
             // New Logic: Fetch Requisition data and filter by Inward Qualified Batches (PPM)
             const requisitionResponse = await fetch('/api/requisition/materials?type=PPM&pageSize=100000');
@@ -2949,12 +3147,13 @@ export default function FormulaDataPage() {
                         }
                     } else {
                         // type === 'unqualified'
-                        // FIXED: Only show materials whose AR numbers are actually MISSING from Inward Register
-                        // Don't show materials that exist in Inward Register
+                        // Only show AR numbers that are genuinely missing from Inward Register
+                        // ENHANCED: Case-insensitive matching
                         const arNo = (m.arNo || '').trim();
-                        const isArMissingFromInward = arNo && arNo !== 'N/A' && !inwardArNumbersSet.has(arNo);
+                        const arNoUpper = arNo.toUpperCase();
+                        const isArMissingFromInward = arNo && arNo !== 'N/A' && !inwardArNumbersSet.has(arNoUpper);
 
-                        if (!isQualifiedBatch && batchNo && isArMissingFromInward) {
+                        if (batchNo && isArMissingFromInward) {
                             filteredMaterials.push({
                                 arNo: m.arNo || 'N/A',
                                 materialCode: m.materialCode || 'N/A',
@@ -9328,12 +9527,12 @@ export default function FormulaDataPage() {
                                 materialUnqualified={sectionMaterialQualData.main.unqualified}
                                 onMaterialQualifiedClick={() => openMatDataModal('qualified', 'main', mainFormulas, 'table')}
                                 onMaterialUnqualifiedClick={() => openMatDataModal('unqualified', 'main', mainFormulas, 'table')}
-                                pmCoaQualified={sectionPmCoaData.main.qualified}
-                                pmCoaUnqualified={sectionPmCoaData.main.unqualified}
+                                pmCoaQualified={sectionPmUniqueBatchCounts.main.found}
+                                pmCoaUnqualified={sectionPmUniqueBatchCounts.main.missing}
                                 onPmCoaQualifiedClick={() => openPmCoaModal('qualified', 'main', mainFormulas)}
                                 onPmCoaUnqualifiedClick={() => openPmCoaModal('unqualified', 'main', mainFormulas)}
-                                ppmCoaQualified={sectionPpmCoaData.main.qualified}
-                                ppmCoaUnqualified={sectionPpmCoaData.main.unqualified}
+                                ppmCoaQualified={sectionPpmUniqueBatchCounts.main.found}
+                                ppmCoaUnqualified={sectionPpmUniqueBatchCounts.main.missing}
                                 onPpmCoaQualifiedClick={() => openPpmCoaModal('qualified', 'main', mainFormulas)}
                                 onPpmCoaUnqualifiedClick={() => openPpmCoaModal('unqualified', 'main', mainFormulas)}
                                 bulkCoaQualified={sectionBulkCoaData.main.qualified}
