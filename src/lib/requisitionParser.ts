@@ -131,13 +131,20 @@ export async function parseRequisitionXml(xmlContent: string): Promise<Requisiti
       trim: true,
     });
     
-    // Find the root MATREQ element
-    const matreq = parsed.MATREQ || parsed.matreq;
+    // Find the root MATREQ element dynamically
+    // Some reports have MATREQ, others have MATREQ_BDR01, etc.
+    const rootKey = Object.keys(parsed).find(key => 
+      key.toUpperCase().startsWith('MATREQ') || 
+      key.toLowerCase() === 'matreq'
+    );
+    
+    const matreq = rootKey ? parsed[rootKey] : undefined;
+    
     if (!matreq) {
       return {
         success: false,
         totalFound: 0,
-        errors: ['No MATREQ root element found'],
+        errors: [`No MATREQ root element found (checked for keys starting with MATREQ). Found keys: ${Object.keys(parsed).join(', ')}`],
         warnings: [],
       };
     }
@@ -363,7 +370,7 @@ export async function parseRequisitionXml(xmlContent: string): Promise<Requisiti
 export function isRequisitionXml(xmlContent: string): boolean {
   const content = xmlContent.toUpperCase();
   const indicators = [
-    '<MATREQ>',
+    '<MATREQ', // Changed from <MATREQ> to allow MATREQ_BDR01 etc
     '<LIST_G_BATCHSIZEBC>',
     '<G_BATCHSIZEBC>',
     '<MATREQNO>',

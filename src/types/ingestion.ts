@@ -6,7 +6,7 @@
 // ============================================
 // XML File Type Detection
 // ============================================
-export type XmlFileType = 'BATCH' | 'FORMULA' | 'COA' | 'REQUISITION' | 'INWARD_REGISTER' | 'UNKNOWN';
+export type XmlFileType = 'BATCH' | 'FORMULA' | 'COA' | 'RM_COA' | 'REQUISITION' | 'INWARD_REGISTER' | 'UNKNOWN';
 
 // ============================================
 // Item-Level Duplicate Statistics

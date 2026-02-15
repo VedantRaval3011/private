@@ -1,0 +1,39 @@
+﻿
+=== "INDIANA" found at index 2365 ===
+w:tab/></w:r><w:r><w:rPr><w:b/><w:sz w:val="28"/><w:szCs w:val="28"/></w:rPr><w:tab/></w:r><w:r w:rsidR="00A50162" w:rsidRPr="0012332A"><w:rPr><w:b/><w:sz w:val="28"/><w:szCs w:val="28"/></w:rPr><w:t>INDIANA OPHTHALMICS</w:t></w:r><w:r w:rsidR="00B04241"><w:rPr><w:b/><w:sz w:val="28"/><w:szCs w:val="28"/></w:rPr><w:t xml:space="preserve"> LLP</w:t></w:r></w:p><w:p w14:paraId="3CF48813" w14:textId="19D7BA
+
+=== "OPHTHALMICS" found at index 2373 ===
+/w:r><w:r><w:rPr><w:b/><w:sz w:val="28"/><w:szCs w:val="28"/></w:rPr><w:tab/></w:r><w:r w:rsidR="00A50162" w:rsidRPr="0012332A"><w:rPr><w:b/><w:sz w:val="28"/><w:szCs w:val="28"/></w:rPr><w:t>INDIANA OPHTHALMICS</w:t></w:r><w:r w:rsidR="00B04241"><w:rPr><w:b/><w:sz w:val="28"/><w:szCs w:val="28"/></w:rPr><w:t xml:space="preserve"> LLP</w:t></w:r></w:p><w:p w14:paraId="3CF48813" w14:textId="19D7BA8D" w:rsidR=
+
+=== "SY208G1H" found at index 108222 ===
+:pPr><w:spacing w:before="0"/><w:rPr><w:sz w:val="24"/><w:szCs w:val="24"/><w:lang w:val="en-US"/></w:rPr></w:pPr><w:r><w:rPr><w:sz w:val="24"/><w:szCs w:val="24"/><w:lang w:val="en-US"/></w:rPr><w:t>SY208G1H</w:t></w:r></w:p></w:tc></w:tr><w:tr w:rsidR="005171EA" w:rsidRPr="0028232E" w14:paraId="135DCC81" w14:textId="77777777" w:rsidTr="008E6D82"><w:trPr><w:cantSplit/><w:trHeight w:val="576"/><w:jc w:val
+
+=== "G/28/197" found at index 126222 ===
+MS Mincho"/><w:bCs/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:pPr><w:r w:rsidRPr="003E08D3"><w:rPr><w:rFonts w:eastAsia="MS Mincho"/><w:bCs/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr><w:t>G/28/197</w:t></w:r></w:p></w:tc></w:tr><w:tr w:rsidR="00C045BC" w:rsidRPr="0028232E" w14:paraId="65F308FB" w14:textId="77777777" w:rsidTr="008E6D82"><w:trPr><w:cantSplit/><w:trHeight w:val="576"/><w:jc w:val
+
+=== "Ophthalmic Solution" found at index 109477 ===
+Cs/><w:color w:val="000000"/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:pPr><w:r w:rsidRPr="0028232E"><w:rPr><w:bCs/><w:color w:val="000000"/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr><w:t>Ophthalmic Solution</w:t></w:r></w:p></w:tc></w:tr><w:tr w:rsidR="00C045BC" w:rsidRPr="0028232E" w14:paraId="4B74785C" w14:textId="77777777" w:rsidTr="008E6D82"><w:trPr><w:cantSplit/><w:trHeight w:val="432"/><w:jc w:val
+
+=== "SODIUM HYALURONATE EYE DROPS" found at index 13663 ===
+2A"><w:rPr><w:b/><w:sz w:val="40"/><w:szCs w:val="24"/></w:rPr><w:t xml:space="preserve">PRODUCT: - </w:t></w:r><w:r w:rsidR="00FF3F2C"><w:rPr><w:b/><w:sz w:val="40"/><w:szCs w:val="24"/></w:rPr><w:t>SODIUM HYALURONATE EYE DROPS</w:t></w:r></w:p><w:p w14:paraId="3F240D62" w14:textId="77777777" w:rsidR="003B1AA1" w:rsidRPr="008C05DF" w:rsidRDefault="003B1AA1" w:rsidP="008C05DF"><w:pPr><w:tabs><w:tab w:val="right" w:pos="9990"
+
+=== "YEAR:" found at index 10495 ===
+ w:lineRule="auto"/><w:jc w:val="center"/><w:rPr><w:b/><w:sz w:val="52"/><w:szCs w:val="60"/></w:rPr></w:pPr><w:r><w:rPr><w:b/><w:sz w:val="52"/><w:szCs w:val="60"/></w:rPr><w:t xml:space="preserve">(YEAR: </w:t></w:r><w:r w:rsidR="00C83D4B"><w:rPr><w:b/><w:sz w:val="52"/><w:szCs w:val="60"/></w:rPr><w:t>202</w:t></w:r><w:r w:rsidR="008A3F66"><w:rPr><w:b/><w:sz w:val="52"/><w:szCs w:val="60"/></w:rPr><
+
+=== "IO/APQR" found at index 11816 ===
+/></w:rPr><w:t xml:space="preserve">.: </w:t></w:r><w:r w:rsidR="006E4242" w:rsidRPr="00763C84"><w:rPr><w:color w:val="000000" w:themeColor="text1"/><w:sz w:val="36"/><w:szCs w:val="60"/></w:rPr><w:t>IO/APQR/</w:t></w:r><w:r w:rsidR="00FF3F2C"><w:rPr><w:color w:val="000000" w:themeColor="text1"/><w:sz w:val="36"/><w:szCs w:val="60"/></w:rPr><w:t>SY</w:t></w:r><w:r w:rsidR="00AA0288" w:rsidRPr="00763C84">
+
+=== "QAGE110" found at index 13083 ===
+<w:r><w:rPr><w:b/><w:sz w:val="36"/><w:szCs w:val="60"/></w:rPr><w:t xml:space="preserve">REF. SOP NO.: </w:t></w:r><w:r w:rsidRPr="00D17A95"><w:rPr><w:sz w:val="36"/><w:szCs w:val="60"/></w:rPr><w:t>QAGE110</w:t></w:r></w:p><w:p w14:paraId="30559D21" w14:textId="1E96ACFC" w:rsidR="00DF340E" w:rsidRDefault="00DB6AE5" w:rsidP="008C05DF"><w:pPr><w:tabs><w:tab w:val="right" w:pos="9990"/></w:tabs><w:spacing
+
+=== "D25D21" found at index 157135 ===
+sidP="00C83D4B"><w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/><w:rPr><w:sz w:val="24"/><w:lang w:val="en-IN"/></w:rPr></w:pPr><w:r><w:rPr><w:sz w:val="24"/><w:lang w:val="en-IN"/></w:rPr><w:t>D25D21</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w="1046" w:type="pct"/><w:shd w:val="clear" w:color="auto" w:fill="auto"/><w:vAlign w:val="center"/></w:tcPr><w:p w14:paraId="22D2EA48" w14:textId="5FD7
+
+=== "D25E40" found at index 159944 ===
+sidP="00471D39"><w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/><w:rPr><w:sz w:val="24"/><w:lang w:val="en-IN"/></w:rPr></w:pPr><w:r><w:rPr><w:sz w:val="24"/><w:lang w:val="en-IN"/></w:rPr><w:t>D25E40</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w="1046" w:type="pct"/><w:shd w:val="clear" w:color="auto" w:fill="auto"/><w:vAlign w:val="center"/></w:tcPr><w:p w14:paraId="1799D83F" w14:textId="3226
+
+=== "D25H28" found at index 162635 ===
+sidP="00471D39"><w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/><w:rPr><w:sz w:val="24"/><w:lang w:val="en-IN"/></w:rPr></w:pPr><w:r><w:rPr><w:sz w:val="24"/><w:lang w:val="en-IN"/></w:rPr><w:t>D25H28</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w="1046" w:type="pct"/><w:shd w:val="clear" w:color="auto" w:fill="auto"/><w:vAlign w:val="center"/></w:tcPr><w:p w14:paraId="6B3EB846" w14:textId="23B3
+
+=== "D25K08" found at index 165213 ===
+sidP="00471D39"><w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/><w:rPr><w:sz w:val="24"/><w:lang w:val="en-IN"/></w:rPr></w:pPr><w:r><w:rPr><w:sz w:val="24"/><w:lang w:val="en-IN"/></w:rPr><w:t>D25K08</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w="1046" w:type="pct"/><w:shd w:val="clear" w:color="auto" w:fill="auto"/><w:vAlign w:val="center"/></w:tcPr><w:p w14:paraId="2D224EE1" w14:textId="312B

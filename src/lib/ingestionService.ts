@@ -14,6 +14,8 @@ import { parseCOAXml } from './coaParser';
 
 import { parseRequisitionXml } from './requisitionParser';
 import { parseInwardRegisterXml } from './inwardParser';
+import { parseRmCoaXml } from './rmCoaParser';
+import RMCOA from '@/models/RMCOA';
 import ProcessingLog from '@/models/ProcessingLog';
 import Batch from '@/models/Batch';
 import Formula from '@/models/Formula';
@@ -181,9 +183,9 @@ export async function processXmlFile(fileInfo: XmlFileInfo): Promise<IngestionRe
     console.log(`\n📁 Processing: ${fileName}`);
     console.log(`   Detected Type: ${fileType}`);
 
-    // Skip early if already processed for BATCH, COA, and REQUISITION (exact duplicates)
+    // Skip early if already processed for BATCH, COA, RM_COA, and REQUISITION (exact duplicates)
     // BUT only if previous processing was NOT an error
-    if (existingLog && existingLog.status !== 'ERROR' && (fileType === 'BATCH' || fileType === 'COA' || fileType === 'REQUISITION')) {
+    if (existingLog && existingLog.status !== 'ERROR' && (fileType === 'BATCH' || fileType === 'COA' || fileType === 'RM_COA' || fileType === 'REQUISITION')) {
       console.log(`   ⚠️ SKIPPED: Already processed on ${existingLog.processedAt.toISOString()}`);
       return {
         fileName,
@@ -470,6 +472,34 @@ export async function processXmlFile(fileInfo: XmlFileInfo): Promise<IngestionRe
           fileType: 'INWARD_REGISTER',
           status: 'DUPLICATE',
           message: result.message || 'Inward Register file already processed',
+          businessKey,
+        };
+      }
+    } else if (fileType === 'RM_COA') {
+      const result = await processRmCoaXml(content, fileName, fileSize, contentHash);
+      businessKey = result.businessKey;
+      recordId = result.recordId;
+
+      if (result.duplicate) {
+        await ProcessingLog.findOneAndUpdate(
+          { contentHash },
+          {
+            contentHash,
+            fileName,
+            fileType: 'RM_COA',
+            status: 'DUPLICATE',
+            businessKey,
+            fileSize,
+            processedAt: new Date(),
+          },
+          { upsert: true }
+        );
+
+        return {
+          fileName,
+          fileType: 'RM_COA',
+          status: 'DUPLICATE',
+          message: result.message || 'RM COA already processed',
           businessKey,
         };
       }
@@ -1628,6 +1658,63 @@ async function processInwardRegisterXml(
     businessKey,
     duplicate: false,
     message: `Stored ${newCount} new records (${duplicateCount} duplicates skipped, ${errorCount} errors)`
+  };
+}
+
+
+/**
+ * Process RM COA XML and store in database
+ */
+async function processRmCoaXml(
+  content: string,
+  fileName: string,
+  fileSize: number,
+  contentHash: string
+): Promise<{
+  businessKey?: string;
+  recordId?: string;
+  duplicate: boolean;
+  message?: string;
+}> {
+  const record = await parseRmCoaXml(content, fileName);
+
+  if (!record) {
+    throw new Error('Failed to parse RM COA XML');
+  }
+
+  // Generate business key
+  const businessKey = `RMCOA-${record.arNo}-${record.materialCode}`;
+  
+  // Check for duplicate by AR Number + Material Code
+  // The content hash check in processXmlFile already handles exact file duplicates
+  // This handles logical duplicates (same AR/MatCode from different file or reprocessing)
+  const existing = await RMCOA.findOne({
+    arNo: record.arNo,
+    materialCode: record.materialCode
+  });
+
+  if (existing) {
+    return {
+      businessKey,
+      duplicate: true,
+      message: `RM COA already exists for AR: ${record.arNo}, Material: ${record.materialCode}`
+    };
+  }
+
+  // Create new record
+  const newRecord = await RMCOA.create({
+    ...record,
+    contentHash,
+    uploadedAt: new Date(),
+    parsingStatus: 'success', // parser returns success if it returns a record
+    sourceFile: fileName
+  });
+
+  return {
+    businessKey,
+    recordId: newRecord._id.toString(),
+    duplicate: false,
+    message: `Stored RM COA for ${record.materialName} (AR: ${record.arNo})`
   };
 }
 

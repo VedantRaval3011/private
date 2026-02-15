@@ -1,0 +1,6 @@
+Found "Name of Approved" at 178742: r></w:pPr><w:r w:rsidRPr="0028232E"><w:rPr><w:b/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr><w:t>Name of Approved vendor</w:t></w:r></w:p></w:tc></w:tr><w:tr w:rsidR="003F05F7" w:rsidRPr="0028232E" w14:paraId="794EB15E" w14:textId="77777777" w:rsidTr="004D214B"><w:trPr><w:trHeight w:val="397"/><w
+-----
+Found "Name of Approved" at 260445: r></w:pPr><w:r w:rsidRPr="00566A0D"><w:rPr><w:b/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr><w:t>Name of Approved vendor</w:t></w:r></w:p></w:tc></w:tr><w:tr w:rsidR="00566A0D" w:rsidRPr="00566A0D" w14:paraId="3D5CE5BD" w14:textId="77777777" w:rsidTr="00BB6BA4"><w:trPr><w:trHeight w:val="425"/><w
+-----
+Found "Name of Approved" at 304649: r></w:pPr><w:r w:rsidRPr="00237573"><w:rPr><w:b/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr><w:t>Name of Approved vendor</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w="749" w:type="pct"/><w:shd w:val="clear" w:color="auto" w:fill="D9D9D9" w:themeFill="background1" w:themeFillShade="D9"/><w:vAl
+-----

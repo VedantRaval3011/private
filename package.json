@@ -9,8 +9,10 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "docx": "^9.5.2",
     "fast-xml-parser": "^5.3.3",
     "framer-motion": "^12.23.26",
+    "jszip": "^3.10.1",
     "lucide-react": "^0.562.0",
     "mongoose": "^9.0.1",
     "next": "16.0.10",

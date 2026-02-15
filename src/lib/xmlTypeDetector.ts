@@ -107,14 +107,40 @@ export function detectXmlType(xmlContent: string): XmlFileType {
     return 'COA';
   }
 
+  // Check for Raw Material COA XML (MATANLCERT format) FIRST
+  // This MUST come before Inward Register because both have <MATINWNO>
+  // MATANLCERT is the definitive root element for RM COA files
+  if (content.includes('MATANLCERT') || content.includes('<MATANLCERT>')) {
+    return 'RM_COA';
+  }
+
+  // Additional RM COA indicators check (fallback)
+  const rmCoaIndicators = [
+    '<ARNO>',           // AR Number - common in RM COA
+    '<PROTEST>',        // Test name
+    '<LIST_G_SERIAL1>', // Serial group list
+    '<G_SERIAL1>',      // Serial group
+    '<LIST_G_2>',       // Test list (inside G_SERIAL1)
+    '<ANLDT>',          // Analysis date
+    '<MAKENM>',         // Manufacturer name
+  ];
+
+  const rmCoaMatches = rmCoaIndicators.filter(indicator =>
+    content.includes(indicator.toUpperCase())
+  ).length;
+
+  // If we have ARNO + PROTEST + LIST_G_SERIAL1, it's definitely RM COA
+  if (rmCoaMatches >= 3 && content.includes('<ARNO>') && content.includes('<PROTEST>')) {
+    return 'RM_COA';
+  }
+
   // Check for Inward Register XML (MATINW format)
+  // Requires LIST_G_MATINWDTLID or G_MATID which are NOT in RM COA
   const inwardIndicators = [
     'LIST_G_MATINWDTLID',
     'G_MATINWDTLID',
     '<MATINWREGI>',
-    '<MATINWNO>',
     '<G_MATID>',
-    '<MATINW>'
   ];
 
   const inwardMatches = inwardIndicators.filter(indicator =>
@@ -144,6 +170,8 @@ export function getFileTypeName(type: XmlFileType): string {
   switch (type) {
     case 'BATCH':
       return 'Batch Creation';
+    case 'RM_COA':
+      return 'Raw Material COA';
     case 'FORMULA':
       return 'Formula Master';
     case 'COA':

@@ -9,6 +9,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import FileUpload from '@/components/FileUpload';
 import BatchFileUpload from '@/components/BatchFileUpload';
 import FormulaDisplay from '@/components/FormulaDisplay';
@@ -38,6 +39,7 @@ interface SelectedFile {
 }
 
 export default function Home() {
+  const router = useRouter();
   // State
   const [view, setView] = useState<View>('upload');
   const [isUploading, setIsUploading] = useState(false);
@@ -388,6 +390,28 @@ export default function Home() {
         // Refresh the lists to show new data
         fetchFormulas();
         fetchBatches();
+        
+        // Show summary to user
+        const successCount = data.status.results.filter(r => r.status === 'SUCCESS').length;
+        const errorCount = data.status.results.filter(r => r.status === 'ERROR').length;
+        
+        if (successCount > 0 || errorCount > 0) {
+            alert(`Scanning Complete:\n- ${successCount} new files processed\n- ${errorCount} errors\nCheck Processing Logs for details.`);
+        } else {
+            // alert('No new files found.');
+        }
+
+        // Check if any RM_COA files were processed
+        // Redirection removed as per request
+        /*
+        const hasRmCoa = data.status.results.some(r => r.fileType === 'RM_COA' && r.status === 'SUCCESS');
+        if (hasRmCoa) {
+             // Optional: delayed redirect or immediate
+             setTimeout(() => {
+                 router.push('/rm-data');
+             }, 1500);
+        }
+        */
       } else {
         console.error('Ingestion failed:', data.message);
       }
@@ -659,6 +683,31 @@ export default function Home() {
                 </svg>
                 Inward Reg
               </Link>
+
+              <Link
+                href="/rm-data"
+                style={{
+                  padding: '0.625rem 1.25rem',
+                  background: 'transparent',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: 'var(--radius-md)',
+                  textDecoration: 'none',
+                  fontWeight: '500',
+                  transition: 'all var(--transition-fast)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.5rem',
+                }}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+                  <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
+                  <line x1="12" y1="22.08" x2="12" y2="12" />
+                </svg>
+                RM Data
+              </Link>
+
             </nav>
           </div>
         </div>
@@ -689,6 +738,8 @@ export default function Home() {
                 Upload Batch Creation XML first, then Formula Master XML to view combined data
               </p>
             </div>
+
+
 
             <div style={{
               display: 'grid',
