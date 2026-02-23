@@ -1,0 +1,14 @@
+
+=== Template (235209 bytes) ===
+✅ w:tbl: 93 open, 93 close (diff: 0)
+✅ w:tr: 468 open, 468 close (diff: 0)
+✅ w:tc: 1878 open, 1878 close (diff: 0)
+❌ w:p: 3005 open, 2923 close (diff: +82)
+✅ w:r: 3438 open, 3438 close (diff: 0)
+
+=== Old Generated (files/doc) (218316 bytes) ===
+✅ w:tbl: 93 open, 93 close (diff: 0)
+✅ w:tr: 449 open, 449 close (diff: 0)
+❌ w:tc: 1771 open, 1783 close (diff: -12)
+❌ w:p: 2895 open, 2825 close (diff: +70)
+❌ w:r: 3365 open, 3377 close (diff: -12)

@@ -1,0 +1,42 @@
+﻿Starting APQR generation test...
+Generating APQR for NZ251G1H - 2025
+Γ£à Connected to MongoDB
+Found material: 1NAPH01 - NAPHAZOLINE HYDROCHLORIDE USP
+Found 4 RMCOAs for 1NAPH01
+Found material: 1PHEN03 - PHENYLEPHRINE HYDROCHLORIDE IP/USP
+Found 5 RMCOAs for 1PHEN03
+Found material: 1CARB05 - CARBOXY METHYL CELLULOSE SODIUM(STERILE) IP/BP/USP
+Found 15 RMCOAs for 1CARB05
+Found material: 1MENT01 - MENTHOL IP/USP
+Found 0 RMCOAs for 1MENT01
+Found material: 1CAMP01 - CAMPHOR BP
+Found 0 RMCOAs for 1CAMP01
+Found material: 1STAB01 - STABILIZED OXYCHLORO COMPLEX IH
+Found 6 RMCOAs for 1STAB01
+Found material: 1BORI01 - BORIC ACID IP/NF
+Found 5 RMCOAs for 1BORI01
+Found material: 1BORA01 - BORAX IP/BP/NF
+Found 3 RMCOAs for 1BORA01
+Found material: 1SODI24 - SODIUM CHLORIDE IPBPUSPNF
+Found 12 RMCOAs for 1SODI24
+Found material: 1PROP03 - PROPYLENE GLYCOL IP/USP
+Found 2 RMCOAs for 1PROP03
+Found material: 1E.D.01 - EDETATE DISODIUM IP/NF
+Found 1 RMCOAs for 1E.D.01
+Found material: 1SODI28 - SODIUM METABISULPHITE IP/NF
+Found 4 RMCOAs for 1SODI28
+Found material: 1PWATER - PURIFIED WATER IP
+Found 0 RMCOAs for 1PWATER
+APQR Data Summary: {
+  productCode: 'NZ251G1H',
+  year: '2025',
+  totalBatches: '00',
+  batchesCount: 0,
+  compositionCount: 1,
+  materialVendorCount: 13
+}
+Attempting to generate Material Vendor Details table...
+Found Material Vendor Details header row.
+Found template row for Material Vendor Details.
+Γ£ô DOCX generated successfully: 224108 bytes
+Successfully generated DOCX at: C:\Dev\private\test_apqr_output.docx

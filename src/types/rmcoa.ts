@@ -46,3 +46,12 @@ export interface RMCOAResponse {
     data: RMCOARecord[];
     errors?: string[];
 }
+
+export interface RMCOAListResponse {
+    success: boolean;
+    data: RMCOARecord[];
+    total: number;
+    uniqueArNumbers: number;
+    uniqueMaterials: number;
+    errors?: string[];
+}

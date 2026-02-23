@@ -1,0 +1,70 @@
+﻿npx : (node:14572) 
+[MONGOOSE] Warning: 
+Duplicate schema index on 
+{"productCode":1} found. 
+This is often due to 
+declaring an index using 
+both "index: true" and 
+"schema.index()". Please 
+remove the duplicate index 
+definition.
+At line:1 char:1
++ npx tsx src/scripts/verify
+-batch-data.ts 2>&1 | 
+Out-File -FilePath ve ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          
+    : NotSpecified: ((node  
+  :14572) [M...dex defini   
+ tion.:String) [], Remot    
+eException
+    + FullyQualifiedErrorId 
+    : NativeCommandError
+ 
+(Use `node --trace-warnings 
+...` to show where the 
+warning was created)
+Γ£à Connected to MongoDB
+================================================================================
+≡ƒöì BATCH DATA VERIFICATION FOR: MFC/H/DNC150.06
+================================================================================
+
+≡ƒôî STEP 1: Finding Formula and Product Code
+   MFC Number: MFC/H/DNC150.06
+   Product Code: NC150G1H
+   Product Name: NAPHA. HCL, ZINC SUL, CHLOR & HPMC.
+
+≡ƒôî STEP 2: Querying Batch Registry Collection
+   Query: { 'batches.itemCode': 'NC150G1H' }
+   Found 0 batch document(s) containing this product code
+   Total batch records for NC150G1H: 0
+
+≡ƒôî STEP 3: All Batches Found (Before Year Filter)
+------------------------------------------------------------------------------------------------------------------------
+Batch Number    Item Code    Mfg Date     Completion Date   Batch Size      Source File
+------------------------------------------------------------------------------------------------------------------------
+
+≡ƒôî STEP 4: Filtering by Year 2025
+------------------------------------------------------------------------------------------------------------------------
+
+Γ£à Batches matching 2025: 0
+
+≡ƒôî STEP 5: Final Filtered Batches (For APQR)
+------------------------------------------------------------------------------------------------------------------------
+Month        Batch Number    Batch Size      Mfg. Date    Exp. Date    Date Source
+------------------------------------------------------------------------------------------------------------------------
+
+≡ƒôî STEP 6: Monthly Summary Grid
+--------------------------------------------------------------------------------
+Jan       Feb       Mar       Apr       May       Jun       
+--        --        --        --        --        --        
+--------------------------------------------------------------------------------
+Jul       Aug       Sep       Oct       Nov       Dec       
+--        --        --        --        --        --        
+
+Total Batches Manufactured: 00 Batches
+
+================================================================================
+Γ£à VERIFICATION COMPLETE
+================================================================================

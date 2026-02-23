@@ -1,0 +1,13 @@
+﻿Starting APQR generation test...
+Generating APQR for NZ251G1H - 2025
+Γ£à Connected to MongoDB
+APQR Data Summary: {
+  productCode: 'NZ251G1H',
+  year: '2025',
+  totalBatches: '00',
+  batchesCount: 0,
+  compositionCount: 1,
+  materialVendorCount: 0
+}
+Γ£ô DOCX generated successfully: 223579 bytes
+Successfully generated DOCX at: C:\Dev\private\test_apqr_output.docx

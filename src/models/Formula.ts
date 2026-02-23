@@ -50,6 +50,7 @@ const MaterialItemSchema = new Schema({
   srNo: { type: Number, required: true },
   materialCode: { type: String, required: true },
   materialName: { type: String, required: true },
+  subMaterialType: { type: String, default: '' }, // SUBMATTYPE: ACTIVE, INACTIVE, etc.
   potencyCorrection: { type: String, default: 'N' },
   requiredQuantity: { type: String, default: 'N/A' },
   overages: { type: String },

@@ -1,0 +1,4 @@
+﻿src/app/api/rmcoa/route.ts(10,15): error TS2724: '"@/types/rmcoa"' has no exported member named 'RMCOAListResponse'. Did you mean 'RMCOAResponse'?
+src/app/api/rmcoa/upload/route.ts(12,15): error TS2724: '"@/types/rmcoa"' has no exported member named 'RMCOAUploadResponse'. Did you mean 'RMCOAResponse'?
+src/app/api/rmcoa/upload/route.ts(38,26): error TS2345: Argument of type '{ arNo: string; materialCode: string; materialName: string; sourceFile: string; uploadedAt: Date; contentHash: string; parsingStatus: "partial"; parsingWarnings: string[]; }' is not assignable to parameter of type 'RMCOARecord'.
+  Type '{ arNo: string; materialCode: string; materialName: string; sourceFile: string; uploadedAt: Date; contentHash: string; parsingStatus: "partial"; parsingWarnings: string[]; }' is missing the following properties from type 'RMCOARecord': status, testParameters

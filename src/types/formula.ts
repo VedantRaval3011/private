@@ -59,6 +59,7 @@ export interface MaterialItem {
   srNo: number;
   materialCode: string;
   materialName: string;
+  subMaterialType?: string; // SUBMATTYPE: ACTIVE, INACTIVE, etc.
   potencyCorrection: 'Y' | 'N' | string;
   requiredQuantity: string;
   overages?: string;

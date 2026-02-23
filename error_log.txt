@@ -1,0 +1,17 @@
+Error: Unclosed root tag
+Line: 454510
+Column: 0
+Char: \nError: Unclosed root tag
+Line: 454510
+Column: 0
+Char: 
+    at error (c:\Dev\private\node_modules\sax\lib\sax.js:695:10)
+    at strictFail (c:\Dev\private\node_modules\sax\lib\sax.js:724:7)
+    at end (c:\Dev\private\node_modules\sax\lib\sax.js:703:7)
+    at SAXParser.write (c:\Dev\private\node_modules\sax\lib\sax.js:1048:14)
+    at SAXParser.close (c:\Dev\private\node_modules\sax\lib\sax.js:184:19)
+    at exports.Parser.Parser.parseString (c:\Dev\private\node_modules\xml2js\lib\parser.js:337:42)
+    at Parser.parseString (c:\Dev\private\node_modules\xml2js\lib\parser.js:5:59)
+    at c:\Dev\private\node_modules\xml2js\lib\parser.js:352:24
+    at new Promise (<anonymous>)
+    at exports.Parser.Parser.parseStringPromise (c:\Dev\private\node_modules\xml2js\lib\parser.js:350:14)

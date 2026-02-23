@@ -1,0 +1,9 @@
+D25D21 found at index 490795: context = [D25D21]
+D25E40 found at index 494268: context = [D25E40, D25H28]
+D25H28 found at index 494276: context = [D25E40, D25H28]
+D25K08 found at index 497807: context = [D25K08]
+
+=== PRODUCT CODE CHECK ===
+NC150 at: 107924
+SY208 at: -1
+Product Name context: [Product Name: | <w:tcPr><w:tcW w:w="3610" w:type="pct"/><w:gridSpan w:val="3"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:before="0"/><w:rPr><w:bCs/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:pPr><w:r><w:rPr><w:bCs/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr><w:t>NAPHA. HCL, ZINC SUL, CHLOR &amp; HPMC.]

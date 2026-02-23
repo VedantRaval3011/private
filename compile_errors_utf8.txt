@@ -1,0 +1,1 @@
+﻿src/app/api/rmcoa/route.ts(10,15): error TS2724: '"@/types/rmcoa"' has no exported member named 'RMCOAListResponse'. Did you mean 'RMCOAResponse'?

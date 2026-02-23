@@ -1,0 +1,10 @@
+"Details of Product" at index: 149076
+First "Prepared By" after batch table: 157798
+
+Searching for "Remark" between 149076 and 157798:
+
+Searching for "review period":
+  "review period" at 157193
+
+Checking "Total Batches Manufactured":
+  At 155577: [Total Batches Manufactured: 03 Batches]

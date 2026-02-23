@@ -1,0 +1,15 @@
+=== SEARCHING FOR PPM TABLE KEYWORDS ===
+
+"Primary Packaging": found at 23236
+"PPM": NOT FOUND
+"Packing Material": found at 37336
+"3.2": found at 22895
+"Approved Vendor": found at 21889
+"List of Approved Vendor": found at 21881
+"Material Vendor": NOT FOUND
+"Packaging material": found at 23244
+
+=== SECTION 3 CONTENT ===
+</w:r><w:r w:rsidRPr="00512317"><w:rPr><w:rStyle w:val="Hyperlink"/><w:b/></w:rPr><w:t>List of Approved Vendor for Raw Material: | </w:r><w:r><w:rPr><w:webHidden/></w:rPr><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:rPr><w:webHidden/></w:rPr><w:instrText xml:space="preserve"> PAGEREF _Toc221452959 \h </w:instrText></w:r><w:r><w:rPr><w:webHidden/></w:rPr></w:r><w:r><w:rPr><w:webHidden/></w:rPr><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:rPr><w:webHidden/></w:rPr><w:t>5 | 3.2 | </w:r><w:r w:rsidRPr="00512317"><w:rPr><w:rStyle w:val="Hyperlink"/><w:b/></w:rPr><w:t>List of Approved Vendor for Primary Packaging material: | </w:r><w:r><w:rPr><w:webHidden/></w:rPr><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:rPr><w:webHidden/></w:rPr><w:instrText xml:space="preserve"> PAGEREF _Toc221452960 \h </w:instrText></w:r><w:r><w:rPr><w:webHidden/></w:rPr></w:r><w:r><w:rPr><w:webHidden/></w:rPr><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:rPr><w:webHidden/></w:rPr><w:t>7 | 3.3 | </w:r><w:r w:rsidRPr="00512317"><w:rPr><w:rStyle w:val="Hyperlink"/><w:b/></w:rPr><w:t>Details of Secondary/ Tertiary Packaging material: | </w:r><w:r><w:rPr><w:webHidden/></w:rPr><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:rPr><w:webHidden/></w:rPr><w:instrText xml:space="preserve"> PAGEREF _Toc221452961 \h </w:instrText></w:r><w:r><w:rPr><w:webHidden/></w:rPr></w:r><w:r><w:rPr><w:webHidden/></w:rPr><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:rPr><w:webHidden/></w:rPr><w:t>8 | 4 | </w:r><w:r w:rsidRPr="00512317"><w:rPr><w:rStyle w:val="Hyperlink"/><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:noProof/></w:rPr><w:t>CURRENT MANUFACTURING FORMULA:
+
+=== ALL SECTION HEADERS ===

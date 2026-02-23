@@ -390,12 +390,43 @@ function extractMaterials(data: unknown): MaterialItem[] {
           srNo: parseInt(srNoValue) || materials.length + 1,
           materialCode: matCode,
           materialName: matDetail,
+          subMaterialType: findValueCaseInsensitive(g2, ['SUBMATTYPE'], ''),
           potencyCorrection: findValueCaseInsensitive(g2, ['POTENCOR', 'POTENCY_CORRECTION', 'POT_CORR'], 'N'),
-          requiredQuantity: findValueCaseInsensitive(g2, ['REQQTY', 'CF_REQQTY', 'REQUIRED_QTY', 'REQUIRED_QUANTITY'], 'N/A'),
+          requiredQuantity: (() => {
+            // Try to calculate base quantity from Per Unit and Overage
+            // Base = PerUnit / (1 + Overage/100)
+            const qtyPerUnitStr = findValueCaseInsensitive(g2, ['PERUNIT', 'QUANTITY_PER_UNIT', 'QTY_PER_UNIT'], '');
+            const overageStr = findValueCaseInsensitive(g2, ['OVG_P', 'OVERAGES', 'OVERAGE'], '0');
+            
+            if (qtyPerUnitStr) {
+               const qtyPerUnit = parseFloat(qtyPerUnitStr.split(' ')[0]);
+               const overage = parseFloat(overageStr.split(' ')[0]) || 0;
+               
+               if (!isNaN(qtyPerUnit)) {
+                 // Calculate base quantity
+                 const baseQty = qtyPerUnit / (1 + (overage / 100));
+                 
+                 // Format to match input precision (roughly) or standard 4 decimals
+                 // Check if original had unit
+                 const unitMatch = qtyPerUnitStr.match(/[a-zA-Z]+/);
+                 const unit = unitMatch ? ' ' + unitMatch[0] : '';
+                 
+                 // If the calculation yields a value close to an integer, round it? 
+                 // For now, let's keep reasonable precision (e.g. 4 decimal places like input 5.0000)
+                 // But remove trailing zeros if they are just 0000
+                 let formatted = baseQty.toFixed(4);
+                 return formatted.replace(/\.?0+$/, '') + unit;
+               }
+            }
+            
+            // Fallback: look for generic quantity fields but AVOID batch total fields like REQQTY
+            return findValueCaseInsensitive(g2, ['BASE_QTY', 'STD_QTY'], 'N/A');
+          })(),
           overages: findValueCaseInsensitive(g2, ['OVG_P', 'OVERAGES', 'OVERAGE'], undefined as unknown as string),
           quantityPerUnit: findValueCaseInsensitive(g2, ['PERUNIT', 'QUANTITY_PER_UNIT', 'QTY_PER_UNIT'], 'N/A'),
           requiredQuantityStandardBatch: (() => {
-            const qty = findValueCaseInsensitive(g2, ['CF_REQQTY', 'PMREQQTY', 'BATCHQTY', 'REQUIRED_QTY_STD_BATCH', 'STD_BATCH_QTY'], '');
+            // This is where REQQTY (Batch Total) should go
+            const qty = findValueCaseInsensitive(g2, ['REQQTY', 'CF_REQQTY', 'PMREQQTY', 'BATCHQTY', 'REQUIRED_QTY_STD_BATCH', 'STD_BATCH_QTY'], '');
             const unit = findValueCaseInsensitive(g2, ['CUOM', 'UNIT', 'UOM'], '');
             return qty ? (qty + (unit ? ' ' + unit : '')) : 'N/A';
           })(),
@@ -768,9 +799,31 @@ function extractProcesses(data: unknown): ProcessData[] {
               materialCode: matCode,
               materialName: findValueCaseInsensitive(mRecord, ['MATDETAIL'], '').trim(),
               potencyCorrection: findValueCaseInsensitive(mRecord, ['POTENCOR'], 'N'),
-              reqQty: findValueCaseInsensitive(mRecord, ['REQQTY'], ''), 
-              unit: findValueCaseInsensitive(mRecord, ['CUOM'], ''),
+              // PERUNIT = Theo Qty Per ML (per-unit quantity before overage)
+              reqQty: findValueCaseInsensitive(mRecord, ['PERUNIT', 'QTY_PER_UNIT', 'QUANTITY_PER_UNIT'], ''),
+              // OVG_P = Overage %
+              ovgPercent: findValueCaseInsensitive(mRecord, ['OVG_P', 'OVERAGES', 'OVERAGE'], ''),
+              // CF_REQQTY = Calculated qty per std batch size (with overage applied)
+              // PMREQQTY is used for packing materials; REQQTY is the raw batch total
+              reqAsPerStdBatchSize: findValueCaseInsensitive(mRecord, ['CF_REQQTY', 'PMREQQTY', 'REQQTY'], ''),
+              // PERUNIT with overage = actual qty per ML
+              qtyPerUnit: (() => {
+                const perUnit = findValueCaseInsensitive(mRecord, ['PERUNIT', 'QTY_PER_UNIT'], '');
+                const ovgP = findValueCaseInsensitive(mRecord, ['OVG_P', 'OVERAGES', 'OVERAGE'], '0');
+                if (!perUnit) return '';
+                const perUnitNum = parseFloat(perUnit);
+                const ovgNum = parseFloat(ovgP) || 0;
+                if (isNaN(perUnitNum)) return perUnit;
+                if (ovgNum === 0) return perUnit;
+                const actual = perUnitNum * (1 + ovgNum / 100);
+                const decimals = (perUnit.split('.')[1] || '').length;
+                return actual.toFixed(Math.max(decimals, 2));
+              })(),
+               unit: findValueCaseInsensitive(mRecord, ['CUOM'], ''),
+               materialType: findValueCaseInsensitive(mRecord, ['MATTYPE'], ''),
+               subMaterialType: findValueCaseInsensitive(mRecord, ['SUBMATTYPE'], ''),
            };
+
 
            processMaterials.push(matItem);
            currentProductMaterials.push(matItem);

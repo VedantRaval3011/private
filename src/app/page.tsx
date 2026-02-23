@@ -708,7 +708,56 @@ export default function Home() {
                 RM Data
               </Link>
 
+              <Link
+                href="/product-master"
+                style={{
+                  padding: '0.625rem 1.25rem',
+                  background: 'transparent',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: 'var(--radius-md)',
+                  textDecoration: 'none',
+                  fontWeight: '500',
+                  transition: 'all var(--transition-fast)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.5rem',
+                }}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <rect x="2" y="3" width="20" height="14" rx="2" ry="2" />
+                  <line x1="8" y1="21" x2="16" y2="21" />
+                  <line x1="12" y1="17" x2="12" y2="21" />
+                </svg>
+                Product Master
+              </Link>
+
+              <Link
+                href="/rejected-data"
+                style={{
+                  padding: '0.625rem 1.25rem',
+                  background: 'rgba(220, 38, 38, 0.25)',
+                  color: 'white',
+                  borderRadius: 'var(--radius-md)',
+                  textDecoration: 'none',
+                  fontWeight: '500',
+                  transition: 'all var(--transition-fast)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.5rem',
+                  border: '1px solid rgba(220,38,38,0.4)',
+                }}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <circle cx="12" cy="12" r="10" />
+                  <line x1="15" y1="9" x2="9" y2="15" />
+                  <line x1="9" y1="9" x2="15" y2="15" />
+                </svg>
+                Rejected Data
+              </Link>
+
             </nav>
+
           </div>
         </div>
       </header>

@@ -15,6 +15,9 @@ import { parseCOAXml } from './coaParser';
 import { parseRequisitionXml } from './requisitionParser';
 import { parseInwardRegisterXml } from './inwardParser';
 import { parseRmCoaXml } from './rmCoaParser';
+import { parseProductMasterXml } from './productMasterParser';
+import { parseMaterialRejectionXml } from './materialRejectionParser';
+import ProductMaster from '@/models/ProductMaster';
 import RMCOA from '@/models/RMCOA';
 import ProcessingLog from '@/models/ProcessingLog';
 import Batch from '@/models/Batch';
@@ -22,6 +25,7 @@ import Formula from '@/models/Formula';
 import COA from '@/models/COA';
 import Requisition from '@/models/Requisition';
 import InwardRegister from '@/models/InwardRegister';
+import MaterialRejection from '@/models/MaterialRejection';
 import { v4 as uuidv4 } from 'uuid';
 import type {
   XmlFileInfo,
@@ -185,7 +189,7 @@ export async function processXmlFile(fileInfo: XmlFileInfo): Promise<IngestionRe
 
     // Skip early if already processed for BATCH, COA, RM_COA, and REQUISITION (exact duplicates)
     // BUT only if previous processing was NOT an error
-    if (existingLog && existingLog.status !== 'ERROR' && (fileType === 'BATCH' || fileType === 'COA' || fileType === 'RM_COA' || fileType === 'REQUISITION')) {
+    if (existingLog && existingLog.status !== 'ERROR' && (fileType === 'BATCH' || fileType === 'COA' || fileType === 'RM_COA' || fileType === 'REQUISITION' || fileType === 'PRODUCT_MASTER')) {
       console.log(`   ⚠️ SKIPPED: Already processed on ${existingLog.processedAt.toISOString()}`);
       return {
         fileName,
@@ -197,6 +201,18 @@ export async function processXmlFile(fileInfo: XmlFileInfo): Promise<IngestionRe
     }
 
     // fileType is already detected above
+
+    // MATERIAL_REJECTION files are managed exclusively through /api/rejection/process
+    // which handles its own internal duplicate detection. Skip them here so they
+    // never appear in the home-page ingestion results.
+    if (fileType === 'MATERIAL_REJECTION') {
+      return {
+        fileName,
+        fileType: 'MATERIAL_REJECTION',
+        status: 'DUPLICATE',
+        message: 'Material Rejection files are managed via the Rejected Data page',
+      };
+    }
 
     if (fileType === 'UNKNOWN') {
       // Log the error using findOneAndUpdate to prevent duplicate key error
@@ -503,6 +519,107 @@ export async function processXmlFile(fileInfo: XmlFileInfo): Promise<IngestionRe
           businessKey,
         };
       }
+    } else if (fileType === 'PRODUCT_MASTER') {
+      // Process Product Master
+      const products = await parseProductMasterXml(content);
+      
+      console.log(`Processing ${products.length} products from ${fileName}`);
+      
+      // Store all products (Upsert)
+      for (const product of products) {
+        await ProductMaster.findOneAndUpdate(
+          { productCode: product.productCode },
+          { 
+            ...product,
+            sourceFile: fileName,
+            processedAt: new Date()
+          },
+          { upsert: true }
+        );
+      }
+      
+      businessKey = `PRODUCT-MASTER-${fileName}`;
+      
+      // Log successful processing
+      await ProcessingLog.findOneAndUpdate(
+        { contentHash },
+        {
+          contentHash,
+          fileName,
+          fileType: 'PRODUCT_MASTER',
+          status: 'SUCCESS',
+          businessKey,
+          fileSize,
+          processedAt: new Date(),
+        },
+        { upsert: true }
+      );
+
+      return {
+        fileName,
+        fileType: 'PRODUCT_MASTER',
+        status: 'SUCCESS',
+        message: `Successfully processed ${products.length} products from Product Master`,
+        businessKey,
+      };
+    } else if (fileType === 'MATERIAL_REJECTION') {
+      // Process Material Rejection XML
+      const parseResult = parseMaterialRejectionXml(content);
+
+      if (!parseResult.success) {
+        throw new Error(parseResult.errors.join(', ') || 'Failed to parse Material Rejection XML');
+      }
+
+      console.log(`Processing ${parseResult.records.length} rejection records from ${fileName}`);
+
+      let newCount = 0;
+      let dupCount = 0;
+
+      for (const record of parseResult.records) {
+        try {
+          const result = await MaterialRejection.findOneAndUpdate(
+            { arNumber: record.arNumber, materialCode: record.materialCode },
+            {
+              ...record,
+              sourceFile: fileName,
+              contentHash,
+              uploadedAt: new Date(),
+            },
+            { upsert: true, new: true }
+          );
+          if (result) newCount++;
+        } catch (e: any) {
+          if (e.code === 11000) {
+            dupCount++;
+          } else {
+            throw e;
+          }
+        }
+      }
+
+      businessKey = `MATERIAL-REJECTION-${fileName}`;
+
+      await ProcessingLog.findOneAndUpdate(
+        { contentHash },
+        {
+          contentHash,
+          fileName,
+          fileType: 'MATERIAL_REJECTION',
+          status: 'SUCCESS',
+          businessKey,
+          fileSize,
+          processedAt: new Date(),
+        },
+        { upsert: true }
+      );
+
+      return {
+        fileName,
+        fileType: 'MATERIAL_REJECTION',
+        status: 'SUCCESS',
+        message: `Processed ${parseResult.records.length} rejection records (${dupCount} duplicates skipped)`,
+        businessKey,
+      };
     }
 
     // Step 5: Log successful processing
@@ -1020,9 +1137,15 @@ export async function runIngestion(): Promise<IngestionStatus> {
   const files = await scanFilesFolder();
   status.totalFiles = files.length;
 
-  // Process each file
+  // Process each file, skipping MATERIAL_REJECTION (managed via /rejected-data page)
   for (const file of files) {
     const result = await processXmlFile(file);
+
+    // Completely exclude MATERIAL_REJECTION from home-page results
+    if (result.fileType === 'MATERIAL_REJECTION') {
+      continue;
+    }
+
     status.results.push(result);
     status.processed++;
 

@@ -1,0 +1,7 @@
+First "Remark" at index 157297
+Texts near first Remark: [Remark: | Total | 0 | 4 | Batches were m | anufactured | during the review period.]
+
+"Batches were manufactured" at index: -1
+"manufactured" at index: 1057440
+"review period" at index: 158208
+"were" near remark at 157967: [Batches were m]

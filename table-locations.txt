@@ -1,0 +1,105 @@
+"Batch Number" occurrence 1 at index 150311
+"Batch Number" occurrence 2 at index 482853
+"Batch Number" occurrence 3 at index 579681
+"Batch Number" occurrence 4 at index 639974
+"Batch Number" occurrence 5 at index 780877
+"Batch Number" occurrence 6 at index 811344
+"Batch Number" occurrence 7 at index 1351457
+"Details of Product" occurrence 1 at index 149076
+
+Document length: 1646402
+
+D25D21 at index 490795
+Nearest <w:tbl> before: not found
+Context texts: [06 | <w:tcPr><w:tcW w:w="587" w:type="pct"/><w:vMerge w:val="restart"/><w:shd w:val="clear" w:color="auto" w:fill="auto"/><w:vAlign w:val="center"/></w:tcPr><w:p w14:paraId="3940640C" w14:textId="6E740803" w:rsidR="008A5252" w:rsidRPr="00237573" w:rsidRDefault="008A5252" w:rsidP="008A5252"><w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/><w:rPr><w:rStyle w:val="Strong"/><w:b w:val="0"/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:pPr><w:r w:rsidRPr="00237573"><w:rPr><w:rStyle w:val="Strong"/><w:b w:val="0"/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr><w:t>Nil | <w:tcPr><w:tcW w:w="1293" w:type="pct"/><w:shd w:val="clear" w:color="auto" w:fill="auto"/><w:vAlign w:val="center"/></w:tcPr><w:p w14:paraId="764AED4F" w14:textId="17AC45B2" w:rsidR="008A5252" w:rsidRPr="00237573" w:rsidRDefault="003F05F7" w:rsidP="008A5252"><w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/><w:rPr><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:pPr><w:r w:rsidRPr="00237573"><w:rPr><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr><w:t>IWAIORM2400480 | <w:tcPr><w:tcW w:w="580" w:type="pct"/><w:shd w:val="clear" w:color="auto" w:fill="auto"/><w:vAlign w:val="center"/></w:tcPr><w:p w14:paraId="337EDE72" w14:textId="0395D6DF" w:rsidR="008A5252" w:rsidRPr="00237573" w:rsidRDefault="003F05F7" w:rsidP="008A5252"><w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/><w:rPr><w:rStyle w:val="Strong"/><w:b w:val="0"/><w:bCs w:val="0"/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:pPr><w:r w:rsidRPr="00237573"><w:rPr><w:rStyle w:val="Strong"/><w:b w:val="0"/><w:bCs w:val="0"/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr><w:t>D25D21]
+
+D25D24 (new) at index 152421
+"BATCHES MANUFACTURED" at index 18792
+"Remark" at index 157297
+"Remark" at index 180897
+"Remark" at index 223782
+"Remark" at index 289953
+"Remark" at index 499679
+"Remark" at index 545557
+"Remark" at index 556535
+"Remark" at index 567545
+"Remark" at index 632250
+"Remark" at index 658681
+"Remark" at index 751789
+"Remark" at index 759240
+"Remark" at index 844442
+"Remark" at index 960281
+"Remark" at index 973690
+"Remark" at index 986185
+"Remark" at index 996844
+"Remark" at index 1009532
+"Remark" at index 1056724
+"Remark" at index 1087526
+"Remark" at index 1123059
+"Remark" at index 1138012
+"Remark" at index 1202312
+"Remark" at index 1214329
+"Remark" at index 1225031
+"Remark" at index 1234046
+"Remark" at index 1245639
+"Remark" at index 1256304
+"Remark" at index 1266159
+"Remark" at index 1276628
+"Remark" at index 1286719
+"Remark" at index 1296707
+"Remark" at index 1307900
+"Remark" at index 1318115
+"Remark" at index 1327619
+"Remark" at index 1333006
+"Remark" at index 1345362
+"Remark" at index 1365095
+"Remark" at index 1370217
+"Remark" at index 1376855
+"Remark" at index 1382196
+"Remark" at index 1389797
+"Remark" at index 1398799
+"Remark" at index 1499456
+"Remark" at index 1511204
+"Remark" at index 1561290
+"Remark" at index 1566676
+"Remark" at index 1573043
+"Remark" at index 1577837
+"Prepared By" at index 158813
+"Prepared By" at index 547264
+"Prepared By" at index 558540
+"Prepared By" at index 569554
+"Prepared By" at index 633789
+"Prepared By" at index 660356
+"Prepared By" at index 753556
+"Prepared By" at index 760931
+"Prepared By" at index 776227
+"Prepared By" at index 846548
+"Prepared By" at index 962851
+"Prepared By" at index 998747
+"Prepared By" at index 1038852
+"Prepared By" at index 1089401
+"Prepared By" at index 1203968
+"Prepared By" at index 1215807
+"Prepared By" at index 1267623
+"Prepared By" at index 1346343
+"Prepared By" at index 1366249
+"Prepared By" at index 1502520
+"Reviewed By" at index 159576
+"Reviewed By" at index 548027
+"Reviewed By" at index 559303
+"Reviewed By" at index 570317
+"Reviewed By" at index 634552
+"Reviewed By" at index 661119
+"Reviewed By" at index 754319
+"Reviewed By" at index 761694
+"Reviewed By" at index 776990
+"Reviewed By" at index 847311
+"Reviewed By" at index 963614
+"Reviewed By" at index 999510
+"Reviewed By" at index 1039677
+"Reviewed By" at index 1090164
+"Reviewed By" at index 1204731
+"Reviewed By" at index 1216653
+"Reviewed By" at index 1347085
+"Reviewed By" at index 1366991
+"Reviewed By" at index 1503283

@@ -31,6 +31,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<InwardRegi
                 { inwardNumber: searchRegex },
                 { arNumber: searchRegex },
                 { materialName: searchRegex },
+                { materialCode: searchRegex },
                 { batchNumber: searchRegex },
                 { challanNumber: searchRegex },
                 // Allow searching by source file name as well

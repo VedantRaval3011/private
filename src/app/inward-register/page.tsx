@@ -31,6 +31,7 @@ export default function InwardRegisterPage() {
         { key: 'inwardDate', label: 'Inward Date' },
         { key: 'vendorName', label: 'Vendor Name' },
         { key: 'materialName', label: 'Material Name' },
+        { key: 'materialCode', label: 'Material Code' },
         { key: 'batchNumber', label: 'Batch No' },
         { key: 'arNumber', label: 'AR Number' },
         { key: 'receivedQuantity', label: 'Received Qty', align: 'right' },
@@ -276,7 +277,7 @@ export default function InwardRegisterPage() {
                     <div style={{ flex: 1, minWidth: '300px' }}>
                         <input
                             type="text"
-                            placeholder="Search by Vendor, Inward No, AR No, Material..."
+                            placeholder="Search by Vendor, Inward No, AR No, Material, Material Code..."
                             value={search}
                             onChange={(e) => setSearch(e.target.value)}
                             style={{
@@ -341,13 +342,13 @@ export default function InwardRegisterPage() {
                             <tbody>
                                 {isLoading ? (
                                     <tr>
-                                        <td colSpan={8} style={{ padding: '2rem', textAlign: 'center', color: 'var(--muted-foreground)' }}>
+                                        <td colSpan={9} style={{ padding: '2rem', textAlign: 'center', color: 'var(--muted-foreground)' }}>
                                             Loading data...
                                         </td>
                                     </tr>
                                 ) : inwardData.length === 0 ? (
                                     <tr>
-                                        <td colSpan={8} style={{ padding: '2rem', textAlign: 'center', color: 'var(--muted-foreground)' }}>
+                                        <td colSpan={9} style={{ padding: '2rem', textAlign: 'center', color: 'var(--muted-foreground)' }}>
                                             No records found. Try uploading Inward Register XML files.
                                         </td>
                                     </tr>
@@ -361,6 +362,7 @@ export default function InwardRegisterPage() {
                                             <td style={{ padding: '0.75rem 1rem' }}>{item.inwardDate || '-'}</td>
                                             <td style={{ padding: '0.75rem 1rem', fontWeight: '500' }}>{item.vendorName}</td>
                                             <td style={{ padding: '0.75rem 1rem' }}>{item.materialName}</td>
+                                            <td style={{ padding: '0.75rem 1rem', fontFamily: 'monospace', fontSize: '0.85rem', color: 'var(--primary-700)' }}>{item.materialCode || '-'}</td>
                                             <td style={{ padding: '0.75rem 1rem' }}>{item.batchNumber || '-'}</td>
                                             <td style={{ padding: '0.75rem 1rem', color: item.arNumber ? 'var(--foreground)' : 'var(--muted-foreground)' }}>
                                                 {item.arNumber || 'N/A'}

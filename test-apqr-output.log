@@ -1,0 +1,68 @@
+﻿Starting APQR generation test...
+Generating APQR for SY208G1H - 2025
+npx : (node:29592) 
+[MONGOOSE] Warning: 
+Duplicate schema index on 
+{"productCode":1} found. 
+This is often due to 
+declaring an index using 
+both "index: true" and 
+"schema.index()". Please 
+remove the duplicate index 
+definition.
+At line:1 char:1
++ npx tsx 
+src/scripts/test-apqr.ts 
+2>&1 | Out-File -FilePath 
+test-apqr- ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~
+    + CategoryInfo          
+    : NotSpecified: ((node  
+  :29592) [M...dex defini   
+ tion.:String) [], Remot    
+eException
+    + FullyQualifiedErrorId 
+    : NativeCommandError
+ 
+(Use `node --trace-warnings 
+...` to show where the 
+warning was created)
+Γ£à Connected to MongoDB
+Product Master found: true {
+  productName: 'SODIUM HYALURONATE EYE DROPS(NP)',
+  genericName: 'SODIUM HYALURONATE EYE DROPS',
+  therapeuticCategory: 'IRRITED EYE & DRY EYES',
+  storageCondition: 'N/A'
+}
+
+≡ƒôè BATCH DATA SUMMARY (from Batch Registry):
+   Product Code: SY208G1H
+   Review Year: 2025
+   Total Batches Found: 6
+   Date Sources Used:
+     - mfgDate: 6
+     - batchCompletionDate (fallback): 0
+   First Batch: D25D21 (04/2025)
+   Last Batch: D25K08 (11/2025)
+APQR Data Summary: {
+  productCode: 'SY208G1H',
+  year: '2025',
+  totalBatches: '06',
+  batchesCount: 6,
+  compositionCount: 1,
+  materialVendorCount: 12
+}
+Replaced field "Product Name:" with "SODIUM HYALURONATE EYE DROPS(NP)"
+Replaced field "Generic Name:" with "SODIUM HYALURONATE EYE DROPS"
+Replaced field "Product Code:" with "SY208G1H"
+Replaced field "Dosage Form:" with ""
+Replaced field "Label Claim:" with "COMPOSITION: SODIUM HYALURONATE BP................"
+Replaced field "Therapeutic Category:" with "IRRITED EYE & DRY EYES"
+Replaced field "Storage Condition:" with "N/A"
+Replaced field "Shelf Life:" with "24"
+Replaced field "Mfg. Lic. No.:" with "G/28/197"
+Replaced field "Packing Style:" with ""
+Replacing 25 template rows with 12 data rows
+Γ£ô DOCX generated successfully: 219219 bytes
+Successfully generated DOCX at: C:\Dev\private\test_apqr_output.docx

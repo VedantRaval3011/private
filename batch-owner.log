@@ -1,0 +1,62 @@
+﻿Γ£à Connected to MongoDB
+≡ƒöì FINDING WHICH PRODUCT OWNS THESE BATCHES
+
+================================================================================
+Batch numbers to search: D25D21, D25E40, D25H28, D25K08
+================================================================================
+
+
+≡ƒôª Searching for batch: D25D21
+   Γ£à FOUND
+   Item Code: HY208B1H
+   Item Name: HYLOFRESH EYE DROPS 10ML(ECF)
+   Mfg Date: 20-APR-25
+   Batch Size: 150 BOT
+   Source File: BatchCrRegi-01-04-2025 to 09-12-2025.XML
+
+≡ƒôª Searching for batch: D25E40
+   Γ£à FOUND
+   Item Code: RE208B3H
+   Item Name: RICHARGE-HA EYE DROPS 10ML
+   Mfg Date: 29-MAY-25
+   Batch Size: 60 BOT
+   Source File: BatchCrRegi-01-04-2025 to 09-12-2025.XML
+
+≡ƒôª Searching for batch: D25H28
+   Γ£à FOUND
+   Item Code: HY208B1H
+   Item Name: HYLOFRESH EYE DROPS 10ML(ECF)
+   Mfg Date: 22-AUG-25
+   Batch Size: 140 BOT
+   Source File: BatchCrRegi-01-04-2025 to 09-12-2025.XML
+
+≡ƒôª Searching for batch: D25K08
+   Γ£à FOUND
+   Item Code: RE208B3H
+   Item Name: RICHARGE-HA EYE DROPS 10ML
+   Mfg Date: 07-NOV-25
+   Batch Size: 60 BOT
+   Source File: BatchCrRegi-01-04-2025 to 09-12-2025.XML
+
+================================================================================
+
+≡ƒôè SUMMARY: Unique Product Codes Found
+================================================================================
+
+Product Code: DH208B2H
+   Batches: D25H28
+   Count: 1
+
+Product Code: RE208B3H
+   Batches: D25E40, D25K08
+   Count: 2
+
+Product Code: HY208B1H
+   Batches: D25D21, D25H28
+   Count: 2
+
+Product Code: HY208B4H
+   Batches: D25E40
+   Count: 1
+
+================================================================================

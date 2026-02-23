@@ -1,0 +1,76 @@
+﻿npx : (node:23980) 
+[MONGOOSE] Warning: 
+Duplicate schema index on 
+{"productCode":1} found. 
+This is often due to 
+declaring an index using 
+both "index: true" and 
+"schema.index()". Please 
+remove the duplicate index 
+definition.
+At line:1 char:1
++ npx tsx 
+src/scripts/test-apqr.ts 
+2>&1 | Out-File -FilePath 
+test-outpu ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~
+    + CategoryInfo          
+    : NotSpecified: ((node  
+  :23980) [M...dex defini   
+ tion.:String) [], Remot    
+eException
+    + FullyQualifiedErrorId 
+    : NativeCommandError
+ 
+(Use `node --trace-warnings 
+...` to show where the 
+warning was created)
+Γ£à Connected to MongoDB
+Starting APQR generation test...
+MFC: MFC/H/DNC150.06
+Product Code: NC150G1H
+Product Name: NAPHA. HCL, ZINC SUL, CHLOR & HPMC.
+
+Generating APQR for NC150G1H - 2025
+Product Master found: true {
+  productName: 'NAPHA. HCL, ZINC SUL, CHLOR & HPMC.',
+  genericName: 'NAPHAZOLINE HYDROCHLORIDE, ZINC SULPHATE, CHLORPHENIRAMINE MALEATE AND HPMC OPHTHALMIC SOLUTION',
+  therapeuticCategory: 'CONJUNCTIVAL',
+  storageCondition: 'STORE AT TEMPERATURE NOT EXCEEDING 25∩┐╜C. PROTECT FROM LIGHT.'
+}
+
+≡ƒôè BATCH DATA SUMMARY (from Batch Registry):
+   Product Code: NC150G1H
+   Review Year: 2025
+   Total Batches Found: 3
+   Date Sources Used:
+     - mfgDate: 3
+     - batchCompletionDate (fallback): 0
+   First Batch: D25D24 (04/2025)
+   Last Batch: D25J27 (10/2025)
+APQR Data Summary: {
+  productCode: 'NC150G1H',
+  year: '2025',
+  totalBatches: '03',
+  batchesCount: 3,
+  compositionCount: 1,
+  materialVendorCount: 11
+}
+Replaced field "Product Name:" with "NAPHA. HCL, ZINC SUL, CHLOR & HPMC."
+Replaced field "Generic Name:" with "NAPHAZOLINE HYDROCHLORIDE, ZINC SULPHATE, CHLORPHE"
+Replaced field "Product Code:" with "NC150G1H"
+Replaced field "Dosage Form:" with ""
+Replaced field "Label Claim:" with "COMPOSITION NAPHAZOLINE HYDROCHLORIDE USP ..... 0."
+Replaced field "Therapeutic Category:" with "CONJUNCTIVAL"
+Replaced field "Storage Condition:" with "STORE AT TEMPERATURE NOT EXCEEDING 25∩┐╜C. PROTECT F"
+Replaced field "Shelf Life:" with "24"
+Replaced field "Mfg. Lic. No.:" with "G/28/197"
+Replaced field "Packing Style:" with ""
+Batch table: Replacing template rows with 3 data rows
+Monthly grid counts updated
+Replacing 25 template rows with 11 data rows
+Γ£ô DOCX generated successfully: 218868 bytes
+
+Γ£à Successfully generated DOCX at: C:\Dev\private\test_apqr_output.docx
+   File size: 213.74 KB

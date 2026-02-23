@@ -38,6 +38,7 @@ interface MaterialItem {
     srNo: number;
     materialCode: string;
     materialName: string;
+    subMaterialType?: string;
     potencyCorrection: string;
     requiredQuantity: string;
     overages?: string;
@@ -12260,6 +12261,7 @@ export default function FormulaDataPage() {
                                                                     'Sr. No',
                                                                     'Material Code',
                                                                     'Material Name',
+                                                                    'Sub Mat Type',
                                                                     'Potency',
                                                                     'Required Qty',
                                                                     'Overages %',
@@ -12270,6 +12272,7 @@ export default function FormulaDataPage() {
                                                                     item.srNo,
                                                                     item.materialCode,
                                                                     item.materialName,
+                                                                    item.subMaterialType,
                                                                     item.potencyCorrection,
                                                                     item.requiredQuantity,
                                                                     item.overages,

@@ -14,6 +14,23 @@ export function detectXmlType(xmlContent: string): XmlFileType {
   // Normalize content for reliable detection
   const content = xmlContent.toUpperCase();
 
+  // Check for Product Master (Priority check - MUST BE FIRST)
+  // Product Master uses <ITEMMASTER> root and has unique structure
+  // Must check BEFORE Formula because they share some tags (ITMCODE, MCADNO, GENERICNM)
+  // Definitive indicators:
+  // 1. <ITEMMASTER> root element
+  // 2. <LIST_G_CASEPACK> structure
+  // 3. <ITMGROUP> (therapeutic category)
+  // 4. <STOCOND> (storage condition)
+  // 5. <LOCEXP> (local/export type)
+  if (content.includes('<ITEMMASTER>') || 
+      content.includes('LIST_G_CASEPACK') ||
+      content.includes('G_CASEPACK') ||
+      (content.includes('<ITMGROUP>') && content.includes('<STOCOND>')) ||
+      (content.includes('<LOCEXP>') && content.includes('<ITMCODE>') && content.includes('<DEPARTMENT>'))) {
+    return 'PRODUCT_MASTER';
+  }
+
   // Check for Batch Creation XML (BATCHCRREGI format)
   // Look for characteristic tags
   const batchIndicators = [
@@ -134,6 +151,14 @@ export function detectXmlType(xmlContent: string): XmlFileType {
     return 'RM_COA';
   }
 
+  // Check for Material Rejection XML
+  // The Material Rejection report has a unique Oracle report root element: <T01201288>
+  // This is distinct from Inward Register files which use <MATINWREGI> as root.
+  // We CANNOT use STATUS=REJECTED because Inward Register files also contain rejected records.
+  if (content.includes('<T01201288>') || content.includes('T01201288')) {
+    return 'MATERIAL_REJECTION';
+  }
+
   // Check for Inward Register XML (MATINW format)
   // Requires LIST_G_MATINWDTLID or G_MATID which are NOT in RM COA
   const inwardIndicators = [
@@ -160,6 +185,14 @@ export function detectXmlType(xmlContent: string): XmlFileType {
     return 'FORMULA';
   }
 
+  // Check for Product Master (Secondary check)
+  // Additional Product Master indicators if primary check missed it
+  if (content.includes('ALL-PRODUCT MASTER') || 
+      content.includes('<ITEMMASTER>') ||
+      (content.includes('<ITMGROUP>') && content.includes('<STOCOND>') && content.includes('<LOCEXP>'))) {
+    return 'PRODUCT_MASTER';
+  }
+
   return 'UNKNOWN';
 }
 
@@ -180,6 +213,10 @@ export function getFileTypeName(type: XmlFileType): string {
       return 'Material Requisition';
     case 'INWARD_REGISTER':
       return 'Material Inward Register';
+    case 'MATERIAL_REJECTION':
+      return 'Material Rejection';
+    case 'PRODUCT_MASTER':
+      return 'Product Master';
     default:
       return 'Unknown';
   }

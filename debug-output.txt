@@ -1,0 +1,18 @@
+Connected to DB
+Generating APQR for NC150G1H...
+Generated 218316 bytes
+Document XML length: 1641113
+✅ w:tbl: 93 open, 93 close
+✅ w:tr: 449 open, 449 close
+❌ w:tc: 1771 open, 1783 close
+❌ w:p: 2895 open, 2825 close
+❌ w:r: 3365 open, 3377 close
+✅ w:body: 1 open, 1 close
+
+=== TEMPLATE TAG COUNTS ===
+✅ w:tbl: 93 open, 93 close
+✅ w:tr: 468 open, 468 close
+✅ w:tc: 1878 open, 1878 close
+❌ w:p: 3005 open, 2923 close
+✅ w:r: 3438 open, 3438 close
+✅ w:body: 1 open, 1 close

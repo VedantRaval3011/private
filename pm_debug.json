@@ -1,0 +1,38 @@
+﻿{
+    "success":  true,
+    "data":  [
+                 {
+                     "_id":  "6992bfc8319538569230f8b7",
+                     "productCode":  "NZ251G1H",
+                     "__v":  0,
+                     "actualFilling":  "3.2",
+                     "createdAt":  "2026-02-16T06:57:12.528Z",
+                     "department":  "EYE DROPS",
+                     "displayFormat":  "3 ML",
+                     "exciseDutyGroup":  "3",
+                     "exciseNotification":  "",
+                     "genericBranded":  "BRANDED",
+                     "genericName":  "NAPHAZOLINE HYDROCHLORIDE, PHENYLEPHRINE HYDROCHLORIDE \u0026 SODIUM CARBOXYMETHYL CELLULOSE OPHTHALMIC SOLUTION",
+                     "hsnCode":  "30049099",
+                     "masterCardNo":  "MFC/H/DNZ251.05",
+                     "mfg":  "INDIANA",
+                     "pack":  "",
+                     "processedAt":  "2026-02-16T06:57:12.528Z",
+                     "productName":  "NAPHA HCL, PHE HCL \u0026 CMCS OPH SOL",
+                     "productType":  "DOMESTIC",
+                     "sourceFile":  "All-Product master-Wadhwan.XML",
+                     "storageBin":  "",
+                     "storageCondition":  "N/A",
+                     "synonym":  "",
+                     "tariff":  "30049099",
+                     "therapeuticCategory":  "CONJUNCTIVAL",
+                     "updatedAt":  "2026-02-16T06:57:12.528Z"
+                 }
+             ],
+    "pagination":  {
+                       "total":  1,
+                       "page":  1,
+                       "limit":  50,
+                       "pages":  1
+                   }
+}

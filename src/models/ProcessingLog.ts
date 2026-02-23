@@ -18,7 +18,7 @@ const ProcessingLogSchema = new Schema<IProcessingLog>({
   fileName: { type: String, required: true },
   fileType: { 
     type: String, 
-    enum: ['BATCH', 'FORMULA', 'COA', 'UNKNOWN'],
+    enum: ['BATCH', 'FORMULA', 'COA', 'UNKNOWN', 'PRODUCT_MASTER', 'RM_COA', 'REQUISITION', 'INWARD_REGISTER'],
     required: true 
   },
   status: { 
