@@ -811,12 +811,11 @@ export async function GET(request: NextRequest): Promise<NextResponse<FormulasLi
       // Global PPM COA counts (using unique batches with PPM requirements)
       globalPpmCoaQualified: ppmCoaInwardQualifiedBatchNumbers.size,
       globalPpmCoaUnqualified: batchPpmExpecations.size - ppmCoaInwardQualifiedBatchNumbers.size,
-      // Global Bulk COA counts (based on batches WITH material requirements - same subset as RM COA)
-      // batchMaterialRequirements.size should be 1286, not allGlobalUniqueBatchNumbers.size (1436+)
-      globalBulkCoaQualified: [...batchMaterialRequirements.keys()].filter(bn => bulkCoaBatchSet.has(bn)).length,
-      globalBulkCoaUnqualified: [...batchMaterialRequirements.keys()].filter(bn => !bulkCoaBatchSet.has(bn)).length,
+      // Global Bulk COA counts (based on batches found in both requisition data and formula master data)
+      globalBulkCoaQualified: [...allGlobalUniqueBatchNumbers].filter(bn => bulkCoaBatchSet.has(bn)).length,
+      globalBulkCoaUnqualified: [...allGlobalUniqueBatchNumbers].filter(bn => !bulkCoaBatchSet.has(bn)).length,
       // List of batch numbers with Bulk COA data (for frontend section-specific calculation)
-      bulkCoaQualifiedBatchNumbersList: [...batchMaterialRequirements.keys()].filter(bn => bulkCoaBatchSet.has(bn)),
+      bulkCoaQualifiedBatchNumbersList: [...allGlobalUniqueBatchNumbers].filter(bn => bulkCoaBatchSet.has(bn)),
       // Global Finish COA counts - calculated against TOTAL batches (not unique)
       // This ensures: globalFinishCoaQualified + globalFinishCoaUnqualified = total batch count
       // We use allBatchNumbersByItemCode which has ALL occurrences (with duplicates)
@@ -855,7 +854,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<FormulasLi
         return total;
       })(),
       // List of batch numbers with Finish COA data (for frontend section-specific calculation)
-      finishCoaQualifiedBatchNumbersList: [...batchMaterialRequirements.keys()].filter(bn => finishCoaBatchSet.has(bn)),
+      finishCoaQualifiedBatchNumbersList: [...allGlobalUniqueBatchNumbers].filter(bn => finishCoaBatchSet.has(bn)),
       // All batch numbers list for frontend modal (with duplicates for total count matching)
       allBatchNumbersList: (() => {
         const allBatches: string[] = [];

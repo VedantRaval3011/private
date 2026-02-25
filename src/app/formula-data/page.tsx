@@ -4743,9 +4743,21 @@ export default function FormulaDataPage() {
 
             // Use the pre-computed bulkCoaQualifiedBatchNumbers set (same as capsule)
             // This ensures modal data matches capsule counts exactly
+
+            // Build valid batch numbers set for this MFC filter (same logic as capsule)
+            // This maps formula product codes → allBatches itemCodes → batch numbers
+            const validBatchNumbers = new Set<string>();
+            if (isFiltering) {
+                allBatches.forEach(batch => {
+                    if (batch.batchNumber && batch.itemCode && validProductCodes.has(batch.itemCode)) {
+                        validBatchNumbers.add(batch.batchNumber);
+                    }
+                });
+            }
+
             if (type === 'matched') {
-                // Fetch Bulk COA details for matched batches (to get AR numbers, test dates, etc.)
-                const bulkCoaResponse = await fetch('/api/coa?stage=BULK');
+                // Fetch ALL Bulk COA details for matched batches (no limit)
+                const bulkCoaResponse = await fetch('/api/coa?stage=BULK&limit=10000');
                 const bulkCoaResult = await bulkCoaResponse.json();
 
                 if (!bulkCoaResult.success) {
@@ -4769,11 +4781,10 @@ export default function FormulaDataPage() {
                         itemCode: batchToItemCode.get(coa.batchNumber) || coa.productCode
                     }));
 
-                // Apply section filter if needed
+                // Apply section filter using valid batch numbers (same logic as capsule)
                 if (isFiltering) {
                     matchedData = matchedData.filter((item: any) => {
-                        const code = item.itemCode;
-                        return code && validProductCodes.has(code);
+                        return validBatchNumbers.has(item.batchNumber);
                     });
                 }
 
@@ -4906,9 +4917,20 @@ export default function FormulaDataPage() {
 
             // Use the pre-computed finishCoaQualifiedBatchNumbers set (same as capsule)
             // This ensures modal data matches capsule counts exactly
+
+            // Build valid batch numbers set for this MFC filter (same logic as capsule)
+            const validBatchNumbers = new Set<string>();
+            if (isFiltering) {
+                allBatches.forEach(batch => {
+                    if (batch.batchNumber && batch.itemCode && validProductCodes.has(batch.itemCode)) {
+                        validBatchNumbers.add(batch.batchNumber);
+                    }
+                });
+            }
+
             if (type === 'matched') {
-                // Fetch Finish COA details for matched batches (to get AR numbers, test dates, etc.)
-                const finishCoaResponse = await fetch('/api/coa?stage=FINISH');
+                // Fetch ALL Finish COA details for matched batches (no limit)
+                const finishCoaResponse = await fetch('/api/coa?stage=FINISH&limit=10000');
                 const finishCoaResult = await finishCoaResponse.json();
 
                 if (!finishCoaResult.success) {
@@ -4932,11 +4954,10 @@ export default function FormulaDataPage() {
                         itemCode: batchToItemCode.get(coa.batchNumber) || coa.productCode
                     }));
 
-                // Apply section filter if needed
+                // Apply section filter using valid batch numbers (same logic as capsule)
                 if (isFiltering) {
                     matchedData = matchedData.filter((item: any) => {
-                        const code = item.itemCode;
-                        return code && validProductCodes.has(code);
+                        return validBatchNumbers.has(item.batchNumber);
                     });
                 }
 
