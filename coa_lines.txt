@@ -1,0 +1,462 @@
+﻿L198: globalBulkCoaQualified?: number;
+L199: globalBulkCoaUnqualified?: number;
+L200: bulkCoaQualifiedBatchNumbersList?: string[];
+L203: globalFinishCoaQualified?: number;
+L204: globalFinishCoaUnqualified?: number;
+L205: finishCoaQualifiedBatchNumbersList?: string[];
+L997: const [globalBulkCoaQualified, setGlobalBulkCoaQualified] = useState<number>(0);
+L998: const [globalBulkCoaUnqualified, setGlobalBulkCoaUnqualified] = useState<number>(0);
+L1000: const [bulkCoaQualifiedBatchNumbers, setBulkCoaQualifiedBatchNumbers] = useState<Set<string>>(new Set());
+L1002: const [globalFinishCoaQualified, setGlobalFinishCoaQualified] = useState<number>(0);
+L1003: const [globalFinishCoaUnqualified, setGlobalFinishCoaUnqualified] = useState<number>(0);
+L1005: const [finishCoaQualifiedBatchNumbers, setFinishCoaQualifiedBatchNumbers] = useState<Set<string>>(new Set());
+L1134: const [showBulkCoaModal, setShowBulkCoaModal] = useState(false);
+L1135: const [bulkCoaModalSubtitle, setBulkCoaModalSubtitle] = useState('');
+L1136: const [bulkCoaModalType, setBulkCoaModalType] = useState<'matched' | 'unmatched'>('matched');
+L1137: const [bulkCoaModalData, setBulkCoaModalData] = useState<any[]>([]);
+L1138: const [isBulkCoaModalLoading, setIsBulkCoaModalLoading] = useState(false);
+L1139: const [bulkCoaModalError, setBulkCoaModalError] = useState<string | null>(null);
+L1140: const [bulkCoaSortColumn, setBulkCoaSortColumn] = useState<string>('arNo');
+L1141: const [bulkCoaSortDirection, setBulkCoaSortDirection] = useState<'asc' | 'desc'>('asc');
+L1142: const [bulkCoaViewMode, setBulkCoaViewMode] = useState<'file' | 'table' | 'material' | 'batch'>('batch');
+L1143: const [bulkCoaSearchQuery, setBulkCoaSearchQuery] = useState<string>('');
+L1144: const [expandedBulkCoaArNumbers, setExpandedBulkCoaArNumbers] = useState<Set<string>>(new Set());
+L1145: const [expandedBulkCoaMaterialCodes, setExpandedBulkCoaMaterialCodes] = useState<Set<string>>(new Set());
+L1146: const [expandedBulkCoaBatchNumbers, setExpandedBulkCoaBatchNumbers] = useState<Set<string>>(new Set());
+L1150: const [showFinishCoaModal, setShowFinishCoaModal] = useState(false);
+L1151: const [finishCoaModalSubtitle, setFinishCoaModalSubtitle] = useState('');
+L1152: const [finishCoaModalType, setFinishCoaModalType] = useState<'matched' | 'unmatched'>('matched');
+L1153: const [finishCoaModalData, setFinishCoaModalData] = useState<any[]>([]);
+L1154: const [isFinishCoaModalLoading, setIsFinishCoaModalLoading] = useState(false);
+L1155: const [finishCoaModalError, setFinishCoaModalError] = useState<string | null>(null);
+L1156: const [finishCoaSortColumn, setFinishCoaSortColumn] = useState<string>('arNo');
+L1157: const [finishCoaSortDirection, setFinishCoaSortDirection] = useState<'asc' | 'desc'>('asc');
+L1158: const [finishCoaViewMode, setFinishCoaViewMode] = useState<'file' | 'table' | 'material' | 'batch'>('batch');
+L1159: const [finishCoaSearchQuery, setFinishCoaSearchQuery] = useState<string>('');
+L1160: const [expandedFinishCoaArNumbers, setExpandedFinishCoaArNumbers] = useState<Set<string>>(new Set());
+L1161: const [expandedFinishCoaMaterialCodes, setExpandedFinishCoaMaterialCodes] = useState<Set<string>>(new Set());
+L1162: const [expandedFinishCoaBatchNumbers, setExpandedFinishCoaBatchNumbers] = useState<Set<string>>(new Set());
+L1703: if (data.globalBulkCoaQualified !== undefined) setGlobalBulkCoaQualified(data.globalBulkCoaQualified);
+L1704: if (data.globalBulkCoaUnqualified !== undefined) setGlobalBulkCoaUnqualified(data.globalBulkCoaUnqualified);
+L1706: if (data.bulkCoaQualifiedBatchNumbersList) setBulkCoaQualifiedBatchNumbers(new Set(data.bulkCoaQualifiedBatchNumbersList));
+L1708: if (data.globalFinishCoaQualified !== undefined) setGlobalFinishCoaQualified(data.globalFinishCoaQualified);
+L1709: if (data.globalFinishCoaUnqualified !== undefined) setGlobalFinishCoaUnqualified(data.globalFinishCoaUnqualified);
+L1711: if (data.finishCoaQualifiedBatchNumbersList) setFinishCoaQualifiedBatchNumbers(new Set(data.finishCoaQualifiedBatchNumbersList));
+L4672: const openBulkCoaModal = useCallback(async (
+L4677: setShowBulkCoaModal(true);
+L4678: setBulkCoaModalType(type);
+L4679: setIsBulkCoaModalLoading(true);
+L4680: setBulkCoaModalError(null);
+L4681: setBulkCoaModalData([]);
+L4682: setExpandedBulkCoaArNumbers(new Set());
+L4683: setExpandedBulkCoaMaterialCodes(new Set());
+L4684: setExpandedBulkCoaBatchNumbers(new Set());
+L4685: setExpandedBulkCoaBatchNumbers(new Set());
+L4686: setBulkCoaSearchQuery('');
+L4687: setBulkCoaViewMode('batch');
+L4693: setBulkCoaModalSubtitle(`Filtered by MFC: ${mfc} - ${product}`);
+L4695: setBulkCoaModalSubtitle(`Filtered by ${section === 'main' ? 'MFCs with 3+ batches' : section === 'lowBatch' ? 'Low Batch MFCs' : section === 'noBatch'
+L4697: setBulkCoaModalSubtitle('');
+L4744: // Use the pre-computed bulkCoaQualifiedBatchNumbers set (same as capsule)
+L4760: const bulkCoaResponse = await fetch('/api/coa?stage=BULK&limit=10000');
+L4761: const bulkCoaResult = await bulkCoaResponse.json();
+L4763: if (!bulkCoaResult.success) {
+L4764: throw new Error(bulkCoaResult.message || 'Failed to fetch Bulk COA data');
+L4767: const bulkCoaRecords = bulkCoaResult.data || [];
+L4769: // Only include COA records for batches that are in bulkCoaQualifiedBatchNumbers
+L4770: let matchedData = bulkCoaRecords
+L4771: .filter((coa: any) => bulkCoaQualifiedBatchNumbers.has(coa.batchNumber))
+L4791: setBulkCoaModalData(matchedData);
+L4794: // Use the same logic as sectionBulkCoaData: unique batches from allBatches
+L4795: // checked against bulkCoaQualifiedBatchNumbers
+L4813: if (!bulkCoaQualifiedBatchNumbers.has(batchNumber)) {
+L4825: setBulkCoaModalData(unmatchedData);
+L4829: setBulkCoaModalError(error instanceof Error ? error.message : 'Failed to fetch data');
+L4831: setIsBulkCoaModalLoading(false);
+L4833: }, [allBatches, bulkCoaQualifiedBatchNumbers]);
+L4835: const closeBulkCoaModal = useCallback(() => {
+L4836: setShowBulkCoaModal(false);
+L4837: setBulkCoaModalData([]);
+L4838: setBulkCoaModalError(null);
+L4839: setExpandedBulkCoaArNumbers(new Set());
+L4840: setExpandedBulkCoaMaterialCodes(new Set());
+L4841: setExpandedBulkCoaBatchNumbers(new Set());
+L4842: setBulkCoaSearchQuery('');
+L4847: const openFinishCoaModal = useCallback(async (
+L4852: setShowFinishCoaModal(true);
+L4853: setFinishCoaModalType(type);
+L4854: setIsFinishCoaModalLoading(true);
+L4855: setFinishCoaModalError(null);
+L4856: setFinishCoaModalData([]);
+L4857: setExpandedFinishCoaArNumbers(new Set());
+L4858: setExpandedFinishCoaMaterialCodes(new Set());
+L4859: setExpandedFinishCoaBatchNumbers(new Set());
+L4860: setFinishCoaSearchQuery('');
+L4861: setFinishCoaViewMode('batch');
+L4867: setFinishCoaModalSubtitle(`Filtered by MFC: ${mfc} - ${product}`);
+L4869: setFinishCoaModalSubtitle(`Filtered by ${section === 'main' ? 'MFCs with 3+ batches' : section === 'lowBatch' ? 'Low Batch MFCs' : section === 'noBatc
+L4871: setFinishCoaModalSubtitle('');
+L4918: // Use the pre-computed finishCoaQualifiedBatchNumbers set (same as capsule)
+L4933: const finishCoaResponse = await fetch('/api/coa?stage=FINISH&limit=10000');
+L4934: const finishCoaResult = await finishCoaResponse.json();
+L4936: if (!finishCoaResult.success) {
+L4937: throw new Error(finishCoaResult.message || 'Failed to fetch Finish COA data');
+L4940: const finishCoaRecords = finishCoaResult.data || [];
+L4942: // Only include COA records for batches that are in finishCoaQualifiedBatchNumbers
+L4943: let matchedData = finishCoaRecords
+L4944: .filter((coa: any) => finishCoaQualifiedBatchNumbers.has(coa.batchNumber))
+L4964: setFinishCoaModalData(matchedData);
+L4967: // Use the same logic as sectionFinishCoaData: batches from allBatches
+L4968: // checked against finishCoaQualifiedBatchNumbers
+L4982: if (!finishCoaQualifiedBatchNumbers.has(batch.batchNumber)) {
+L4995: setFinishCoaModalData(unmatchedData);
+L4999: setFinishCoaModalError(error instanceof Error ? error.message : 'Failed to fetch data');
+L5001: setIsFinishCoaModalLoading(false);
+L5003: }, [allBatches, finishCoaQualifiedBatchNumbers]);
+L5005: const closeFinishCoaModal = useCallback(() => {
+L5006: setShowFinishCoaModal(false);
+L5007: setFinishCoaModalData([]);
+L5008: setFinishCoaModalError(null);
+L5009: setExpandedFinishCoaArNumbers(new Set());
+L5010: setExpandedFinishCoaMaterialCodes(new Set());
+L5011: setExpandedFinishCoaBatchNumbers(new Set());
+L5012: setFinishCoaSearchQuery('');
+L6224: const sectionBulkCoaData = useMemo(() => {
+L6305: const hasBulkCoa = bulkCoaQualifiedBatchNumbers.has(batch.batchNumber);
+L6306: if (hasBulkCoa) {
+L6314: }, [allBatches, bulkCoaQualifiedBatchNumbers, mainFormulas, lowBatchFormulas, noBatchFormulas, placeboFormulas]);
+L6318: const sectionFinishCoaData = useMemo(() => {
+L6401: const hasFinishCoa = finishCoaQualifiedBatchNumbers.has(batch.batchNumber);
+L6402: if (hasFinishCoa) {
+L6410: }, [allBatches, finishCoaQualifiedBatchNumbers, mainFormulas, lowBatchFormulas, noBatchFormulas, placeboFormulas]);
+L6452: bulkCoaQualified,
+L6453: bulkCoaUnqualified,
+L6454: onBulkCoaQualifiedClick,
+L6455: onBulkCoaUnqualifiedClick,
+L6456: finishCoaQualified,
+L6457: finishCoaUnqualified,
+L6458: onFinishCoaQualifiedClick,
+L6459: onFinishCoaUnqualifiedClick,
+L6507: bulkCoaQualified?: number;
+L6508: bulkCoaUnqualified?: number;
+L6509: onBulkCoaQualifiedClick?: () => void;
+L6510: onBulkCoaUnqualifiedClick?: () => void;
+L6511: finishCoaQualified?: number;
+L6512: finishCoaUnqualified?: number;
+L6513: onFinishCoaQualifiedClick?: () => void;
+L6514: onFinishCoaUnqualifiedClick?: () => void;
+L6972: {((bulkCoaQualified !== undefined || bulkCoaUnqualified !== undefined) && (bulkCoaQualified! + bulkCoaUnqualified!) > 0) ||
+L6973: ((finishCoaQualified !== undefined || finishCoaUnqualified !== undefined) && (finishCoaQualified! + finishCoaUnqualified!) > 0) ? (
+L6976: {(bulkCoaQualified !== undefined || bulkCoaUnqualified !== undefined) && (bulkCoaQualified! + bulkCoaUnqualified!) > 0 && (
+L6979: matched={bulkCoaQualified || 0}
+L6980: unmatched={bulkCoaUnqualified || 0}
+L6981: onGreenClick={onBulkCoaQualifiedClick}
+L6982: onRedClick={onBulkCoaUnqualifiedClick}
+L6989: {(finishCoaQualified !== undefined || finishCoaUnqualified !== undefined) && (finishCoaQualified! + finishCoaUnqualified!) > 0 && (
+L6992: matched={finishCoaQualified || 0}
+L6993: unmatched={finishCoaUnqualified || 0}
+L6994: onGreenClick={onFinishCoaQualifiedClick}
+L6995: onRedClick={onFinishCoaUnqualifiedClick}
+L11266: bulkCoaQualified={sectionBulkCoaData.main.qualified}
+L11267: bulkCoaUnqualified={sectionBulkCoaData.main.unqualified}
+L11268: onBulkCoaQualifiedClick={() => openBulkCoaModal('matched', 'main', mainFormulas)}
+L11269: onBulkCoaUnqualifiedClick={() => openBulkCoaModal('unmatched', 'main', mainFormulas)}
+L11270: finishCoaQualified={sectionFinishCoaData.main.qualified}
+L11271: finishCoaUnqualified={sectionFinishCoaData.main.unqualified}
+L11272: onFinishCoaQualifiedClick={() => openFinishCoaModal('matched', 'main', mainFormulas)}
+L11273: onFinishCoaUnqualifiedClick={() => openFinishCoaModal('unmatched', 'main', mainFormulas)}
+L12037: matched={(formula as any).bulkCoaQualified || 0}
+L12038: unmatched={(formula as any).bulkCoaUnqualified || 0}
+L12039: onGreenClick={() => openBulkCoaModal('matched', 'main', [formula])}
+L12040: onRedClick={() => openBulkCoaModal('unmatched', 'main', [formula])}
+L12049: matched={(formula as any).finishCoaQualified || 0}
+L12050: unmatched={(formula as any).finishCoaUnqualified || 0}
+L12051: onGreenClick={() => openFinishCoaModal('matched', 'main', [formula])}
+L12052: onRedClick={() => openFinishCoaModal('unmatched', 'main', [formula])}
+L12891: bulkCoaQualified={sectionBulkCoaData.lowBatch.qualified}
+L12892: bulkCoaUnqualified={sectionBulkCoaData.lowBatch.unqualified}
+L12893: onBulkCoaQualifiedClick={() => openBulkCoaModal('matched', 'lowBatch', lowBatchFormulas)}
+L12894: onBulkCoaUnqualifiedClick={() => openBulkCoaModal('unmatched', 'lowBatch', lowBatchFormulas)}
+L12895: finishCoaQualified={sectionFinishCoaData.lowBatch.qualified}
+L12896: finishCoaUnqualified={sectionFinishCoaData.lowBatch.unqualified}
+L12897: onFinishCoaQualifiedClick={() => openFinishCoaModal('matched', 'lowBatch', lowBatchFormulas)}
+L12898: onFinishCoaUnqualifiedClick={() => openFinishCoaModal('unmatched', 'lowBatch', lowBatchFormulas)}
+L12991: if (bulkCoaQualifiedBatchNumbers.has(batch.batchNumber || '')) {
+L13006: onGreenClick={() => openBulkCoaModal('matched', 'lowBatch', [formula])}
+L13007: onRedClick={() => openBulkCoaModal('unmatched', 'lowBatch', [formula])}
+L13058: bulkCoaQualified={sectionBulkCoaData.noBatch.qualified}
+L13059: bulkCoaUnqualified={sectionBulkCoaData.noBatch.unqualified}
+L13060: onBulkCoaQualifiedClick={() => openBulkCoaModal('matched', 'noBatch', noBatchFormulas)}
+L13061: onBulkCoaUnqualifiedClick={() => openBulkCoaModal('unmatched', 'noBatch', noBatchFormulas)}
+L13062: finishCoaQualified={sectionFinishCoaData.noBatch.qualified}
+L13063: finishCoaUnqualified={sectionFinishCoaData.noBatch.unqualified}
+L13064: onFinishCoaQualifiedClick={() => openFinishCoaModal('matched', 'noBatch', noBatchFormulas)}
+L13065: onFinishCoaUnqualifiedClick={() => openFinishCoaModal('unmatched', 'noBatch', noBatchFormulas)}
+L13160: if (bulkCoaQualifiedBatchNumbers.has(batch.batchNumber || '')) {
+L13175: onGreenClick={() => openBulkCoaModal('matched', 'noBatch', [formula])}
+L13176: onRedClick={() => openBulkCoaModal('unmatched', 'noBatch', [formula])}
+L13226: bulkCoaQualified={sectionBulkCoaData.placebo.qualified}
+L13227: bulkCoaUnqualified={sectionBulkCoaData.placebo.unqualified}
+L13228: onBulkCoaQualifiedClick={() => openBulkCoaModal('matched', 'placebo', placeboFormulas)}
+L13229: onBulkCoaUnqualifiedClick={() => openBulkCoaModal('unmatched', 'placebo', placeboFormulas)}
+L13230: finishCoaQualified={sectionFinishCoaData.placebo.qualified}
+L13231: finishCoaUnqualified={sectionFinishCoaData.placebo.unqualified}
+L13232: onFinishCoaQualifiedClick={() => openFinishCoaModal('matched', 'placebo', placeboFormulas)}
+L13233: onFinishCoaUnqualifiedClick={() => openFinishCoaModal('unmatched', 'placebo', placeboFormulas)}
+L13331: if (bulkCoaQualifiedBatchNumbers.has(batch.batchNumber || '')) {
+L13346: onGreenClick={() => openBulkCoaModal('matched', 'placebo', [formula])}
+L13347: onRedClick={() => openBulkCoaModal('unmatched', 'placebo', [formula])}
+L17898: {showBulkCoaModal && (
+L17911: onClick={closeBulkCoaModal}
+L17931: background: bulkCoaModalType === 'matched' ? 'linear-gradient(to right, #ecfdf5, #f0fdf4)' : 'linear-gradient(to right, #fef2f2, #fff1f1)',
+L17941: background: bulkCoaModalType === 'matched'
+L17950: {bulkCoaModalType === 'matched' ? 'âœ“' : 'âœ—'}
+L17954: Bulk COA - {bulkCoaModalType === 'matched' ? 'With COA Data' : 'Missing COA Data'}
+L17957: {bulkCoaModalSubtitle || (bulkCoaModalType === 'matched'
+L17964: onClick={closeBulkCoaModal}
+L18001: const uniqueArs = new Set(bulkCoaModalData.map(item => item.arNumber).filter(ar => ar && ar !== 'N/A' && ar !== 'Missing Bulk COA')).size;
+L18005: <span style={{ color: '#64748b', fontWeight: 500 }}>Unique AR Numbers {bulkCoaModalType === 'unmatched' ? '(Missing)' : ''}</span>
+L18017: const uniqueMaterials = new Set(bulkCoaModalData.map(item => item.itemCode || item.productCode).filter(code => code && code !== 'N/A')).size;
+L18026: background: bulkCoaModalType === 'matched' ? '#059669' : '#dc2626',
+L18033: const uniqueBatches = new Set(bulkCoaModalData.map(item => item.batchNumber)).size;
+L18048: {bulkCoaModalData.length.toLocaleString()}
+L18055: {(bulkCoaViewMode === 'file' || bulkCoaViewMode === 'table' || bulkCoaViewMode === 'material' || bulkCoaViewMode === 'batch') && (
+L18060: value={bulkCoaSearchQuery}
+L18061: onChange={(e) => setBulkCoaSearchQuery(e.target.value)}
+L18080: onClick={() => setBulkCoaViewMode('file')}
+L18085: background: bulkCoaViewMode === 'file' ? 'white' : 'transparent',
+L18086: color: bulkCoaViewMode === 'file' ? (bulkCoaModalType === 'matched' ? '#059669' : '#dc2626') : '#64748b',
+L18087: boxShadow: bulkCoaViewMode === 'file' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+L18097: onClick={() => setBulkCoaViewMode('material')}
+L18102: background: bulkCoaViewMode === 'material' ? 'white' : 'transparent',
+L18103: color: bulkCoaViewMode === 'material' ? (bulkCoaModalType === 'matched' ? '#059669' : '#dc2626') : '#64748b',
+L18104: boxShadow: bulkCoaViewMode === 'material' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+L18114: onClick={() => setBulkCoaViewMode('table')}
+L18119: background: bulkCoaViewMode === 'table' ? 'white' : 'transparent',
+L18120: color: bulkCoaViewMode === 'table' ? (bulkCoaModalType === 'matched' ? '#059669' : '#dc2626') : '#64748b',
+L18121: boxShadow: bulkCoaViewMode === 'table' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+L18131: onClick={() => setBulkCoaViewMode('batch')}
+L18136: background: bulkCoaViewMode === 'batch' ? 'white' : 'transparent',
+L18137: color: bulkCoaViewMode === 'batch' ? (bulkCoaModalType === 'matched' ? '#059669' : '#dc2626') : '#64748b',
+L18138: boxShadow: bulkCoaViewMode === 'batch' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+L18153: {isBulkCoaModalLoading ? (
+L18159: ) : bulkCoaModalError ? (
+L18163: <p style={{ color: '#64748b' }}>{bulkCoaModalError}</p>
+L18165: onClick={() => openBulkCoaModal(bulkCoaModalType)}
+L18173: const filteredData = bulkCoaModalData.filter(item => {
+L18174: if (!bulkCoaSearchQuery) return true;
+L18175: const searchLower = bulkCoaSearchQuery.toLowerCase();
+L18189: No results found for "{bulkCoaSearchQuery}"
+L18195: if (bulkCoaViewMode === 'file') {
+L18214: let valA: any = a[bulkCoaSortColumn as keyof typeof a];
+L18215: let valB: any = b[bulkCoaSortColumn as keyof typeof b];
+L18217: if (bulkCoaSortColumn === 'batches') {
+L18223: return bulkCoaSortDirection === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA);
+L18225: return bulkCoaSortDirection === 'asc' ? (valA - valB) : (valB - valA);
+L18229: if (bulkCoaSortColumn === col) {
+L18230: setBulkCoaSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
+L18232: setBulkCoaSortColumn(col);
+L18233: setBulkCoaSortDirection('asc');
+L18238: <span style={{ marginLeft: '4px', opacity: bulkCoaSortColumn === col ? 1 : 0.2 }}>
+L18239: {bulkCoaSortColumn === col ? (bulkCoaSortDirection === 'asc' ? 'â†‘' : 'â†“') : 'â†•'}
+L18264: {bulkCoaModalType === 'matched' ? 'PRODUCT CODE' : 'ITEM CODE'} <SortIcon col="productCode" />
+L18267: {bulkCoaModalType === 'matched' ? 'PRODUCT NAME' : 'ITEM NAME'} <SortIcon col="productName" />
+L18277: const isExpanded = expandedBulkCoaArNumbers.has(row.arNo);
+L18287: onClick={() => setExpandedBulkCoaArNumbers(prev => {
+L18310: color: bulkCoaModalType === 'matched' ? '#059669' : '#dc2626',
+L18312: background: bulkCoaModalType === 'matched' ? '#ecfdf5' : '#fef2f2',
+L18344: <th style={{ padding: '8px 16px', textAlign: 'left', color: '#64748b' }}>{bulkCoaModalType === 'matched' ? 'Product Code' : 'Item Code'}</th>
+L18345: <th style={{ padding: '8px 16px', textAlign: 'left', color: '#64748b' }}>{bulkCoaModalType === 'matched' ? 'Product Name' : 'Item Name'}</th>
+L18346: {bulkCoaModalType === 'matched' && <th style={{ padding: '8px 16px', textAlign: 'left', color: '#64748b' }}>Test Date</th>}
+L18347: {bulkCoaModalType === 'unmatched' && <th style={{ padding: '8px 16px', textAlign: 'left', color: '#64748b' }}>Mfg Date</th>}
+L18353: <td style={{ padding: '8px 16px', fontFamily: 'monospace', fontWeight: 600, color: bulkCoaModalType === 'matched' ? '#059669' : '#dc2626' }}>{item.bat
+L18356: {bulkCoaModalType === 'matched' && <td style={{ padding: '8px 16px', color: '#64748b' }}>{item.testDate || 'N/A'}</td>}
+L18357: {bulkCoaModalType === 'unmatched' && <td style={{ padding: '8px 16px', color: '#64748b' }}>{item.mfgDate || 'N/A'}</td>}
+L18372: if (bulkCoaViewMode === 'material') {
+L18391: let valA: any = a[bulkCoaSortColumn as keyof typeof a];
+L18392: let valB: any = b[bulkCoaSortColumn as keyof typeof b];
+L18394: if (bulkCoaSortColumn === 'records') {
+L18400: return bulkCoaSortDirection === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA);
+L18402: return bulkCoaSortDirection === 'asc' ? (valA - valB) : (valB - valA);
+L18406: if (bulkCoaSortColumn === col) {
+L18407: setBulkCoaSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
+L18409: setBulkCoaSortColumn(col);
+L18410: setBulkCoaSortDirection('asc');
+L18415: <span style={{ marginLeft: '4px', opacity: bulkCoaSortColumn === col ? 1 : 0.2 }}>
+L18416: {bulkCoaSortColumn === col ? (bulkCoaSortDirection === 'asc' ? 'â†‘' : 'â†“') : 'â†•'}
+L18438: {bulkCoaModalType === 'matched' ? 'PRODUCT CODE' : 'ITEM CODE'} <SortIcon col="materialCode" />
+L18441: {bulkCoaModalType === 'matched' ? 'PRODUCT NAME' : 'ITEM NAME'} <SortIcon col="materialName" />
+L18454: const isExpanded = expandedBulkCoaMaterialCodes.has(row.materialCode);
+L18464: onClick={() => setExpandedBulkCoaMaterialCodes(prev => {
+L18493: <div style={{ textAlign: 'right', fontWeight: 700, color: bulkCoaModalType === 'matched' ? '#059669' : '#dc2626' }}>
+L18513: {bulkCoaModalType === 'matched' && <th style={{ padding: '8px 16px', textAlign: 'left', color: '#64748b' }}>Test Date</th>}
+L18514: {bulkCoaModalType === 'unmatched' && <th style={{ padding: '8px 16px', textAlign: 'left', color: '#64748b' }}>Mfg Date</th>}
+L18515: {bulkCoaModalType === 'unmatched' && <th style={{ padding: '8px 16px', textAlign: 'left', color: '#64748b' }}>Expiry Date</th>}
+L18521: <td style={{ padding: '8px 16px', fontFamily: 'monospace', fontWeight: 600, color: bulkCoaModalType === 'matched' ? '#059669' : '#dc2626' }}>{item.arN
+L18523: {bulkCoaModalType === 'matched' && <td style={{ padding: '8px 16px', color: '#64748b' }}>{item.testDate || 'N/A'}</td>}
+L18524: {bulkCoaModalType === 'unmatched' && <td style={{ padding: '8px 16px', color: '#64748b' }}>{item.mfgDate || 'N/A'}</td>}
+L18525: {bulkCoaModalType === 'unmatched' && <td style={{ padding: '8px 16px', color: '#dc2626' }}>{item.expiryDate || 'N/A'}</td>}
+L18540: if (bulkCoaViewMode === 'table') {
+L18542: let valA = a[bulkCoaSortColumn] || '';
+L18543: let valB = b[bulkCoaSortColumn] || '';
+L18546: return bulkCoaSortDirection === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA);
+L18548: return bulkCoaSortDirection === 'asc' ? (valA - valB) : (valB - valA);
+L18552: if (bulkCoaSortColumn === col) {
+L18553: setBulkCoaSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
+L18555: setBulkCoaSortColumn(col);
+L18556: setBulkCoaSortDirection('asc');
+L18561: <span style={{ marginLeft: '4px', opacity: bulkCoaSortColumn === col ? 1 : 0.2 }}>
+L18562: {bulkCoaSortColumn === col ? (bulkCoaSortDirection === 'asc' ? 'â†‘' : 'â†“') : 'â†•'}
+L18577: <th onClick={() => toggleSort(bulkCoaModalType === 'matched' ? 'productCode' : 'itemCode')} style={{ padding: '16px 20px', fontWeight: 700, fontSize: 
+L18578: {bulkCoaModalType === 'matched' ? 'Product Code' : 'Item Code'} <SortIcon col={bulkCoaModalType === 'matched' ? 'productCode' : 'itemCode'} />
+L18580: <th onClick={() => toggleSort(bulkCoaModalType === 'matched' ? 'productName' : 'itemName')} style={{ padding: '16px 20px', fontWeight: 700, fontSize: 
+L18581: {bulkCoaModalType === 'matched' ? 'Product Name' : 'Item Name'} <SortIcon col={bulkCoaModalType === 'matched' ? 'productName' : 'itemName'} />
+L18583: {bulkCoaModalType === 'matched' && (
+L18588: {bulkCoaModalType === 'unmatched' && (
+L18607: <div style={{ fontFamily: 'monospace', fontWeight: 800, color: bulkCoaModalType === 'matched' ? '#059669' : '#dc2626', fontSize: '1rem' }}>{item.batch
+L18612: color: bulkCoaModalType === 'matched' ? '#0f172a' : '#ef4444',
+L18613: background: bulkCoaModalType === 'matched' ? '#ecfdf5' : '#fef2f2',
+L18623: {bulkCoaModalType === 'matched' && (
+L18626: {bulkCoaModalType === 'unmatched' && (
+L18641: if (bulkCoaViewMode === 'batch') {
+L18660: let valA: any = a[bulkCoaSortColumn as keyof typeof a];
+L18661: let valB: any = b[bulkCoaSortColumn as keyof typeof b];
+L18663: if (bulkCoaSortColumn === 'arCount') {
+L18669: return bulkCoaSortDirection === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA);
+L18671: return bulkCoaSortDirection === 'asc' ? (valA - valB) : (valB - valA);
+L18675: if (bulkCoaSortColumn === col) {
+L18676: setBulkCoaSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
+L18678: setBulkCoaSortColumn(col);
+L18679: setBulkCoaSortDirection('asc');
+L18684: <span style={{ marginLeft: '4px', opacity: bulkCoaSortColumn === col ? 1 : 0.2 }}>
+L18685: {bulkCoaSortColumn === col ? (bulkCoaSortDirection === 'asc' ? 'â†‘' : 'â†“') : 'â†•'}
+L18710: {bulkCoaModalType === 'matched' ? 'PRODUCT CODE' : 'ITEM CODE'} <SortIcon col="productCode" />
+L18713: {bulkCoaModalType === 'matched' ? 'PRODUCT NAME' : 'ITEM NAME'} <SortIcon col="productName" />
+L18723: const isExpanded = expandedBulkCoaBatchNumbers.has(row.batchNo);
+L18733: onClick={() => setExpandedBulkCoaBatchNumbers(prev => {
+L18756: color: bulkCoaModalType === 'matched' ? '#059669' : '#dc2626',
+L18786: <th style={{ padding: '8px 16px', textAlign: 'left', color: '#64748b' }}>{bulkCoaModalType === 'matched' ? 'Product Code' : 'Item Code'}</th>
+L18787: <th style={{ padding: '8px 16px', textAlign: 'left', color: '#64748b' }}>{bulkCoaModalType === 'matched' ? 'Product Name' : 'Item Name'}</th>
+L18788: {bulkCoaModalType === 'matched' && <th style={{ padding: '8px 16px', textAlign: 'left', color: '#64748b' }}>Test Date</th>}
+L18789: {bulkCoaModalType === 'unmatched' && <th style={{ padding: '8px 16px', textAlign: 'left', color: '#64748b' }}>Mfg Date</th>}
+L18795: <td style={{ padding: '8px 16px', fontFamily: 'monospace', fontWeight: 600, color: bulkCoaModalType === 'matched' ? '#059669' : '#dc2626' }}>{item.arN
+L18798: {bulkCoaModalType === 'matched' && <td style={{ padding: '8px 16px', color: '#64748b' }}>{item.testDate || 'N/A'}</td>}
+L18799: {bulkCoaModalType === 'unmatched' && <td style={{ padding: '8px 16px', color: '#64748b' }}>{item.mfgDate || 'N/A'}</td>}
+L18816: {!isBulkCoaModalLoading && !bulkCoaModalError && bulkCoaModalData.length === 0 && (
+L18819: {bulkCoaModalType === 'matched' ? 'ðŸ”' : 'âœ¨'}
+L18822: {bulkCoaModalType === 'matched' ? 'No records' : 'All clear!'}
+L18825: {bulkCoaModalType === 'matched'
+L18837: const filteredData = bulkCoaModalData.filter(item => {
+L18838: if (!bulkCoaSearchQuery) return true;
+L18839: const searchLower = bulkCoaSearchQuery.toLowerCase();
+L18849: `Bulk_COA_${bulkCoaModalType === 'matched' ? 'Matched' : 'Missing'}_${new Date().toISOString().split('T')[0]}.xlsx`
+L18855: background: bulkCoaModalType === 'matched' ? '#059669' : '#dc2626',
+L18868: onClick={closeBulkCoaModal}
+L18887: {showFinishCoaModal && (
+L18900: onClick={closeFinishCoaModal}
+L18920: background: finishCoaModalType === 'matched' ? 'linear-gradient(to right, #f0fdfa, #ccfbf1)' : 'linear-gradient(to right, #fef2f2, #fff1f1)',
+L18930: background: finishCoaModalType === 'matched'
+L18939: {finishCoaModalType === 'matched' ? 'âœ“' : 'âœ—'}
+L18943: Finish COA - {finishCoaModalType === 'matched' ? 'With COA Data' : 'Missing COA Data'}
+L18946: {finishCoaModalSubtitle || (finishCoaModalType === 'matched'
+L18953: onClick={closeFinishCoaModal}
+L18990: const uniqueArs = new Set(finishCoaModalData.map(item => item.arNumber).filter(ar => ar && ar !== 'N/A' && ar !== 'Missing Finish COA')).size;
+L18994: <span style={{ color: '#64748b', fontWeight: 500 }}>Unique AR Numbers {finishCoaModalType === 'unmatched' ? '(Missing)' : ''}</span>
+L19006: const uniqueMaterials = new Set(finishCoaModalData.map(item => item.itemCode || item.productCode).filter(code => code && code !== 'N/A')).size;
+L19015: background: finishCoaModalType === 'matched' ? '#0d9488' : '#dc2626',
+L19022: const uniqueBatches = new Set(finishCoaModalData.map(item => item.batchNumber)).size;
+L19037: {finishCoaModalData.length.toLocaleString()}
+L19048: value={finishCoaSearchQuery}
+L19049: onChange={(e) => setFinishCoaSearchQuery(e.target.value)}
+L19067: onClick={() => setFinishCoaViewMode('file')}
+L19072: background: finishCoaViewMode === 'file' ? 'white' : 'transparent',
+L19073: color: finishCoaViewMode === 'file' ? (finishCoaModalType === 'matched' ? '#0d9488' : '#dc2626') : '#64748b',
+L19074: boxShadow: finishCoaViewMode === 'file' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+L19084: onClick={() => setFinishCoaViewMode('material')}
+L19089: background: finishCoaViewMode === 'material' ? 'white' : 'transparent',
+L19090: color: finishCoaViewMode === 'material' ? (finishCoaModalType === 'matched' ? '#0d9488' : '#dc2626') : '#64748b',
+L19091: boxShadow: finishCoaViewMode === 'material' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+L19101: onClick={() => setFinishCoaViewMode('table')}
+L19106: background: finishCoaViewMode === 'table' ? 'white' : 'transparent',
+L19107: color: finishCoaViewMode === 'table' ? (finishCoaModalType === 'matched' ? '#0d9488' : '#dc2626') : '#64748b',
+L19108: boxShadow: finishCoaViewMode === 'table' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+L19118: onClick={() => setFinishCoaViewMode('batch')}
+L19123: background: finishCoaViewMode === 'batch' ? 'white' : 'transparent',
+L19124: color: finishCoaViewMode === 'batch' ? (finishCoaModalType === 'matched' ? '#0d9488' : '#dc2626') : '#64748b',
+L19125: boxShadow: finishCoaViewMode === 'batch' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+L19140: {isFinishCoaModalLoading ? (
+L19146: ) : finishCoaModalError ? (
+L19150: <p style={{ color: '#64748b' }}>{finishCoaModalError}</p>
+L19152: onClick={() => openFinishCoaModal(finishCoaModalType)}
+L19160: const filteredData = finishCoaModalData.filter(item => {
+L19161: if (!finishCoaSearchQuery) return true;
+L19162: const searchLower = finishCoaSearchQuery.toLowerCase();
+L19176: No results found for "{finishCoaSearchQuery}"
+L19182: if (finishCoaViewMode === 'batch') {
+L19208: let key = finishCoaSortColumn;
+L19226: return finishCoaSortDirection === 'asc' ? compare(valA, valB) : compare(valB, valA);
+L19230: if (finishCoaSortColumn === col) {
+L19231: setFinishCoaSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
+L19233: setFinishCoaSortColumn(col);
+L19234: setFinishCoaSortDirection('asc');
+L19240: const relevant = ['batchNumber', 'productCode', 'productName', 'arCount'].includes(finishCoaSortColumn);
+L19241: const isCurrent = finishCoaSortColumn === col || (!relevant && col === 'batchNumber');
+L19244: return <span style={{ fontSize: '0.7rem', marginLeft: '4px' }}>{finishCoaSortDirection === 'asc' ? 'â†‘' : 'â†“'}</span>;
+L19269: {finishCoaModalType === 'matched' ? 'PRODUCT CODE' : 'ITEM CODE'} <SortIcon col="productCode" />
+L19272: {finishCoaModalType === 'matched' ? 'PRODUCT NAME' : 'ITEM NAME'} <SortIcon col="productName" />
+L19283: const isExpanded = expandedFinishCoaBatchNumbers.has(row.id);
+L19293: onClick={() => setExpandedFinishCoaBatchNumbers(prev => {
+L19316: color: finishCoaModalType === 'matched' ? '#0d9488' : '#dc2626',
+L19318: background: finishCoaModalType === 'matched' ? '#f0fdfa' : '#fef2f2',
+L19350: <th style={{ padding: '8px 16px', textAlign: 'left', color: '#0d9488' }}>{finishCoaModalType === 'matched' ? 'Product Code' : 'Item Code'}</th>
+L19351: <th style={{ padding: '8px 16px', textAlign: 'left', color: '#0d9488' }}>{finishCoaModalType === 'matched' ? 'Product Name' : 'Item Name'}</th>
+L19352: {finishCoaModalType === 'matched' && <th style={{ padding: '8px 16px', textAlign: 'left', color: '#0d9488' }}>Test Date</th>}
+L19353: {finishCoaModalType === 'unmatched' && <th style={{ padding: '8px 16px', textAlign: 'left', color: '#0d9488' }}>Mfg Date</th>}
+L19359: <td style={{ padding: '8px 16px', fontFamily: 'monospace', fontWeight: 600, color: finishCoaModalType === 'matched' ? '#0d9488' : '#dc2626' }}>{item.a
+L19362: {finishCoaModalType === 'matched' && <td style={{ padding: '8px 16px', color: '#64748b' }}>{item.testDate || 'N/A'}</td>}
+L19363: {finishCoaModalType === 'unmatched' && <td style={{ padding: '8px 16px', color: '#64748b' }}>{item.mfgDate || 'N/A'}</td>}
+L19378: if (finishCoaViewMode === 'table') {
+L19386: <th style={{ padding: '16px 20px', fontWeight: 700, fontSize: '0.8rem', color: '#475569', textTransform: 'uppercase' }}>{finishCoaModalType === 'match
+L19387: <th style={{ padding: '16px 20px', fontWeight: 700, fontSize: '0.8rem', color: '#475569', textTransform: 'uppercase' }}>{finishCoaModalType === 'match
+L19388: {finishCoaModalType === 'matched' && <th style={{ padding: '16px 20px', fontWeight: 700, fontSize: '0.8rem', color: '#475569', textTransform: 'upperca
+L19389: {finishCoaModalType === 'unmatched' && <th style={{ padding: '16px 20px', fontWeight: 700, fontSize: '0.8rem', color: '#475569', textTransform: 'upper
+L19399: <div style={{ fontFamily: 'monospace', fontWeight: 800, color: finishCoaModalType === 'matched' ? '#0d9488' : '#dc2626', fontSize: '1rem' }}>{item.bat
+L19404: color: finishCoaModalType === 'matched' ? '#0f172a' : '#ef4444',
+L19405: background: finishCoaModalType === 'matched' ? '#f0fdfa' : '#fef2f2',
+L19415: {finishCoaModalType === 'matched' && <td style={{ padding: '16px 20px', color: '#64748b' }}>{item.testDate || 'N/A'}</td>}
+L19416: {finishCoaModalType === 'unmatched' && <td style={{ padding: '16px 20px', color: '#dc2626' }}>{item.expiryDate || 'N/A'}</td>}
+L19426: if (finishCoaViewMode === 'file') {
+L19462: <div>{finishCoaModalType === 'matched' ? 'PRODUCT CODE' : 'ITEM CODE'}</div>
+L19463: <div>{finishCoaModalType === 'matched' ? 'PRODUCT NAME' : 'ITEM NAME'}</div>
+L19470: const isExpanded = expandedFinishCoaArNumbers.has(row.arNo);
+L19480: onClick={() => setExpandedFinishCoaArNumbers(prev => {
+L19503: color: finishCoaModalType === 'matched' ? '#0d9488' : '#dc2626',
+L19505: background: finishCoaModalType === 'matched' ? '#f0fdfa' : '#fef2f2',
+L19537: <th style={{ padding: '8px 16px', textAlign: 'left', color: '#0d9488' }}>{finishCoaModalType === 'matched' ? 'Product Code' : 'Item Code'}</th>
+L19538: <th style={{ padding: '8px 16px', textAlign: 'left', color: '#0d9488' }}>{finishCoaModalType === 'matched' ? 'Product Name' : 'Item Name'}</th>
+L19539: {finishCoaModalType === 'matched' && <th style={{ padding: '8px 16px', textAlign: 'left', color: '#0d9488' }}>Test Date</th>}
+L19545: <td style={{ padding: '8px 16px', fontFamily: 'monospace', fontWeight: 600, color: finishCoaModalType === 'matched' ? '#0d9488' : '#dc2626' }}>{item.b
+L19548: {finishCoaModalType === 'matched' && <td style={{ padding: '8px 16px', color: '#64748b' }}>{item.testDate || 'N/A'}</td>}
+L19563: if (finishCoaViewMode === 'material') {
+L19598: <div>{finishCoaModalType === 'matched' ? 'PRODUCT CODE' : 'ITEM CODE'}</div>
+L19599: <div>{finishCoaModalType === 'matched' ? 'PRODUCT NAME' : 'ITEM NAME'}</div>
+L19607: const isExpanded = expandedFinishCoaMaterialCodes.has(row.materialCode);
+L19617: onClick={() => setExpandedFinishCoaMaterialCodes(prev => {
+L19646: <div style={{ textAlign: 'right', fontWeight: 700, color: finishCoaModalType === 'matched' ? '#0d9488' : '#dc2626' }}>
+L19666: {finishCoaModalType === 'matched' && <th style={{ padding: '8px 16px', textAlign: 'left', color: '#0d9488' }}>Test Date</th>}
+L19667: {finishCoaModalType === 'unmatched' && <th style={{ padding: '8px 16px', textAlign: 'left', color: '#0d9488' }}>Mfg Date</th>}
+L19668: {finishCoaModalType === 'unmatched' && <th style={{ padding: '8px 16px', textAlign: 'left', color: '#0d9488' }}>Expiry Date</th>}
+L19674: <td style={{ padding: '8px 16px', fontFamily: 'monospace', fontWeight: 600, color: finishCoaModalType === 'matched' ? '#0d9488' : '#dc2626' }}>{item.a
+L19676: {finishCoaModalType === 'matched' && <td style={{ padding: '8px 16px', color: '#64748b' }}>{item.testDate || 'N/A'}</td>}
+L19677: {finishCoaModalType === 'unmatched' && <td style={{ padding: '8px 16px', color: '#64748b' }}>{item.mfgDate || 'N/A'}</td>}
+L19678: {finishCoaModalType === 'unmatched' && <td style={{ padding: '8px 16px', color: '#dc2626' }}>{item.expiryDate || 'N/A'}</td>}
+L19695: {!isFinishCoaModalLoading && !finishCoaModalError && finishCoaModalData.length === 0 && (
+L19698: {finishCoaModalType === 'matched' ? 'ðŸ”' : 'âœ¨'}
+L19701: {finishCoaModalType === 'matched' ? 'No records' : 'All clear!'}
+L19704: {finishCoaModalType === 'matched'
+L19716: const filteredData = finishCoaModalData.filter(item => {
+L19717: if (!finishCoaSearchQuery) return true;
+L19718: const searchLower = finishCoaSearchQuery.toLowerCase();
+L19728: `Finish_COA_${finishCoaModalType === 'matched' ? 'Matched' : 'Missing'}_${new Date().toISOString().split('T')[0]}.xlsx`
+L19734: background: finishCoaModalType === 'matched' ? '#0d9488' : '#dc2626',
+L19747: onClick={closeFinishCoaModal}

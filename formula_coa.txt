@@ -1,0 +1,22 @@
+﻿L325: const bulkCoaBatchNumbers = await COA.distinct('batchNumber', { stage: 'BULK' });
+L326: const bulkCoaBatchSet = new Set<string>(bulkCoaBatchNumbers);
+L330: const finishCoaBatchNumbers = await COA.distinct('batchNumber', { stage: 'FINISH' });
+L331: const finishCoaBatchSet = new Set<string>(finishCoaBatchNumbers);
+L615: finishCoaQualified: allBatchNumbers.filter(bn => finishCoaBatchSet.has(bn)).length,
+L616: finishCoaUnqualified: allBatchNumbers.filter(bn => !finishCoaBatchSet.has(bn)).length,
+L617: bulkCoaQualified: uniqueBatchNumbers.filter(bn => bulkCoaBatchSet.has(bn)).length,
+L618: bulkCoaUnqualified: uniqueBatchNumbers.filter(bn => !bulkCoaBatchSet.has(bn)).length
+L760: bulkCoaBatchSet: bulkCoaBatchSet.size,
+L784: bulkCoaQualified: f.bulkCoaQualified || 0,
+L785: bulkCoaUnqualified: f.bulkCoaUnqualified || 0,
+L815: globalBulkCoaQualified: [...allGlobalUniqueBatchNumbers].filter(bn => bulkCoaBatchSet.has(bn)).length,
+L816: globalBulkCoaUnqualified: [...allGlobalUniqueBatchNumbers].filter(bn => !bulkCoaBatchSet.has(bn)).length,
+L818: bulkCoaQualifiedBatchNumbersList: [...allGlobalUniqueBatchNumbers].filter(bn => bulkCoaBatchSet.has(bn)),
+L820: // This ensures: globalFinishCoaQualified + globalFinishCoaUnqualified = total batch count
+L822: globalFinishCoaQualified: (() => {
+L824: // For each product code in formula, check EACH batch occurrence against finishCoaBatchSet
+L828: if (finishCoaBatchSet.has(bn)) {
+L835: globalFinishCoaUnqualified: (() => {
+L837: // For each product code in formula, check EACH batch occurrence against finishCoaBatchSet
+L841: if (!finishCoaBatchSet.has(bn)) {
+L857: finishCoaQualifiedBatchNumbersList: [...allGlobalUniqueBatchNumbers].filter(bn => finishCoaBatchSet.has(bn)),

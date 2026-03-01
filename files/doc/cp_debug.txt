@@ -1,0 +1,18 @@
+idx=737279 nextTbl=737580
+context: Process Capability &amp; Performance parameters (Cp, Cpk, and Pp, Ppk)\n</w:t>\n</w:r>\n</w:p>\n<w:p w14:par
+---
+idx=752340 nextTbl=793500
+context: Process Capability parameters \n</w:t>\n</w:r>\n</w:p>\n<w:p w14:paraId="29120F0F" w14:textId="77777777" w:r
+---
+idx=793143 nextTbl=793500
+context: Process Capability &amp; Performance parameters (Cp, Cpk, and Pp, Ppk)\n</w:t>\n</w:r>\n</w:p>\n<w:p w14:par
+---
+idx=924276 nextTbl=924598
+context: Process Capability &amp; Performance parameters (Cp, Cpk, and Pp, Ppk)\n</w:t>\n</w:r>\n</w:p>\n<w:p w14:par
+---
+idx=943947 nextTbl=992642
+context: Process Capability parameters \n</w:t>\n</w:r>\n</w:p>\n<w:p w14:paraId="554B594D" w14:textId="77777777" w:r
+---
+idx=992265 nextTbl=992642
+context: Process Capability &amp; Performance parameters (Cp, Cpk, and Pp, Ppk)\n</w:t>\n</w:r>\n</w:p>\n<w:p w14:par
+---

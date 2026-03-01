@@ -4964,24 +4964,27 @@ export default function FormulaDataPage() {
                 setFinishCoaModalData(matchedData);
             } else {
                 // Show batches that DON'T have Finish COA data
-                // Use the same logic as sectionFinishCoaData: batches from allBatches
-                // checked against finishCoaQualifiedBatchNumbers
-                const unmatchedData: any[] = [];
-
+                // Deduplicate batches first (same as Bulk COA unmatched logic)
+                const uniqueBatchMap = new Map<string, any>();
                 allBatches.forEach(batch => {
-                    if (!batch.batchNumber) return;
-
-                    // Apply section filter if needed
-                    if (isFiltering) {
-                        if (!batch.itemCode || !validProductCodes.has(batch.itemCode)) {
-                            return;
+                    if (batch.batchNumber && !uniqueBatchMap.has(batch.batchNumber)) {
+                        // Apply section filter if needed
+                        if (isFiltering) {
+                            if (batch.itemCode && validProductCodes.has(batch.itemCode)) {
+                                uniqueBatchMap.set(batch.batchNumber, batch);
+                            }
+                        } else {
+                            uniqueBatchMap.set(batch.batchNumber, batch);
                         }
                     }
+                });
 
-                    // Check if this batch has Finish COA using the same set as the capsule
-                    if (!finishCoaQualifiedBatchNumbers.has(batch.batchNumber)) {
+                // Filter batches without Finish COA using the same set as the capsule
+                const unmatchedData: any[] = [];
+                uniqueBatchMap.forEach((batch, batchNumber) => {
+                    if (!finishCoaQualifiedBatchNumbers.has(batchNumber)) {
                         unmatchedData.push({
-                            batchNumber: batch.batchNumber,
+                            batchNumber: batchNumber,
                             itemCode: batch.itemCode || 'N/A',
                             itemName: batch.itemName || 'N/A',
                             mfgDate: batch.mfgDate || 'N/A',
@@ -6391,8 +6394,8 @@ export default function FormulaDataPage() {
             placebo: { qualified: 0, unqualified: 0 },
         };
 
-        // Use allBatches instead of uniqueBatches to get total batch count (matching backend logic)
-        allBatches.forEach(batch => {
+        // Use uniqueBatches (deduplicated) to get correct batch count (same as Bulk COA logic)
+        uniqueBatches.forEach(batch => {
             const itemCode = batch.itemCode;
             const category = (itemCode ? productCodeToCategory.get(itemCode) : undefined) || 'main';
 
@@ -11405,6 +11408,39 @@ export default function FormulaDataPage() {
                                                         <span style={{ fontSize: '0.9em' }}>📄</span>
                                                         Create APQR
                                                     </button>
+                                                    <button
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            window.open(`/bulk-calculation?productCode=${encodeURIComponent(formula.masterFormulaDetails.productCode)}&year=${new Date().getFullYear()}`, '_blank');
+                                                        }}
+                                                        style={{
+                                                            padding: '0.2rem 0.5rem',
+                                                            borderRadius: '6px',
+                                                            background: 'linear-gradient(135deg, #0891b2 0%, #06b6d4 100%)',
+                                                            color: 'white',
+                                                            fontSize: '0.7rem',
+                                                            fontWeight: '600',
+                                                            border: 'none',
+                                                            cursor: 'pointer',
+                                                            display: 'flex',
+                                                            alignItems: 'center',
+                                                            gap: '0.25rem',
+                                                            transition: 'all 0.2s ease',
+                                                            boxShadow: '0 1px 4px rgba(8, 145, 178, 0.3)',
+                                                        }}
+                                                        onMouseEnter={(e) => {
+                                                            e.currentTarget.style.transform = 'translateY(-1px)';
+                                                            e.currentTarget.style.boxShadow = '0 2px 6px rgba(8, 145, 178, 0.4)';
+                                                        }}
+                                                        onMouseLeave={(e) => {
+                                                            e.currentTarget.style.transform = 'translateY(0)';
+                                                            e.currentTarget.style.boxShadow = '0 1px 4px rgba(8, 145, 178, 0.3)';
+                                                        }}
+                                                        title="View Bulk Calculations for this MFC"
+                                                    >
+                                                        <span style={{ fontSize: '0.9em' }}>📊</span>
+                                                        Bulk Calc
+                                                    </button>
                                                 </div>
 
                                                 {/* Product Name */}
@@ -12949,16 +12985,21 @@ export default function FormulaDataPage() {
                                                         {/* Bulk COA Capsule for Low Batch */}
                                                         {(() => {
                                                             const allProductCodes = getFormulaAllProductCodes(formula);
+                                                            const seenBulkBatches = new Set<string>();
                                                             let bulkQualified = 0;
                                                             let bulkUnqualified = 0;
 
                                                             allProductCodes.forEach(code => {
                                                                 const productBatches = allBatches.filter(b => b.itemCode === code);
                                                                 productBatches.forEach(batch => {
-                                                                    if (bulkCoaQualifiedBatchNumbers.has(batch.batchNumber || '')) {
-                                                                        bulkQualified++;
-                                                                    } else {
-                                                                        bulkUnqualified++;
+                                                                    const bn = batch.batchNumber || '';
+                                                                    if (bn && !seenBulkBatches.has(bn)) {
+                                                                        seenBulkBatches.add(bn);
+                                                                        if (bulkCoaQualifiedBatchNumbers.has(bn)) {
+                                                                            bulkQualified++;
+                                                                        } else {
+                                                                            bulkUnqualified++;
+                                                                        }
                                                                     }
                                                                 });
                                                             });
@@ -12972,6 +13013,42 @@ export default function FormulaDataPage() {
                                                                     unmatched={bulkUnqualified}
                                                                     onGreenClick={() => openBulkCoaModal('matched', 'lowBatch', [formula])}
                                                                     onRedClick={() => openBulkCoaModal('unmatched', 'lowBatch', [formula])}
+                                                                    size="small"
+                                                                />
+                                                            );
+                                                        })()}
+
+                                                        {/* Finish COA Capsule for Low Batch */}
+                                                        {(() => {
+                                                            const allProductCodes = getFormulaAllProductCodes(formula);
+                                                            const seenFinishBatches = new Set<string>();
+                                                            let finishQualified = 0;
+                                                            let finishUnqualified = 0;
+
+                                                            allProductCodes.forEach(code => {
+                                                                const productBatches = allBatches.filter(b => b.itemCode === code);
+                                                                productBatches.forEach(batch => {
+                                                                    const bn = batch.batchNumber || '';
+                                                                    if (bn && !seenFinishBatches.has(bn)) {
+                                                                        seenFinishBatches.add(bn);
+                                                                        if (finishCoaQualifiedBatchNumbers.has(bn)) {
+                                                                            finishQualified++;
+                                                                        } else {
+                                                                            finishUnqualified++;
+                                                                        }
+                                                                    }
+                                                                });
+                                                            });
+
+                                                            if (finishQualified === 0 && finishUnqualified === 0) return null;
+
+                                                            return (
+                                                                <BatchStatusCapsule
+                                                                    type="Finish COA"
+                                                                    matched={finishQualified}
+                                                                    unmatched={finishUnqualified}
+                                                                    onGreenClick={() => openFinishCoaModal('matched', 'lowBatch', [formula])}
+                                                                    onRedClick={() => openFinishCoaModal('unmatched', 'lowBatch', [formula])}
                                                                     size="small"
                                                                 />
                                                             );
@@ -13118,16 +13195,21 @@ export default function FormulaDataPage() {
                                                         {/* Bulk COA Capsule for No Batch */}
                                                         {(() => {
                                                             const allProductCodes = getFormulaAllProductCodes(formula);
+                                                            const seenBulkBatches = new Set<string>();
                                                             let bulkQualified = 0;
                                                             let bulkUnqualified = 0;
 
                                                             allProductCodes.forEach(code => {
                                                                 const productBatches = allBatches.filter(b => b.itemCode === code);
                                                                 productBatches.forEach(batch => {
-                                                                    if (bulkCoaQualifiedBatchNumbers.has(batch.batchNumber || '')) {
-                                                                        bulkQualified++;
-                                                                    } else {
-                                                                        bulkUnqualified++;
+                                                                    const bn = batch.batchNumber || '';
+                                                                    if (bn && !seenBulkBatches.has(bn)) {
+                                                                        seenBulkBatches.add(bn);
+                                                                        if (bulkCoaQualifiedBatchNumbers.has(bn)) {
+                                                                            bulkQualified++;
+                                                                        } else {
+                                                                            bulkUnqualified++;
+                                                                        }
                                                                     }
                                                                 });
                                                             });
@@ -13141,6 +13223,42 @@ export default function FormulaDataPage() {
                                                                     unmatched={bulkUnqualified}
                                                                     onGreenClick={() => openBulkCoaModal('matched', 'noBatch', [formula])}
                                                                     onRedClick={() => openBulkCoaModal('unmatched', 'noBatch', [formula])}
+                                                                    size="small"
+                                                                />
+                                                            );
+                                                        })()}
+
+                                                        {/* Finish COA Capsule for No Batch */}
+                                                        {(() => {
+                                                            const allProductCodes = getFormulaAllProductCodes(formula);
+                                                            const seenFinishBatches = new Set<string>();
+                                                            let finishQualified = 0;
+                                                            let finishUnqualified = 0;
+
+                                                            allProductCodes.forEach(code => {
+                                                                const productBatches = allBatches.filter(b => b.itemCode === code);
+                                                                productBatches.forEach(batch => {
+                                                                    const bn = batch.batchNumber || '';
+                                                                    if (bn && !seenFinishBatches.has(bn)) {
+                                                                        seenFinishBatches.add(bn);
+                                                                        if (finishCoaQualifiedBatchNumbers.has(bn)) {
+                                                                            finishQualified++;
+                                                                        } else {
+                                                                            finishUnqualified++;
+                                                                        }
+                                                                    }
+                                                                });
+                                                            });
+
+                                                            if (finishQualified === 0 && finishUnqualified === 0) return null;
+
+                                                            return (
+                                                                <BatchStatusCapsule
+                                                                    type="Finish COA"
+                                                                    matched={finishQualified}
+                                                                    unmatched={finishUnqualified}
+                                                                    onGreenClick={() => openFinishCoaModal('matched', 'noBatch', [formula])}
+                                                                    onRedClick={() => openFinishCoaModal('unmatched', 'noBatch', [formula])}
                                                                     size="small"
                                                                 />
                                                             );
@@ -13289,16 +13407,21 @@ export default function FormulaDataPage() {
                                                         {/* Bulk COA Capsule for Placebo */}
                                                         {(() => {
                                                             const allProductCodes = getFormulaAllProductCodes(formula);
+                                                            const seenBulkBatches = new Set<string>();
                                                             let bulkQualified = 0;
                                                             let bulkUnqualified = 0;
 
                                                             allProductCodes.forEach(code => {
                                                                 const productBatches = allBatches.filter(b => b.itemCode === code);
                                                                 productBatches.forEach(batch => {
-                                                                    if (bulkCoaQualifiedBatchNumbers.has(batch.batchNumber || '')) {
-                                                                        bulkQualified++;
-                                                                    } else {
-                                                                        bulkUnqualified++;
+                                                                    const bn = batch.batchNumber || '';
+                                                                    if (bn && !seenBulkBatches.has(bn)) {
+                                                                        seenBulkBatches.add(bn);
+                                                                        if (bulkCoaQualifiedBatchNumbers.has(bn)) {
+                                                                            bulkQualified++;
+                                                                        } else {
+                                                                            bulkUnqualified++;
+                                                                        }
                                                                     }
                                                                 });
                                                             });
@@ -13312,6 +13435,42 @@ export default function FormulaDataPage() {
                                                                     unmatched={bulkUnqualified}
                                                                     onGreenClick={() => openBulkCoaModal('matched', 'placebo', [formula])}
                                                                     onRedClick={() => openBulkCoaModal('unmatched', 'placebo', [formula])}
+                                                                    size="small"
+                                                                />
+                                                            );
+                                                        })()}
+
+                                                        {/* Finish COA Capsule for Placebo */}
+                                                        {(() => {
+                                                            const allProductCodes = getFormulaAllProductCodes(formula);
+                                                            const seenFinishBatches = new Set<string>();
+                                                            let finishQualified = 0;
+                                                            let finishUnqualified = 0;
+
+                                                            allProductCodes.forEach(code => {
+                                                                const productBatches = allBatches.filter(b => b.itemCode === code);
+                                                                productBatches.forEach(batch => {
+                                                                    const bn = batch.batchNumber || '';
+                                                                    if (bn && !seenFinishBatches.has(bn)) {
+                                                                        seenFinishBatches.add(bn);
+                                                                        if (finishCoaQualifiedBatchNumbers.has(bn)) {
+                                                                            finishQualified++;
+                                                                        } else {
+                                                                            finishUnqualified++;
+                                                                        }
+                                                                    }
+                                                                });
+                                                            });
+
+                                                            if (finishQualified === 0 && finishUnqualified === 0) return null;
+
+                                                            return (
+                                                                <BatchStatusCapsule
+                                                                    type="Finish COA"
+                                                                    matched={finishQualified}
+                                                                    unmatched={finishUnqualified}
+                                                                    onGreenClick={() => openFinishCoaModal('matched', 'placebo', [formula])}
+                                                                    onRedClick={() => openFinishCoaModal('unmatched', 'placebo', [formula])}
                                                                     size="small"
                                                                 />
                                                             );

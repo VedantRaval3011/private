@@ -1,0 +1,8 @@
+COA D25D21 BULK
+
+=== testParameters ===
+{"name":"PH","limits":"5.0 to 8.0","result":"6.84"}
+{"name":"ASSAY","limits":".","result":"."}
+{"name":"SODIUM HYALURONATE","limits":"90.0 % to 120.0 %  Of labeled amount\r\n0.09 % to 0.12 % w/v as per LC","result":"103.70 % \r\ni.e. 0.1037 % w/v"}
+
+=== assayResults ===

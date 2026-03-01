@@ -1,0 +1,4 @@
+--- BEFORE 1 ---
+/>6.73107.70D25H28BIIBA250420Opalescent solution, free from any type of visible particles6.87105.60D25K08BIIBA250653Opalescent solution, free from any type of visible particles6.97107.70Remark:In-process parameters at bulk stage for SODIUM HYALURONATE EYE DROPS found (Satisfactory) within the limit as per in-process specification during the review period.Prepared By QA: (Sign/Date)Reviewed By QA: (Sign/Date)Process Capability &amp; Performance parameters (Cp, Cpk, and Pp, Ppk)
+--- BEFORE 2 ---
+:rsidP="001B7AEF">10.20D25K08FIPAR2509536.84--10.15277107.32Remark:Finished product parameters for SODIUM HYALURONATE EYE DROPS found (Satisfactory) within the limit as per finished product specification of SODIUM HYALURONATE EYE DROPS during the review period.Prepared By QA: (Sign/Date)Reviewed By QA: (Sign/Date)Process Capability &amp; Performance parameters (Cp, Cpk, and Pp, Ppk)

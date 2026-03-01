@@ -735,22 +735,33 @@ function extractFinishData(g1Data: unknown, rootData: unknown): FinishStageData 
       switch (category) {
         case 'description':
           description = result;
+          // Also store in criticalParameters so it is queryable for APQR 5.3.2
+          criticalParameters.push({ name: 'Description', limit: limits, result, complies: true });
           break;
           
-        case 'identification':
-          // Parse compound from test name (e.g., "IDENTIFICATION BY HPLC DORZOLAMIDE")
-          const idMatch = testName.match(/identification\s*(?:by\s*)?(\w+)?\s*(.+)?/i);
-          const method = idMatch?.[1] || '';
-          const compound = idMatch?.[2] || testName.replace(/identification/gi, '').trim();
-          
+        case 'identification': {
+          // Skip the parent header row (PROTEST1='IDENTIFICATION', result='.') —
+          // it is just a section label, not an actual test result.
+          const upperTestName = testName.toUpperCase().trim();
+          if (upperTestName === 'IDENTIFICATION') break;
+
+          // For child rows (e.g. PROTEST1='SODIUM HYALURONATE'), the testName IS the compound.
+          // Complies if result is 'Complies', '-', '', or null (as per user spec).
+          const idComplies =
+            result?.toLowerCase() === 'complies' ||
+            result === '-' ||
+            result === '' ||
+            result == null;
+
           identificationTests.push({
-            compound: compound || 'General',
-            method: method.toUpperCase(),
+            compound: testName,
+            method: '',
             specification: limits,
             result,
-            complies,
+            complies: idComplies,
           });
           break;
+        }
           
         case 'sterility':
           sterility = { srNo: 0, name: testName, limits, result, complies };

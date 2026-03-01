@@ -1,0 +1,30 @@
+﻿L441: return { stage: 'BULK', method: 'filename' };
+L444: return { stage: 'FINISH', method: 'filename' };
+L453: return { stage: 'BULK', method: 'root_tag' };
+L456: return { stage: 'FINISH', method: 'root_tag' };
+L465: return { stage: 'BULK', method: 'process_tag' };
+L472: return { stage: 'FINISH', method: 'root_tag' };
+L476: return { stage: 'BULK', method: 'root_tag' };
+L544: function extractBulkData(g1Data: unknown, rootData: unknown): BulkStageData {
+L675: function extractFinishData(g1Data: unknown, rootData: unknown): FinishStageData {
+L1028: let bulkData: BulkStageData | undefined;
+L1029: let finishData: FinishStageData | undefined;
+L1037: if (stage === 'BULK') {
+L1038: bulkData = extractBulkData(g1Data, rootData);
+L1039: batchNumber = bulkData.batchNumber;
+L1040: arNumber = bulkData.arNumber;
+L1041: productName = bulkData.productName;
+L1042: productCode = bulkData.productCode;
+L1043: genericName = bulkData.genericName;
+L1044: manufacturer = bulkData.manufacturer;
+L1049: if (bulkData.testParameters.length === 0) warnings.push('No test parameters found');
+L1052: finishData = extractFinishData(g1Data, rootData);
+L1053: batchNumber = finishData.batchNumber;
+L1054: arNumber = finishData.arNumber;
+L1055: productName = finishData.productName;
+L1056: productCode = finishData.productCode;
+L1057: genericName = finishData.genericName;
+L1058: manufacturer = finishData.manufacturer;
+L1063: if (finishData.assayResults.length === 0) warnings.push('No assay results found');
+L1074: bulkData,
+L1075: finishData,

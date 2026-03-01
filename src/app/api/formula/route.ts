@@ -612,8 +612,8 @@ export async function GET(request: NextRequest): Promise<NextResponse<FormulasLi
         formulaMaterialCount: formulaMaterialCodes.size,
         uniqueBatchNumbers,
         allBatchNumbers, // Total batches (with duplicates)
-        finishCoaQualified: allBatchNumbers.filter(bn => finishCoaBatchSet.has(bn)).length,
-        finishCoaUnqualified: allBatchNumbers.filter(bn => !finishCoaBatchSet.has(bn)).length,
+        finishCoaQualified: uniqueBatchNumbers.filter(bn => finishCoaBatchSet.has(bn)).length,
+        finishCoaUnqualified: uniqueBatchNumbers.filter(bn => !finishCoaBatchSet.has(bn)).length,
         bulkCoaQualified: uniqueBatchNumbers.filter(bn => bulkCoaBatchSet.has(bn)).length,
         bulkCoaUnqualified: uniqueBatchNumbers.filter(bn => !bulkCoaBatchSet.has(bn)).length
       };
@@ -783,6 +783,8 @@ export async function GET(request: NextRequest): Promise<NextResponse<FormulasLi
           ppmCoaUnqualified: f.ppmCoaUnqualified || 0,
           bulkCoaQualified: f.bulkCoaQualified || 0,
           bulkCoaUnqualified: f.bulkCoaUnqualified || 0,
+          finishCoaQualified: f.finishCoaQualified || 0,
+          finishCoaUnqualified: f.finishCoaUnqualified || 0,
           formulaMaterialCount: f.formulaMaterialCount || 0,
         };
       }),

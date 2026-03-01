@@ -1,0 +1,65 @@
+﻿L198: globalBulkCoaQualified?: number;
+L200: bulkCoaQualifiedBatchNumbersList?: string[];
+L203: globalFinishCoaQualified?: number;
+L205: finishCoaQualifiedBatchNumbersList?: string[];
+L997: const [globalBulkCoaQualified, setGlobalBulkCoaQualified] = useState<number>(0);
+L1000: const [bulkCoaQualifiedBatchNumbers, setBulkCoaQualifiedBatchNumbers] = useState<Set<string>>(new Set());
+L1002: const [globalFinishCoaQualified, setGlobalFinishCoaQualified] = useState<number>(0);
+L1005: const [finishCoaQualifiedBatchNumbers, setFinishCoaQualifiedBatchNumbers] = useState<Set<string>>(new Set());
+L1703: if (data.globalBulkCoaQualified !== undefined) setGlobalBulkCoaQualified(data.globalBulkCoaQualified);
+L1706: if (data.bulkCoaQualifiedBatchNumbersList) setBulkCoaQualifiedBatchNumbers(new Set(data.bulkCoaQualifiedBatchNumbersList));
+L1708: if (data.globalFinishCoaQualified !== undefined) setGlobalFinishCoaQualified(data.globalFinishCoaQualified);
+L1711: if (data.finishCoaQualifiedBatchNumbersList) setFinishCoaQualifiedBatchNumbers(new Set(data.finishCoaQualifiedBatchNumbersList));
+L4744: // Use the pre-computed bulkCoaQualifiedBatchNumbers set (same as capsule)
+L4769: // Only include COA records for batches that are in bulkCoaQualifiedBatchNumbers
+L4771: .filter((coa: any) => bulkCoaQualifiedBatchNumbers.has(coa.batchNumber))
+L4795: // checked against bulkCoaQualifiedBatchNumbers
+L4813: if (!bulkCoaQualifiedBatchNumbers.has(batchNumber)) {
+L4833: }, [allBatches, bulkCoaQualifiedBatchNumbers]);
+L4918: // Use the pre-computed finishCoaQualifiedBatchNumbers set (same as capsule)
+L4942: // Only include COA records for batches that are in finishCoaQualifiedBatchNumbers
+L4944: .filter((coa: any) => finishCoaQualifiedBatchNumbers.has(coa.batchNumber))
+L4968: // checked against finishCoaQualifiedBatchNumbers
+L4982: if (!finishCoaQualifiedBatchNumbers.has(batch.batchNumber)) {
+L5003: }, [allBatches, finishCoaQualifiedBatchNumbers]);
+L6305: const hasBulkCoa = bulkCoaQualifiedBatchNumbers.has(batch.batchNumber);
+L6314: }, [allBatches, bulkCoaQualifiedBatchNumbers, mainFormulas, lowBatchFormulas, noBatchFormulas, placeboFormulas]);
+L6401: const hasFinishCoa = finishCoaQualifiedBatchNumbers.has(batch.batchNumber);
+L6410: }, [allBatches, finishCoaQualifiedBatchNumbers, mainFormulas, lowBatchFormulas, noBatchFormulas, placeboFormulas]);
+L6452: bulkCoaQualified,
+L6454: onBulkCoaQualifiedClick,
+L6456: finishCoaQualified,
+L6458: onFinishCoaQualifiedClick,
+L6507: bulkCoaQualified?: number;
+L6509: onBulkCoaQualifiedClick?: () => void;
+L6511: finishCoaQualified?: number;
+L6513: onFinishCoaQualifiedClick?: () => void;
+L6972: {((bulkCoaQualified !== undefined || bulkCoaUnqualified !== undefined) && (bulkCoaQualified! + bulkCoaUnqualified!) > 0) ||
+L6973: ((finishCoaQualified !== undefined || finishCoaUnqualified !== undefined) && (finishCoaQualified! + finishCoaUnqualified!) > 0) ? (
+L6976: {(bulkCoaQualified !== undefined || bulkCoaUnqualified !== undefined) && (bulkCoaQualified! + bulkCoaUnqualified!) > 0 && (
+L6979: matched={bulkCoaQualified || 0}
+L6981: onGreenClick={onBulkCoaQualifiedClick}
+L6989: {(finishCoaQualified !== undefined || finishCoaUnqualified !== undefined) && (finishCoaQualified! + finishCoaUnqualified!) > 0 && (
+L6992: matched={finishCoaQualified || 0}
+L6994: onGreenClick={onFinishCoaQualifiedClick}
+L11266: bulkCoaQualified={sectionBulkCoaData.main.qualified}
+L11268: onBulkCoaQualifiedClick={() => openBulkCoaModal('matched', 'main', mainFormulas)}
+L11270: finishCoaQualified={sectionFinishCoaData.main.qualified}
+L11272: onFinishCoaQualifiedClick={() => openFinishCoaModal('matched', 'main', mainFormulas)}
+L12037: matched={(formula as any).bulkCoaQualified || 0}
+L12049: matched={(formula as any).finishCoaQualified || 0}
+L12891: bulkCoaQualified={sectionBulkCoaData.lowBatch.qualified}
+L12893: onBulkCoaQualifiedClick={() => openBulkCoaModal('matched', 'lowBatch', lowBatchFormulas)}
+L12895: finishCoaQualified={sectionFinishCoaData.lowBatch.qualified}
+L12897: onFinishCoaQualifiedClick={() => openFinishCoaModal('matched', 'lowBatch', lowBatchFormulas)}
+L12991: if (bulkCoaQualifiedBatchNumbers.has(batch.batchNumber || '')) {
+L13058: bulkCoaQualified={sectionBulkCoaData.noBatch.qualified}
+L13060: onBulkCoaQualifiedClick={() => openBulkCoaModal('matched', 'noBatch', noBatchFormulas)}
+L13062: finishCoaQualified={sectionFinishCoaData.noBatch.qualified}
+L13064: onFinishCoaQualifiedClick={() => openFinishCoaModal('matched', 'noBatch', noBatchFormulas)}
+L13160: if (bulkCoaQualifiedBatchNumbers.has(batch.batchNumber || '')) {
+L13226: bulkCoaQualified={sectionBulkCoaData.placebo.qualified}
+L13228: onBulkCoaQualifiedClick={() => openBulkCoaModal('matched', 'placebo', placeboFormulas)}
+L13230: finishCoaQualified={sectionFinishCoaData.placebo.qualified}
+L13232: onFinishCoaQualifiedClick={() => openFinishCoaModal('matched', 'placebo', placeboFormulas)}
+L13331: if (bulkCoaQualifiedBatchNumbers.has(batch.batchNumber || '')) {
