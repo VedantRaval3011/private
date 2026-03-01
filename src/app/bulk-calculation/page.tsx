@@ -138,6 +138,7 @@ function BulkCalculationContent() {
   const [header, setHeader] = useState<BulkHeader | null>(null);
   const [productName, setProductName] = useState('');
   const [totalBatches, setTotalBatches] = useState('');
+  const [batchSize, setBatchSize] = useState('');
   const [showFormulaModal, setShowFormulaModal] = useState(false);
   const [selectedRowInfo, setSelectedRowInfo] = useState<{ id: string; label: string } | null>(null);
 
@@ -166,6 +167,7 @@ function BulkCalculationContent() {
         setHeader(data.bulkInProcessHeader || null);
         setProductName(data.productName || '');
         setTotalBatches(data.totalBatches || '0');
+        setBatchSize(data.batchSize || 'N/A');
       } catch (err: any) {
         setError(err.message);
       } finally {
@@ -283,6 +285,7 @@ function BulkCalculationContent() {
                 gap: '1rem', marginBottom: '2rem',
               }}>
                 <StatCard label="Total Batches" value={totalBatches} icon="📦" gradient="linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)" />
+                <StatCard label="Batch Size" value={batchSize} icon="⚖️" gradient="linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)" />
                 <StatCard label="pH Limit" value={header.phLimit || 'N/A'} icon="🧪" gradient="linear-gradient(135deg, #10b981 0%, #059669 100%)" />
                 <StatCard label="Assay Compound" value={header.assayCompound || 'N/A'} icon="💊" gradient="linear-gradient(135deg, #f59e0b 0%, #d97706 100%)" />
                 <StatCard label="Assay Limit" value={header.assayLimit || 'N/A'} icon="📏" gradient="linear-gradient(135deg, #ec4899 0%, #db2777 100%)" />

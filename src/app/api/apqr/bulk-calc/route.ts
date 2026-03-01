@@ -27,6 +27,7 @@ export async function POST(req: NextRequest) {
       productName: data.product_name,
       genericName: data.generic_name,
       totalBatches: data.total_batches,
+      batchSize: data.batch_size,
       bulkInProcessData: data.bulkInProcessData,
       bulkInProcessHeader: data.bulkInProcessHeader,
     });
