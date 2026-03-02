@@ -165,14 +165,28 @@ interface BulkInProcessRow {
   arNumber: string;
   description: string;
   ph: string;
-  assay: string;
+  assay: string;           // first compound value (backward compat)
+  assays: { compound: string; value: string }[];  // ALL assay compounds
 }
 
 interface FinishInProcessRow {
   batchNumber: string;
-  arNumber: string;
-  description: string;
-  identification: Array<{ compound: string; result: string }>;
+  arNumber:    string;
+  ph:          string;
+  uniformity:  string;   // Uniformity of Filled Volume result
+  capping:     string;
+  sterility:   string;
+  relatedSubstances: { compound: string; result: string }[];
+  assays:            { compound: string; result: string }[];
+}
+
+interface FinishInProcessHeader {
+  phLimit:          string;
+  uniformityLimit:  string;
+  cappingLimit:     string;
+  sterilityLimit:   string;
+  relatedSubstanceCompounds: { compound: string; limit: string }[];
+  assayCompounds:            { compound: string; limit: string }[];
 }
 
 // Known pharmacopoeial spec tokens (longer first to avoid partial matches)
@@ -1181,8 +1195,9 @@ export async function getApqrData(productCode: string, year: number) {
   const bulkInProcessData: BulkInProcessRow[] = [];
   let bulkDescriptionLimit = '';
   let bulkPhLimit = '';
-  let bulkAssayCompound = '';
-  let bulkAssayLimit = '';
+  let bulkAssayCompound = '';   // first compound (backward compat)
+  let bulkAssayLimit = '';      // first compound limit (backward compat)
+  let bulkAssayColumns: { compound: string; limit: string }[] = [];  // ALL assay compounds
 
   if (finalBatches.length > 0) {
     const batchNumbers = finalBatches.map((b: any) => b.batchNumber);
@@ -1215,33 +1230,50 @@ export async function getApqrData(productCode: string, year: number) {
       );
       bulkPhLimit = (phHeaderParam?.limits || '').replace(/^Between\s*/i, '').trim();
 
-      // Assay header: find compound testParameter (not PH, ASSAY, or DESCRIPTION)
-      // The compound name (e.g., "SODIUM HYALURONATE") is stored as a testParameter name
+      // Assay columns: find ALL compound testParameters (not PH, ASSAY, or DESCRIPTION)
+      // These are the actual compound names like "DORZOLAMIDE HYDROCHLORIDE E.Q. DORZOLAMIDE"
       const SKIP_NAMES = ['PH', 'ASSAY', 'DESCRIPTION'];
-      const assayHeaderParam = (firstBd.testParameters || []).find((p: any) => {
+      const compoundParams = (firstBd.testParameters || []).filter((p: any) => {
         const n = (p.name || '').toUpperCase().trim();
         return n && !SKIP_NAMES.includes(n);
       });
-      if (assayHeaderParam) {
-        bulkAssayCompound = assayHeaderParam.name || '';
-        bulkAssayLimit = (assayHeaderParam.limits || '');
-        // Clean multi-line/multi-part limits (take first line)
-        if (bulkAssayLimit.includes('\n') || bulkAssayLimit.includes('\r')) {
-          bulkAssayLimit = bulkAssayLimit.split(/[\r\n]/)[0].trim();
+
+      if (compoundParams.length > 0) {
+        // Build array of all assay columns from testParameters
+        for (const param of compoundParams) {
+          let limit = (param.limits || '');
+          // Clean multi-line limits (take first line)
+          if (limit.includes('\n') || limit.includes('\r')) {
+            limit = limit.split(/[\r\n]/)[0].trim();
+          }
+          bulkAssayColumns.push({
+            compound: param.name || '',
+            limit: limit,
+          });
         }
+        // Backward compat: first compound as single values
+        bulkAssayCompound = bulkAssayColumns[0].compound;
+        bulkAssayLimit = bulkAssayColumns[0].limit;
       } else {
         // Fallback: try assayResults array
-        const assayHeaderEntry = (firstBd.assayResults || []).find((a: any) => a.compound);
-        if (assayHeaderEntry) {
-          bulkAssayCompound = assayHeaderEntry.compound || '';
-          bulkAssayLimit = assayHeaderEntry.specification || '';
-          if (bulkAssayLimit.includes('\n')) {
-            bulkAssayLimit = bulkAssayLimit.split('\n')[0].trim();
+        const assayResultsArr = (firstBd.assayResults || []).filter((a: any) => a.compound);
+        for (const a of assayResultsArr) {
+          let limit = a.specification || '';
+          if (limit.includes('\n')) {
+            limit = limit.split('\n')[0].trim();
           }
+          bulkAssayColumns.push({
+            compound: a.compound || '',
+            limit: limit,
+          });
+        }
+        if (bulkAssayColumns.length > 0) {
+          bulkAssayCompound = bulkAssayColumns[0].compound;
+          bulkAssayLimit = bulkAssayColumns[0].limit;
         }
       }
 
-      console.log(`  Header: Desc="${bulkDescriptionLimit.substring(0, 50)}...", pH="${bulkPhLimit}", Assay="${bulkAssayCompound} (${bulkAssayLimit})"`);
+      console.log(`  Header: Desc="${bulkDescriptionLimit.substring(0, 50)}...", pH="${bulkPhLimit}", AssayColumns=${bulkAssayColumns.length}: ${bulkAssayColumns.map(c => c.compound).join(', ')}`);
     }
 
     // Extract data for each batch (in same order as finalBatches)
@@ -1266,44 +1298,59 @@ export async function getApqrData(productCode: string, year: number) {
       );
       const ph = phParam?.result || '';
 
-      // Assay: find compound testParameter matching the header compound
-      let assay = '';
-      if (bulkAssayCompound) {
+      // Assays: extract result for EACH compound in bulkAssayColumns
+      const assays: { compound: string; value: string }[] = [];
+      for (const col of bulkAssayColumns) {
+        let result = '';
+        // Try testParameters first (by matching compound name)
         const assayParam = (bd.testParameters || []).find((p: any) =>
-          (p.name || '').toUpperCase().trim() === bulkAssayCompound.toUpperCase().trim()
+          (p.name || '').toUpperCase().trim() === col.compound.toUpperCase().trim()
         );
-        assay = assayParam?.result || '';
-      }
-      if (!assay) {
+        result = assayParam?.result || '';
+
         // Fallback: try assayResults array
-        const assayEntry = (bd.assayResults || []).find((a: any) =>
-          (a.compound || '').trim() !== ''
-        );
-        assay = assayEntry?.result || '';
+        if (!result) {
+          const assayEntry = (bd.assayResults || []).find((a: any) =>
+            (a.compound || '').toUpperCase().trim() === col.compound.toUpperCase().trim()
+          );
+          result = assayEntry?.result || '';
+        }
+
+        // If result is multi-line, take first line only
+        if (result.includes('\n') || result.includes('\r')) {
+          result = result.split(/[\r\n]/)[0].trim();
+        }
+        assays.push({ compound: col.compound, value: result });
       }
-      // If result is multi-line (e.g. "103.70 % \r\ni.e. 0.1037 % w/v"), take first line only
-      if (assay.includes('\n') || assay.includes('\r')) {
-        assay = assay.split(/[\r\n]/)[0].trim();
-      }
+
+      // Backward compat: first assay value
+      const assay = assays.length > 0 ? assays[0].value : '';
 
       bulkInProcessData.push({
         batchNumber: batch.batchNumber,
         arNumber,
         description,
         ph,
-        assay
+        assay,
+        assays
       });
 
-      console.log(`  ${batch.batchNumber}: AR=${arNumber}, pH=${ph}, Assay=${assay}`);
+      console.log(`  ${batch.batchNumber}: AR=${arNumber}, pH=${ph}, Assays=[${assays.map(a => `${a.compound}=${a.value}`).join(', ')}]`);
     }
-    console.log(`✅ Section 5.3.1: ${bulkInProcessData.length} bulk in-process rows`);
+    console.log(`✅ Section 5.3.1: ${bulkInProcessData.length} bulk in-process rows, ${bulkAssayColumns.length} assay column(s)`);
   }
+
 
   // ── Section 5.3.2 — Finish Stage COA Analysis Results ──
   const finishInProcessData: FinishInProcessRow[] = [];
-  let finishDescriptionLimit = '';
-  let finishIdentificationCompounds: string[] = []; // dynamic — one per compound found
-  let finishIdentificationSpecifications: string[] = []; // limit row text per compound
+  const finishHeader: FinishInProcessHeader = {
+    phLimit: '',
+    uniformityLimit: '',
+    cappingLimit: '',
+    sterilityLimit: '',
+    relatedSubstanceCompounds: [],
+    assayCompounds: [],
+  };
 
   if (finalBatches.length > 0) {
     const batchNumbers = finalBatches.map((b: any) => b.batchNumber);
@@ -1322,29 +1369,59 @@ export async function getApqrData(productCode: string, year: number) {
       }
     }
 
-    // Extract header metadata from first available FINISH COA
+    // ── Extract header metadata from first available FINISH COA ──
     const firstFinishCoa = coaByBatchFinish.values().next().value;
     const firstFd = firstFinishCoa?.finishData;
     if (firstFd) {
-      // Description limit: from criticalParameters where name === 'Description'
-      const descParam = (firstFd.criticalParameters || []).find(
-        (p: any) => (p.name || '').toUpperCase() === 'DESCRIPTION'
+      // pH limit: from criticalParameters where name==='PH'
+      const phCp = (firstFd.criticalParameters || []).find(
+        (p: any) => (p.name || '').toUpperCase().trim() === 'PH'
       );
-      finishDescriptionLimit = descParam?.limit || '';
+      finishHeader.phLimit = (phCp?.limit || '').replace(/^Between\s*/i, '').trim();
 
-      // Identification compounds (dynamic — no hardcoding)
-      finishIdentificationCompounds = (firstFd.identificationTests || [])
-        .map((id: any) => (id.compound || '').trim())
-        .filter(Boolean);
+      // Uniformity of Filled Volume limit
+      finishHeader.uniformityLimit = (firstFd.uniformityOfVolume?.limits || '').trim();
 
-      // Identification specifications (limit text per compound)
-      finishIdentificationSpecifications = (firstFd.identificationTests || [])
-        .map((id: any) => (id.specification || '').trim());
+      // Capping limit
+      finishHeader.cappingLimit = (firstFd.capping?.limits || '').trim();
 
-      console.log(`  FINISH header: DescLimit="${finishDescriptionLimit.substring(0, 40)}...", Compounds=${JSON.stringify(finishIdentificationCompounds)}`);
+      // Sterility limit
+      finishHeader.sterilityLimit = (firstFd.sterility?.limits || '').trim();
+
+      // Related Substances: each entry has a compound name and limit
+      const rsArr = firstFd.relatedSubstances || [];
+      for (const rs of rsArr) {
+        const compound = (rs.compound || '').trim();
+        if (!compound) continue;
+        // Skip if already added (dedup by compound name)
+        if (!finishHeader.relatedSubstanceCompounds.find(r => r.compound === compound)) {
+          finishHeader.relatedSubstanceCompounds.push({
+            compound,
+            limit: (rs.limit || '').trim(),
+          });
+        }
+      }
+
+      // Assay compounds: from assayResults[]
+      const assayArr = firstFd.assayResults || [];
+      for (const a of assayArr) {
+        const compound = (a.compound || '').trim();
+        if (!compound) continue;
+        if (!finishHeader.assayCompounds.find(c => c.compound === compound)) {
+          // Use first line of specification as limit (may be multi-line)
+          let limit = (a.specification || '').trim();
+          if (limit.includes('\n')) limit = limit.split('\n')[0].trim();
+          finishHeader.assayCompounds.push({ compound, limit });
+        }
+      }
+
+      console.log(
+        `  FINISH header: pH="${finishHeader.phLimit}", RSCount=${finishHeader.relatedSubstanceCompounds.length}, AssayCount=${finishHeader.assayCompounds.length}: ` +
+        finishHeader.assayCompounds.map(a => a.compound).join(', ')
+      );
     }
 
-    // Build one row per batch (same order as finalBatches)
+    // ── Build one row per batch (same order as finalBatches) ──
     for (const batch of finalBatches) {
       const coa = coaByBatchFinish.get(batch.batchNumber);
       if (!coa || !coa.finishData) {
@@ -1355,30 +1432,52 @@ export async function getApqrData(productCode: string, year: number) {
       const fd = coa.finishData;
       const arNumber = coa.arNumber || fd.arNumber || '';
 
-      // Description result: from criticalParameters
-      const descParam = (fd.criticalParameters || []).find(
-        (p: any) => (p.name || '').toUpperCase() === 'DESCRIPTION'
+      // pH result: from criticalParameters PH
+      const phCp = (fd.criticalParameters || []).find(
+        (p: any) => (p.name || '').toUpperCase().trim() === 'PH'
       );
-      const description = descParam?.result || '';
+      const ph = (phCp?.result || '').trim();
 
-      // Identification results: dynamic, matched by compound name
-      const identification = finishIdentificationCompounds.map((compound: string) => {
-        const idTest = (fd.identificationTests || []).find(
-          (id: any) => (id.compound || '').trim() === compound
+      // Uniformity of Filled Volume result
+      const uniformity = (fd.uniformityOfVolume?.result || '').trim();
+
+      // Capping result
+      const capping = (fd.capping?.result || '').trim()
+        .replace(/cap was properly placed/i, 'Cap Properly Placed')
+        .replace(/complies/i, 'Complies') || 'Complies';
+
+      // Sterility result
+      const sterility = (fd.sterility?.result || '').trim()
+        .replace(/growth or turbidity was not present in the original clear media/i, 'Complies')
+        .replace(/complies/i, 'Complies') || 'Complies';
+
+      // Related Substances: match each expected compound from header
+      const relatedSubstances = finishHeader.relatedSubstanceCompounds.map(col => {
+        const rs = (fd.relatedSubstances || []).find(
+          (r: any) => (r.compound || '').trim().toUpperCase() === col.compound.toUpperCase()
         );
-        const raw = idTest?.result || null;
-        const isComplies =
-          raw?.toLowerCase() === 'complies' ||
-          raw === '-' ||
-          raw === '' ||
-          raw == null;
-        return { compound, result: isComplies ? 'Complies' : (raw || 'Complies') };
+        const raw = (rs?.result || '').trim();
+        return {
+          compound: col.compound,
+          result: raw || 'Complies',
+        };
       });
 
-      finishInProcessData.push({ batchNumber: batch.batchNumber, arNumber, description, identification });
-      console.log(`  FINISH ${batch.batchNumber}: AR=${arNumber}, Desc=${description.substring(0, 30)}, IDs=${identification.map(i => i.result).join('|')}`);
+      // Assay results: match each expected compound from header
+      const assays = finishHeader.assayCompounds.map(col => {
+        const a = (fd.assayResults || []).find(
+          (ar: any) => (ar.compound || '').trim().toUpperCase() === col.compound.toUpperCase()
+        );
+        // Take first line of result (may be multi-line)
+        let result = (a?.result || '').trim();
+        if (result.includes('\n')) result = result.split('\n')[0].trim();
+        return { compound: col.compound, result: result || '--' };
+      });
+
+      finishInProcessData.push({ batchNumber: batch.batchNumber, arNumber, ph, uniformity, capping, sterility, relatedSubstances, assays });
+      console.log(`  FINISH ${batch.batchNumber}: AR=${arNumber}, pH=${ph}, Unif=${uniformity}, RS=[${relatedSubstances.map(r => r.compound + ':' + r.result.substring(0, 15)).join('|')}], Assay=[${assays.map(a => a.compound + ':' + a.result).join('|')}]`);
     }
-    console.log(`✅ Section 5.3.2: ${finishInProcessData.length} finish in-process rows`);
+    console.log(`✅ Section 5.3.2: ${finishInProcessData.length} rows, ${finishHeader.relatedSubstanceCompounds.length} RS compound(s), ${finishHeader.assayCompounds.length} assay compound(s)`);
   }
 
   return {
@@ -1427,13 +1526,10 @@ export async function getApqrData(productCode: string, year: number) {
       phLimit: bulkPhLimit,
       assayCompound: bulkAssayCompound,
       assayLimit: bulkAssayLimit,
+      assayColumns: bulkAssayColumns,         // ALL compounds: { compound, limit }[]
     },
     finishInProcessData,           // Section 5.3.2 - In-Process Analysis Results at Finish Stage
-    finishInProcessHeader: {       // Section 5.3.2 - Dynamic header from FINISH COA limits
-      descriptionLimit: finishDescriptionLimit,
-      identificationCompounds: finishIdentificationCompounds,
-      identificationSpecifications: finishIdentificationSpecifications,
-    },
+    finishInProcessHeader: finishHeader, // Section 5.3.2 - Dynamic header from FINISH COA limits
 
     // Individual month counts
     ...monthlyData.reduce((acc, m) => {
@@ -2985,12 +3081,16 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
   if (data.bulkInProcessData && data.bulkInProcessData.length > 0) {
     console.log(`\n📋 Section 5.3.1 Bulk In-Process: ${data.bulkInProcessData.length} rows`);
 
+    const hdr = data.bulkInProcessHeader || {};
+    const assayCols: { compound: string; limit: string }[] = hdr.assayColumns || [];
+    // Total columns: Batch Number + AR Number + Description + pH + N assay columns
+    const totalCols = 4 + assayCols.length;
+    // "Critical Parameters" spans: Description + pH + N assay = 2 + N
+    const critParamSpan = 2 + assayCols.length;
+
     // Find the section 5.3.1 table by its unique header text "Critical Parameters"
-    // This text appears ONLY in the section 5.3.1 data table header row.
-    // We use lastIndexOf('<w:tbl>') to walk backwards to the enclosing table start.
     const critParamIdx = docXml.indexOf('Critical Parameters');
     if (critParamIdx !== -1) {
-      // Walk backwards to find the enclosing <w:tbl>
       const tblStart531 = docXml.lastIndexOf('<w:tbl>', critParamIdx);
       const afterTblStart = docXml.substring(tblStart531);
       const tblEndOffset531 = afterTblStart.indexOf('</w:tbl>');
@@ -2999,7 +3099,7 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
         const tblEnd531 = tblStart531 + tblEndOffset531 + 8;
         const origTable531 = docXml.substring(tblStart531, tblEnd531);
 
-          // Preserve original table properties and grid
+          // Preserve original table properties
           const origTblPr531 = origTable531.match(/<w:tblPr>[\s\S]*?<\/w:tblPr>/)?.[0]
             || '<w:tblPr><w:tblW w:w="5000" w:type="pct"/><w:jc w:val="center"/><w:tblBorders>'
             + '<w:top w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
@@ -3010,16 +3110,13 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
             + '<w:insideV w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
             + '</w:tblBorders></w:tblPr>';
 
-          const origTblGrid531 = origTable531.match(/<w:tblGrid>[\s\S]*?<\/w:tblGrid>/)?.[0]
-            || '<w:tblGrid><w:gridCol w:w="1500"/><w:gridCol w:w="1800"/>'
-            + '<w:gridCol w:w="3200"/><w:gridCol w:w="1200"/><w:gridCol w:w="1800"/></w:tblGrid>';
-
-          // ── Build DYNAMIC header rows from COA specification data ──
-          const hdr = data.bulkInProcessHeader || {};
-          const hDescLimit = xmlEscape(hdr.descriptionLimit || '');
-          const hPhLimit = xmlEscape(hdr.phLimit || '');
-          const hAssayCompound = xmlEscape(hdr.assayCompound || '');
-          const hAssayLimit = xmlEscape(hdr.assayLimit || '');
+          // Build dynamic grid: Batch(1500) + AR(1800) + Desc(3200) + pH(1200) + N assay cols (1800 each)
+          let dynTblGrid531 = '<w:tblGrid><w:gridCol w:w="1500"/><w:gridCol w:w="1800"/>'
+            + '<w:gridCol w:w="3200"/><w:gridCol w:w="1200"/>';
+          for (let i = 0; i < assayCols.length; i++) {
+            dynTblGrid531 += '<w:gridCol w:w="1800"/>';
+          }
+          dynTblGrid531 += '</w:tblGrid>';
 
           // Helper: bold header cell (shaded, centered)
           const headerCell531 = (text: string, opts?: { vMerge?: 'restart' | 'continue'; gridSpan?: number }) => {
@@ -3035,24 +3132,25 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
               + '</w:p></w:tc>';
           };
 
-          // Row 0: "Batch Number" (vMerge start) | "AR. Number" (vMerge start) | "Critical Parameters (Limit)" (gridSpan 3)
+          // Row 0: "Batch Number" (vMerge) | "AR. Number" (vMerge) | "Critical Parameters (Limit)" (gridSpan = critParamSpan)
           const dynHeaderRow1 = '<w:tr><w:trPr><w:trHeight w:val="432"/><w:jc w:val="center"/></w:trPr>'
             + headerCell531('Batch Number', { vMerge: 'restart' })
             + headerCell531('AR. Number', { vMerge: 'restart' })
-            + headerCell531('Critical Parameters (Limit)', { gridSpan: 3 })
+            + headerCell531('Critical Parameters (Limit)', { gridSpan: critParamSpan })
             + '</w:tr>';
 
-          // Row 1: "" (vMerge cont) | "" (vMerge cont) | "Description: {limit}" | "pH ({limit})" | "Assay (%) {compound} ({limits})"
-          const dynHeaderRow2 = '<w:tr><w:trPr><w:trHeight w:val="432"/><w:jc w:val="center"/></w:trPr>'
+          // Row 1: "" (vMerge cont) | "" (vMerge cont) | "Description: {limit}" | "pH ({limit})" | one cell per assay compound
+          let dynHeaderRow2 = '<w:tr><w:trPr><w:trHeight w:val="432"/><w:jc w:val="center"/></w:trPr>'
             + headerCell531('', { vMerge: 'continue' })
             + headerCell531('', { vMerge: 'continue' })
-            + headerCell531(`Description: ${hDescLimit}`)
-            + headerCell531(`pH (${hPhLimit})`)
-            + headerCell531(`Assay (%) ${hAssayCompound} (${hAssayLimit})`)
-            + '</w:tr>';
+            + headerCell531(`Description: ${xmlEscape(hdr.descriptionLimit || '')}`)
+            + headerCell531(`pH (${xmlEscape(hdr.phLimit || '')})`);
+          for (const col of assayCols) {
+            dynHeaderRow2 += headerCell531(`Assay (%) ${xmlEscape(col.compound)} (${xmlEscape(col.limit)})`);
+          }
+          dynHeaderRow2 += '</w:tr>';
 
           // Find the remark table (separate table after this data table)
-          // It contains "Remark:" and "Prepared By QA"
           let remarkTable531Xml = '';
           const remarkSearchStart531 = tblEnd531;
           const remarkAnchorIdx531 = docXml.indexOf('Remark:', remarkSearchStart531);
@@ -3077,7 +3175,7 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
               // Build remark text
               const remarkText531 = `In-process parameters at bulk stage for ${xmlEscape(data.product_name)} found (Satisfactory) within the limit as per in-process specification during the review period.`;
 
-              const remarkContentRow531 = '<w:tr><w:tc><w:tcPr><w:gridSpan w:val="5"/>'
+              const remarkContentRow531 = `<w:tr><w:tc><w:tcPr><w:gridSpan w:val="${totalCols}"/>`
                 + '<w:shd w:val="clear" w:color="auto" w:fill="D9D9D9"/>'
                 + '</w:tcPr>'
                 + '<w:p><w:pPr><w:rPr><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:pPr>'
@@ -3105,7 +3203,7 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
               + '</w:r></w:p></w:tc>';
           };
 
-          // Build data rows
+          // Build data rows with dynamic assay columns
           let dataRows531Xml = '';
           for (const row of data.bulkInProcessData) {
             dataRows531Xml += '<w:tr><w:trPr><w:jc w:val="center"/></w:trPr>';
@@ -3113,31 +3211,38 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
             dataRows531Xml += dataCell531(row.arNumber);
             dataRows531Xml += dataCell531(row.description);
             dataRows531Xml += dataCell531(row.ph);
-            dataRows531Xml += dataCell531(row.assay);
+            // Emit one cell per assay column
+            if (row.assays && row.assays.length > 0) {
+              for (const a of row.assays) {
+                dataRows531Xml += dataCell531(a.value);
+              }
+            } else {
+              // Fallback: single assay (backward compat)
+              dataRows531Xml += dataCell531(row.assay);
+            }
             dataRows531Xml += '</w:tr>';
           }
 
-          // Build replacement data table with DYNAMIC headers
-          const replacementTable531 = '<w:tbl>' + origTblPr531 + origTblGrid531
+          // Build replacement data table with DYNAMIC headers and grid
+          const replacementTable531 = '<w:tbl>' + origTblPr531 + dynTblGrid531
             + dynHeaderRow1 + dynHeaderRow2
             + dataRows531Xml
             + '</w:tbl>';
 
           // Replace: data table + remark table (if found)
           if (remarkTblEndFull531 !== -1) {
-            // Replace both the data table AND the remark table
             docXml = docXml.substring(0, tblStart531) + replacementTable531 + remarkTable531Xml + docXml.substring(remarkTblEndFull531);
-            console.log(`  ✅ Section 5.3.1 data table + remark table replaced`);
+            console.log(`  ✅ Section 5.3.1 data table + remark table replaced (${totalCols} columns, ${assayCols.length} assay col(s))`);
           } else {
-            // Replace only the data table
             docXml = docXml.substring(0, tblStart531) + replacementTable531 + docXml.substring(tblEnd531);
-            console.log(`  ✅ Section 5.3.1 data table replaced (remark table not found)`);
+            console.log(`  ✅ Section 5.3.1 data table replaced (${totalCols} columns, remark table not found)`);
           }
         } else {
           console.warn('Section 5.3.1: Could not find table bounds around "Critical Parameters"');
         }
     } else {
       console.warn('Section 5.3.1: "Critical Parameters" not found in template — table not populated');
+
     }
 
 // ── 11b. Dynamic Process Capability & Performance Parameters (Cp, Cpk, Pp, Ppk) ──
@@ -3184,16 +3289,29 @@ let origCpkTable = '';
 
 if (cpkTblStart !== -1 && origCpkTable) {
   const cpkTblPr = origCpkTable.match(/<w:tblPr>[\s\S]*?<\/w:tblPr>/)?.[0] || '<w:tblPr/>';
-  const cpkTblGrid = origCpkTable.match(/<w:tblGrid>[\s\S]*?<\/w:tblGrid>/)?.[0] || '<w:tblGrid/>';
 
-  const phValues = data.bulkInProcessData.map(r => parseFloat(r.ph));
-  const assayValues = data.bulkInProcessData.map(r => parseFloat(r.assay));
+  // ── Compute process capability for pH and ALL assay columns ──
+  const cpkHdr = data.bulkInProcessHeader || {};
+  const cpkAssayCols: { compound: string; limit: string }[] = cpkHdr.assayColumns || [];
+  // Total Cpk columns: vMerge col + label col + pH col + N assay cols
+  const cpkTotalDataCols = 2 + 1 + cpkAssayCols.length; // for gridSpan of title row
+  const cpkSimpleCols = 1 + cpkAssayCols.length; // pH + N assays (data value columns)
 
-  const hdr = data.bulkInProcessHeader || {};
-  const phStats = calculateProcessCapability(phValues, hdr.phLimit || '');
-  const assayStats = calculateProcessCapability(assayValues, hdr.assayLimit || '');
+  const phValues = data.bulkInProcessData.map((r: any) => parseFloat(r.ph));
+  const phStats = calculateProcessCapability(phValues, cpkHdr.phLimit || '');
 
-  console.log(`  📊 Process Capability: pH=${!!phStats}, Assay=${!!assayStats}`);
+  // Build array of assay stats — one per assay column
+  const assayStatsArray: (ProcessCapabilityResults | null)[] = [];
+  for (let ci = 0; ci < cpkAssayCols.length; ci++) {
+    const vals = data.bulkInProcessData.map((r: any) => {
+      if (r.assays && r.assays[ci]) return parseFloat(r.assays[ci].value);
+      if (ci === 0) return parseFloat(r.assay);
+      return NaN;
+    });
+    assayStatsArray.push(calculateProcessCapability(vals, cpkAssayCols[ci].limit || ''));
+  }
+
+  console.log(`  📊 Process Capability: pH=${!!phStats}, Assays=[${assayStatsArray.map((s, i) => `${cpkAssayCols[i]?.compound}=${!!s}`).join(', ')}]`);
 
   const fmt5 = (num: number | undefined) => num !== undefined && !isNaN(num) ? num.toFixed(5) : 'N/A';
   const fmt2 = (num: number | undefined) => num !== undefined && !isNaN(num) ? num.toFixed(2) : 'N/A';
@@ -3204,58 +3322,56 @@ if (cpkTblStart !== -1 && origCpkTable) {
     + `<w:r><w:rPr><w:b/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr>`
     + `<w:t xml:space="preserve">${xmlEscape(text)}</w:t></w:r></w:p>`;
 
-  const uslLslPh    = phStats    ? phStats.usl    - phStats.lsl    : NaN;
-  const uslAvgPh    = phStats    ? phStats.usl    - phStats.average : NaN;
-  const avgLslPh    = phStats    ? phStats.average - phStats.lsl   : NaN;
-  const uslLslAssay = assayStats ? assayStats.usl - assayStats.lsl : NaN;
-  const uslAvgAssay = assayStats ? assayStats.usl - assayStats.average : NaN;
-  const avgLslAssay = assayStats ? assayStats.average - assayStats.lsl : NaN;
+  // Build dynamic grid: vMerge(811) + label(1661) + pH(1081) + N assay(1447 each)
+  let cpkDynGrid = '<w:tblGrid><w:gridCol w:w="811"/><w:gridCol w:w="1661"/><w:gridCol w:w="1081"/>';
+  for (let i = 0; i < cpkAssayCols.length; i++) {
+    cpkDynGrid += '<w:gridCol w:w="1447"/>';
+  }
+  cpkDynGrid += '</w:tblGrid>';
+
+  // Helper: data value cell
+  const cpkValCell = (val: string, shade = '') =>
+    `<w:tc><w:tcPr><w:tcW w:w="1081" w:type="pct"/>${shade}<w:vAlign w:val="center"/></w:tcPr>`
+    + `<w:p><w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/>`
+    + `<w:rPr><w:sz w:val="24"/></w:rPr></w:pPr>`
+    + `<w:r><w:rPr><w:sz w:val="24"/></w:rPr><w:t>${val}</w:t></w:r></w:p></w:tc>`;
 
   const vMergeContCol =
     `<w:tc><w:tcPr><w:tcW w:w="811" w:type="pct"/><w:vMerge w:val="continue"/>`
     + `<w:vAlign w:val="center"/></w:tcPr><w:p/></w:tc>`;
 
-  const buildShortTermRow = (label: string, phVal: string, assayVal: string, isShaded = false) => {
+  // Dynamic row builders that accept arrays of values
+  const buildShortTermRowDyn = (label: string, phVal: string, assayVals: string[], isShaded = false) => {
     const shade = isShaded ? `<w:shd w:val="clear" w:color="auto" w:fill="D9D9D9"/>` : '';
-    return `<w:tr><w:trPr><w:trHeight w:val="397"/><w:jc w:val="center"/></w:trPr>`
+    let row = `<w:tr><w:trPr><w:trHeight w:val="397"/><w:jc w:val="center"/></w:trPr>`
       + vMergeContCol
       + `<w:tc><w:tcPr><w:tcW w:w="1661" w:type="pct"/>${shade}<w:vAlign w:val="center"/></w:tcPr>`
       + `<w:p><w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/>`
       + `<w:rPr><w:b/><w:sz w:val="24"/></w:rPr></w:pPr>`
       + `<w:r><w:rPr><w:b/><w:sz w:val="24"/></w:rPr>`
-      + `<w:t xml:space="preserve">${xmlEscape(label)}</w:t></w:r></w:p></w:tc>`
-      + `<w:tc><w:tcPr><w:tcW w:w="1081" w:type="pct"/>${shade}<w:vAlign w:val="center"/></w:tcPr>`
-      + `<w:p><w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/>`
-      + `<w:rPr><w:sz w:val="24"/></w:rPr></w:pPr>`
-      + `<w:r><w:rPr><w:sz w:val="24"/></w:rPr><w:t>${phVal}</w:t></w:r></w:p></w:tc>`
-      + `<w:tc><w:tcPr><w:tcW w:w="1447" w:type="pct"/>${shade}<w:vAlign w:val="center"/></w:tcPr>`
-      + `<w:p><w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/>`
-      + `<w:rPr><w:sz w:val="24"/></w:rPr></w:pPr>`
-      + `<w:r><w:rPr><w:sz w:val="24"/></w:rPr><w:t>${assayVal}</w:t></w:r></w:p></w:tc>`
-      + `</w:tr>`;
+      + `<w:t xml:space="preserve">${xmlEscape(label)}</w:t></w:r></w:p></w:tc>`;
+    row += cpkValCell(phVal, shade);
+    for (const v of assayVals) row += cpkValCell(v, shade);
+    row += `</w:tr>`;
+    return row;
   };
 
-  const buildSimpleRow = (col1Xml: string, phVal: string, assayVal: string) =>
-    `<w:tr><w:trPr><w:trHeight w:val="397"/><w:jc w:val="center"/></w:trPr>`
-    + `<w:tc><w:tcPr><w:tcW w:w="2472" w:type="pct"/><w:gridSpan w:val="2"/>`
-    + `<w:vAlign w:val="center"/></w:tcPr>${col1Xml}</w:tc>`
-    + `<w:tc><w:tcPr><w:tcW w:w="1081" w:type="pct"/><w:vAlign w:val="center"/></w:tcPr>`
-    + `<w:p><w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/>`
-    + `<w:rPr><w:sz w:val="24"/></w:rPr></w:pPr>`
-    + `<w:r><w:rPr><w:sz w:val="24"/></w:rPr><w:t>${xmlEscape(phVal)}</w:t></w:r></w:p></w:tc>`
-    + `<w:tc><w:tcPr><w:tcW w:w="1447" w:type="pct"/><w:vAlign w:val="center"/></w:tcPr>`
-    + `<w:p><w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/>`
-    + `<w:rPr><w:sz w:val="24"/></w:rPr></w:pPr>`
-    + `<w:r><w:rPr><w:sz w:val="24"/></w:rPr><w:t>${xmlEscape(assayVal)}</w:t></w:r></w:p></w:tc>`
-    + `</w:tr>`;
+  const buildSimpleRowDyn = (col1Xml: string, phVal: string, assayVals: string[]) => {
+    let row = `<w:tr><w:trPr><w:trHeight w:val="397"/><w:jc w:val="center"/></w:trPr>`
+      + `<w:tc><w:tcPr><w:tcW w:w="2472" w:type="pct"/><w:gridSpan w:val="2"/>`
+      + `<w:vAlign w:val="center"/></w:tcPr>${col1Xml}</w:tc>`;
+    row += cpkValCell(phVal);
+    for (const v of assayVals) row += cpkValCell(v);
+    row += `</w:tr>`;
+    return row;
+  };
 
   let dynCpkRows = '';
 
-  // ── ROW 1: Title row — spans ALL columns — generated fresh for THIS product ──
-  // FIX: Previously this row was preserved from the template (stale), now we generate it.
+  // ── ROW 1: Title row — spans ALL columns
   dynCpkRows +=
     `<w:tr><w:trPr><w:trHeight w:val="397"/><w:jc w:val="center"/></w:trPr>`
-    + `<w:tc><w:tcPr><w:tcW w:w="5000" w:type="pct"/><w:gridSpan w:val="4"/>`
+    + `<w:tc><w:tcPr><w:tcW w:w="5000" w:type="pct"/><w:gridSpan w:val="${cpkTotalDataCols}"/>`
     + `<w:shd w:val="clear" w:color="auto" w:fill="D9D9D9"/><w:vAlign w:val="center"/></w:tcPr>`
     + `<w:p><w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/>`
     + `<w:rPr><w:b/><w:color w:val="7F6000"/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:pPr>`
@@ -3264,92 +3380,104 @@ if (cpkTblStart !== -1 && origCpkTable) {
     + `</w:r></w:p></w:tc>`
     + `</w:tr>`;
 
-  // ── ROW 2: Column headers — pH | Assay (%) {compound} — for THIS product's data ──
-  dynCpkRows +=
-    `<w:tr><w:trPr><w:trHeight w:val="397"/><w:jc w:val="center"/></w:trPr>`
-    + `<w:tc><w:tcPr><w:tcW w:w="2472" w:type="pct"/><w:gridSpan w:val="2"/>`
-    + `<w:shd w:val="clear" w:color="auto" w:fill="D9D9D9"/><w:vAlign w:val="center"/></w:tcPr>`
-    + `<w:p/></w:tc>`
-    + `<w:tc><w:tcPr><w:tcW w:w="1081" w:type="pct"/>`
-    + `<w:shd w:val="clear" w:color="auto" w:fill="D9D9D9"/><w:vAlign w:val="center"/></w:tcPr>`
-    + boldP('pH') + `</w:tc>`
-    + `<w:tc><w:tcPr><w:tcW w:w="1447" w:type="pct"/>`
-    + `<w:shd w:val="clear" w:color="auto" w:fill="D9D9D9"/><w:vAlign w:val="center"/></w:tcPr>`
-    + boldP('Assay (%)') + boldP(hdr.assayCompound || 'Sodium Hyaluronate') + `</w:tc>`
-    + `</w:tr>`;
+  // ── ROW 2: Column headers — pH | Assay columns
+  {
+    let hdrRow = `<w:tr><w:trPr><w:trHeight w:val="397"/><w:jc w:val="center"/></w:trPr>`
+      + `<w:tc><w:tcPr><w:tcW w:w="2472" w:type="pct"/><w:gridSpan w:val="2"/>`
+      + `<w:shd w:val="clear" w:color="auto" w:fill="D9D9D9"/><w:vAlign w:val="center"/></w:tcPr>`
+      + `<w:p/></w:tc>`
+      + `<w:tc><w:tcPr><w:tcW w:w="1081" w:type="pct"/>`
+      + `<w:shd w:val="clear" w:color="auto" w:fill="D9D9D9"/><w:vAlign w:val="center"/></w:tcPr>`
+      + boldP('pH') + `</w:tc>`;
+    for (const col of cpkAssayCols) {
+      hdrRow += `<w:tc><w:tcPr><w:tcW w:w="1447" w:type="pct"/>`
+        + `<w:shd w:val="clear" w:color="auto" w:fill="D9D9D9"/><w:vAlign w:val="center"/></w:tcPr>`
+        + boldP('Assay (%)') + boldP(col.compound) + `</w:tc>`;
+    }
+    hdrRow += `</w:tr>`;
+    dynCpkRows += hdrRow;
+  }
+
+  // Helper to get formatted values from all assay stats
+  const fmtAssays5 = (getter: (s: ProcessCapabilityResults | null) => number | undefined) =>
+    assayStatsArray.map(s => fmt5(getter(s)));
+  const fmtAssays2 = (getter: (s: ProcessCapabilityResults | null) => number | undefined) =>
+    assayStatsArray.map(s => fmt2(getter(s)));
+
+  // Derived values per assay
+  const uslLslAssays = assayStatsArray.map(s => s ? s.usl - s.lsl : NaN);
+  const uslAvgAssays = assayStatsArray.map(s => s ? s.usl - s.average : NaN);
+  const avgLslAssays = assayStatsArray.map(s => s ? s.average - s.lsl : NaN);
+
+  const uslLslPh    = phStats ? phStats.usl - phStats.lsl : NaN;
+  const uslAvgPh    = phStats ? phStats.usl - phStats.average : NaN;
+  const avgLslPh    = phStats ? phStats.average - phStats.lsl : NaN;
 
   // ── ROWS 3–8: Basic statistics ──
-  dynCpkRows += buildSimpleRow(boldP('Average'),                                       fmt5(phStats?.average),  fmt5(assayStats?.average));
-  dynCpkRows += buildSimpleRow(boldP('Maximum'),                                       fmt5(phStats?.max),      fmt5(assayStats?.max));
-  dynCpkRows += buildSimpleRow(boldP('Minimum'),                                       fmt5(phStats?.min),      fmt5(assayStats?.min));
-  dynCpkRows += buildSimpleRow(boldP('Upper Specification Limit \u2013 Lower Specification Limit (USL \u2013 LSL)'), fmt5(uslLslPh), fmt5(uslLslAssay));
-  dynCpkRows += buildSimpleRow(boldP('Upper Specification Limit (USL) \u2013 Average'), fmt5(uslAvgPh),         fmt5(uslAvgAssay));
-  dynCpkRows += buildSimpleRow(boldP('Average \u2013 Lower Specification Limit (LSL)'), fmt5(avgLslPh),         fmt5(avgLslAssay));
+  dynCpkRows += buildSimpleRowDyn(boldP('Average'), fmt5(phStats?.average), fmtAssays5(s => s?.average));
+  dynCpkRows += buildSimpleRowDyn(boldP('Maximum'), fmt5(phStats?.max), fmtAssays5(s => s?.max));
+  dynCpkRows += buildSimpleRowDyn(boldP('Minimum'), fmt5(phStats?.min), fmtAssays5(s => s?.min));
+  dynCpkRows += buildSimpleRowDyn(boldP('Upper Specification Limit \u2013 Lower Specification Limit (USL \u2013 LSL)'), fmt5(uslLslPh), uslLslAssays.map(v => fmt5(v)));
+  dynCpkRows += buildSimpleRowDyn(boldP('Upper Specification Limit (USL) \u2013 Average'), fmt5(uslAvgPh), uslAvgAssays.map(v => fmt5(v)));
+  dynCpkRows += buildSimpleRowDyn(boldP('Average \u2013 Lower Specification Limit (LSL)'), fmt5(avgLslPh), avgLslAssays.map(v => fmt5(v)));
 
   // ── ROWS 9–15: Short-Term (Cp, Cpk) ──
   // Row 9: Short-Term header with vMerge + "Estimated Std Deviation (σ)"
-  dynCpkRows +=
-    `<w:tr><w:trPr><w:trHeight w:val="397"/><w:jc w:val="center"/></w:trPr>`
-    + `<w:tc><w:tcPr><w:tcW w:w="811" w:type="pct"/><w:vMerge w:val="restart"/>`
-    + `<w:vAlign w:val="center"/></w:tcPr>`
-    + boldP('Process Capability parameters Short-Term Statistics') + `</w:tc>`
-    + `<w:tc><w:tcPr><w:tcW w:w="1661" w:type="pct"/><w:vAlign w:val="center"/></w:tcPr>`
-    + `<w:p><w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/>`
-    + `<w:rPr><w:b/><w:sz w:val="24"/></w:rPr></w:pPr>`
-    + `<w:r><w:rPr><w:b/><w:sz w:val="24"/></w:rPr>`
-    + `<w:t xml:space="preserve">Estimated Std Deviation (</w:t></w:r>`
-    + `<w:r><w:rPr><w:b/><w:sz w:val="24"/><w:rFonts w:ascii="Symbol" w:hAnsi="Symbol" w:cs="Symbol"/></w:rPr>`
-    + `<w:t>s</w:t></w:r>`
-    + `<w:r><w:rPr><w:b/><w:sz w:val="24"/></w:rPr><w:t xml:space="preserve">)</w:t></w:r></w:p></w:tc>`
-    + `<w:tc><w:tcPr><w:tcW w:w="1081" w:type="pct"/><w:vAlign w:val="center"/></w:tcPr>`
-    + `<w:p><w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/>`
-    + `<w:rPr><w:sz w:val="24"/></w:rPr></w:pPr>`
-    + `<w:r><w:rPr><w:sz w:val="24"/></w:rPr><w:t>${fmt5(phStats?.sigmaEstimated)}</w:t></w:r></w:p></w:tc>`
-    + `<w:tc><w:tcPr><w:tcW w:w="1447" w:type="pct"/><w:vAlign w:val="center"/></w:tcPr>`
-    + `<w:p><w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/>`
-    + `<w:rPr><w:sz w:val="24"/></w:rPr></w:pPr>`
-    + `<w:r><w:rPr><w:sz w:val="24"/></w:rPr><w:t>${fmt5(assayStats?.sigmaEstimated)}</w:t></w:r></w:p></w:tc>`
-    + `</w:tr>`;
+  {
+    let stRow = `<w:tr><w:trPr><w:trHeight w:val="397"/><w:jc w:val="center"/></w:trPr>`
+      + `<w:tc><w:tcPr><w:tcW w:w="811" w:type="pct"/><w:vMerge w:val="restart"/>`
+      + `<w:vAlign w:val="center"/></w:tcPr>`
+      + boldP('Process Capability parameters Short-Term Statistics') + `</w:tc>`
+      + `<w:tc><w:tcPr><w:tcW w:w="1661" w:type="pct"/><w:vAlign w:val="center"/></w:tcPr>`
+      + `<w:p><w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/>`
+      + `<w:rPr><w:b/><w:sz w:val="24"/></w:rPr></w:pPr>`
+      + `<w:r><w:rPr><w:b/><w:sz w:val="24"/></w:rPr>`
+      + `<w:t xml:space="preserve">Estimated Std Deviation (</w:t></w:r>`
+      + `<w:r><w:rPr><w:b/><w:sz w:val="24"/><w:rFonts w:ascii="Symbol" w:hAnsi="Symbol" w:cs="Symbol"/></w:rPr>`
+      + `<w:t>s</w:t></w:r>`
+      + `<w:r><w:rPr><w:b/><w:sz w:val="24"/></w:rPr><w:t xml:space="preserve">)</w:t></w:r></w:p></w:tc>`;
+    stRow += cpkValCell(fmt5(phStats?.sigmaEstimated));
+    for (const s of assayStatsArray) stRow += cpkValCell(fmt5(s?.sigmaEstimated));
+    stRow += `</w:tr>`;
+    dynCpkRows += stRow;
+  }
 
-  dynCpkRows += buildShortTermRow('3\u03c3 = (3 X \u03c3)',              fmt2(phStats    ? phStats.sigmaEstimated    * 3 : undefined), fmt2(assayStats ? assayStats.sigmaEstimated    * 3 : undefined));
-  dynCpkRows += buildShortTermRow('6\u03c3 = (6 X \u03c3)',              fmt2(phStats    ? phStats.sigmaEstimated    * 6 : undefined), fmt2(assayStats ? assayStats.sigmaEstimated    * 6 : undefined));
-  dynCpkRows += buildShortTermRow('Cpku = (USL \u2013 Average) / 3\u03c3', fmt2(phStats?.cpku),  fmt2(assayStats?.cpku));
-  dynCpkRows += buildShortTermRow('Cpkl = (Average \u2013 LSL) / 3\u03c3', fmt2(phStats?.cpkl),  fmt2(assayStats?.cpkl));
-  dynCpkRows += buildShortTermRow('Cpk Value = Min (Cpkl & Cpku)',        fmt2(phStats?.cpk),   fmt2(assayStats?.cpk),  true);
-  dynCpkRows += buildShortTermRow('Cp Value = (USL \u2013 LSL) / 6\u03c3', fmt2(phStats?.cp),    fmt2(assayStats?.cp),   true);
+  dynCpkRows += buildShortTermRowDyn('3\u03c3 = (3 X \u03c3)', fmt2(phStats ? phStats.sigmaEstimated * 3 : undefined), assayStatsArray.map(s => fmt2(s ? s.sigmaEstimated * 3 : undefined)));
+  dynCpkRows += buildShortTermRowDyn('6\u03c3 = (6 X \u03c3)', fmt2(phStats ? phStats.sigmaEstimated * 6 : undefined), assayStatsArray.map(s => fmt2(s ? s.sigmaEstimated * 6 : undefined)));
+  dynCpkRows += buildShortTermRowDyn('Cpku = (USL \u2013 Average) / 3\u03c3', fmt2(phStats?.cpku), fmtAssays2(s => s?.cpku));
+  dynCpkRows += buildShortTermRowDyn('Cpkl = (Average \u2013 LSL) / 3\u03c3', fmt2(phStats?.cpkl), fmtAssays2(s => s?.cpkl));
+  dynCpkRows += buildShortTermRowDyn('Cpk Value = Min (Cpkl & Cpku)', fmt2(phStats?.cpk), fmtAssays2(s => s?.cpk), true);
+  dynCpkRows += buildShortTermRowDyn('Cp Value = (USL \u2013 LSL) / 6\u03c3', fmt2(phStats?.cp), fmtAssays2(s => s?.cp), true);
 
   // ── ROWS 16–22: Long-Term (Pp, Ppk) ──
-  dynCpkRows +=
-    `<w:tr><w:trPr><w:trHeight w:val="397"/><w:jc w:val="center"/></w:trPr>`
-    + `<w:tc><w:tcPr><w:tcW w:w="811" w:type="pct"/><w:vMerge w:val="restart"/>`
-    + `<w:vAlign w:val="center"/></w:tcPr>`
-    + boldP('Process Performance parameters (Long-Term Statistics)') + `</w:tc>`
-    + `<w:tc><w:tcPr><w:tcW w:w="1661" w:type="pct"/><w:vAlign w:val="center"/></w:tcPr>`
-    + boldP('Std Deviation (S)') + `</w:tc>`
-    + `<w:tc><w:tcPr><w:tcW w:w="1081" w:type="pct"/><w:vAlign w:val="center"/></w:tcPr>`
-    + `<w:p><w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/>`
-    + `<w:rPr><w:sz w:val="24"/></w:rPr></w:pPr>`
-    + `<w:r><w:rPr><w:sz w:val="24"/></w:rPr><w:t>${fmt5(phStats?.sigmaSample)}</w:t></w:r></w:p></w:tc>`
-    + `<w:tc><w:tcPr><w:tcW w:w="1447" w:type="pct"/><w:vAlign w:val="center"/></w:tcPr>`
-    + `<w:p><w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/>`
-    + `<w:rPr><w:sz w:val="24"/></w:rPr></w:pPr>`
-    + `<w:r><w:rPr><w:sz w:val="24"/></w:rPr><w:t>${fmt5(assayStats?.sigmaSample)}</w:t></w:r></w:p></w:tc>`
-    + `</w:tr>`;
+  {
+    let ltRow = `<w:tr><w:trPr><w:trHeight w:val="397"/><w:jc w:val="center"/></w:trPr>`
+      + `<w:tc><w:tcPr><w:tcW w:w="811" w:type="pct"/><w:vMerge w:val="restart"/>`
+      + `<w:vAlign w:val="center"/></w:tcPr>`
+      + boldP('Process Performance parameters (Long-Term Statistics)') + `</w:tc>`
+      + `<w:tc><w:tcPr><w:tcW w:w="1661" w:type="pct"/><w:vAlign w:val="center"/></w:tcPr>`
+      + boldP('Std Deviation (S)') + `</w:tc>`;
+    ltRow += cpkValCell(fmt5(phStats?.sigmaSample));
+    for (const s of assayStatsArray) ltRow += cpkValCell(fmt5(s?.sigmaSample));
+    ltRow += `</w:tr>`;
+    dynCpkRows += ltRow;
+  }
 
-  dynCpkRows += buildShortTermRow('3S = (3 X Std deviation)', fmt2(phStats    ? phStats.sigmaSample    * 3 : undefined), fmt2(assayStats ? assayStats.sigmaSample    * 3 : undefined));
-  dynCpkRows += buildShortTermRow('6S = (6 X Std deviation)', fmt2(phStats    ? phStats.sigmaSample    * 6 : undefined), fmt2(assayStats ? assayStats.sigmaSample    * 6 : undefined));
-  dynCpkRows += buildShortTermRow('Ppku = (USL \u2013 Average) / 3S',     fmt2(phStats?.ppku),  fmt2(assayStats?.ppku));
-  dynCpkRows += buildShortTermRow('Ppkl = (Average \u2013 LSL) / 3S',     fmt2(phStats?.ppkl),  fmt2(assayStats?.ppkl));
-  dynCpkRows += buildShortTermRow('Ppk Value = Min(Ppkl & Ppku)',          fmt2(phStats?.ppk),   fmt2(assayStats?.ppk));
-  dynCpkRows += buildShortTermRow('Pp Value = (USL \u2013 LSL) / 6S',      fmt2(phStats?.pp),    fmt2(assayStats?.pp));
+  dynCpkRows += buildShortTermRowDyn('3S = (3 X Std deviation)', fmt2(phStats ? phStats.sigmaSample * 3 : undefined), assayStatsArray.map(s => fmt2(s ? s.sigmaSample * 3 : undefined)));
+  dynCpkRows += buildShortTermRowDyn('6S = (6 X Std deviation)', fmt2(phStats ? phStats.sigmaSample * 6 : undefined), assayStatsArray.map(s => fmt2(s ? s.sigmaSample * 6 : undefined)));
+  dynCpkRows += buildShortTermRowDyn('Ppku = (USL \u2013 Average) / 3S', fmt2(phStats?.ppku), fmtAssays2(s => s?.ppku));
+  dynCpkRows += buildShortTermRowDyn('Ppkl = (Average \u2013 LSL) / 3S', fmt2(phStats?.ppkl), fmtAssays2(s => s?.ppkl));
+  dynCpkRows += buildShortTermRowDyn('Ppk Value = Min(Ppkl & Ppku)', fmt2(phStats?.ppk), fmtAssays2(s => s?.ppk));
+  dynCpkRows += buildShortTermRowDyn('Pp Value = (USL \u2013 LSL) / 6S', fmt2(phStats?.pp), fmtAssays2(s => s?.pp));
 
   // ── Assemble and replace the ENTIRE table ──
-  const replacementCpkTable = '<w:tbl>' + cpkTblPr + cpkTblGrid + dynCpkRows + '</w:tbl>';
+  const replacementCpkTable = '<w:tbl>' + cpkTblPr + cpkDynGrid + dynCpkRows + '</w:tbl>';
 
   docXml = docXml.substring(0, cpkTblStart) + replacementCpkTable + docXml.substring(cpkTblEndFull);
-  console.log(`  ✅ Process Capability & Performance parameters table replaced (including title + column headers)`);
+  console.log(`  ✅ Process Capability table replaced (${cpkTotalDataCols} columns, ${cpkAssayCols.length} assay col(s))`);
 }
   }
+
 
   // ── 11c. Dynamic Section 5.3.2 – In-Process Analysis Results at Finish Stage ──
   // Always runs — replaces the template table whether or not FINISH COA data exists.
@@ -3359,46 +3487,42 @@ if (cpkTblStart !== -1 && origCpkTable) {
     console.log(`\n📋 Section 5.3.2 Finish In-Process: ${finishRows.length} rows`);
 
     const fhdr = data.finishInProcessHeader || {};
-    const compounds: string[] = fhdr.identificationCompounds || [];
-    const specs: string[] = fhdr.identificationSpecifications || [];
+    const rsCompounds:     { compound: string; limit: string }[] = fhdr.relatedSubstanceCompounds || [];
+    const assayCompounds:  { compound: string; limit: string }[] = fhdr.assayCompounds || [];
 
-    // Find the 5.3.2 table by its unique anchor text "Finished Product Analysis"
-    // This text appears in the paragraph immediately before the table in the template.
-    // We search starting AFTER the 5.3.1 area to avoid matching the wrong occurrence.
-    // The 5.3.1 "Critical Parameters" table is Table 20; we need Table 28.
-    const finishTableAnchors = [
-      'Finished Product Analysis',
-      'Finished Product',
-    ];
+    // Total columns = Batch# + AR# + pH + Uniformity + Capping + Sterility + RS×N + Assay×N
+    const paramCols = 4 + rsCompounds.length + assayCompounds.length;
+    const totalCols532 = 2 + paramCols;
 
+    // Find the 5.3.2 table by its anchor text
+    const finishTableAnchors = ['Finished Product Analysis', 'Finished Product'];
     let finishTblStart = -1;
-    let finishTblEnd = -1;
-
-    // Start searching from well past the 5.3.1 section (halfway through the doc)
+    let finishTblEnd   = -1;
     const searchStartPos532 = Math.floor(docXml.length * 0.4);
+    console.log(`  5.3.2 DEBUG: docXml.length=${docXml.length}, searchStartPos=${searchStartPos532}`);
 
     for (const anchor of finishTableAnchors) {
       const anchorIdx = docXml.indexOf(anchor, searchStartPos532);
+      console.log(`  5.3.2 DEBUG: anchor="${anchor}" idx=${anchorIdx}`);
       if (anchorIdx === -1) continue;
-
-      // Walk forward to find the next <w:tbl> after the anchor
       const nextTblIdx = docXml.indexOf('<w:tbl>', anchorIdx);
-      if (nextTblIdx === -1 || (nextTblIdx - anchorIdx) > 5000) continue;
-
-      // Find matching closing tag
+      const dist = nextTblIdx !== -1 ? nextTblIdx - anchorIdx : -1;
+      console.log(`  5.3.2 DEBUG: nextTblIdx=${nextTblIdx}, distance=${dist}`);
+      if (nextTblIdx === -1 || dist > 5000) continue;
       const tblEndIdx = docXml.indexOf('</w:tbl>', nextTblIdx);
+      console.log(`  5.3.2 DEBUG: tblEndIdx=${tblEndIdx}`);
       if (tblEndIdx === -1) continue;
-
       finishTblStart = nextTblIdx;
-      finishTblEnd = tblEndIdx + 8;
-      console.log(`  Section 5.3.2: Found table via anchor "${anchor}" at docXml[${anchorIdx}], table at index ${nextTblIdx}`);
+      finishTblEnd   = tblEndIdx + 8;
+      console.log(`  ✅ Section 5.3.2: Found table via anchor "${anchor}" at [${nextTblIdx}..${finishTblEnd}]`);
       break;
     }
+    console.log(`  5.3.2 DEBUG: finishTblStart=${finishTblStart}, finishTblEnd=${finishTblEnd}`);
 
     if (finishTblStart !== -1) {
       const origTable532 = docXml.substring(finishTblStart, finishTblEnd);
 
-      // Preserve original table properties and grid
+      // Preserve table properties
       const origTblPr532 = origTable532.match(/<w:tblPr>[\s\S]*?<\/w:tblPr>/)?.[0]
         || '<w:tblPr><w:tblW w:w="5000" w:type="pct"/><w:jc w:val="center"/><w:tblBorders>'
         + '<w:top w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
@@ -3409,108 +3533,93 @@ if (cpkTblStart !== -1 && origCpkTable) {
         + '<w:insideV w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
         + '</w:tblBorders></w:tblPr>';
 
-      // Build grid: Batch Number + AR Number + Description + one col per compound
-      const totalCols = 2 + 1 + compounds.length;
-      const colWidth = Math.round(5000 / totalCols);
-      const gridCols = Array(totalCols).fill(`<w:gridCol w:w="${colWidth}"/>`).join('');
-      const tblGrid532 = `<w:tblGrid>${gridCols}</w:tblGrid>`;
+      // Build dynamic grid
+      const colWidth532 = Math.round(9000 / totalCols532);
+      const gridCols532 = Array(totalCols532).fill(`<w:gridCol w:w="${colWidth532}"/>`).join('');
+      const tblGrid532  = `<w:tblGrid>${gridCols532}</w:tblGrid>`;
 
-      // Helper: styled header cell (shaded, bold, centered)
-      const headerCell532 = (text: string, opts?: { vMerge?: 'restart' | 'continue'; gridSpan?: number }) => {
-        let tcPrInner = '<w:shd w:val="clear" w:color="auto" w:fill="D9D9D9"/><w:vAlign w:val="center"/>';
-        if (opts?.vMerge === 'restart') tcPrInner = '<w:vMerge w:val="restart"/>' + tcPrInner;
-        else if (opts?.vMerge === 'continue') tcPrInner = '<w:vMerge/>' + tcPrInner;
-        if (opts?.gridSpan) tcPrInner += `<w:gridSpan w:val="${opts.gridSpan}"/>`;
-        const rPr = '<w:rPr><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>';
+      // ── Helpers ──
+      const hCell = (text: string, opts?: { vMerge?: 'restart' | 'continue'; gridSpan?: number }) => {
+        let tcPr = '<w:shd w:val="clear" w:color="auto" w:fill="D9D9D9"/><w:vAlign w:val="center"/>';
+        if (opts?.vMerge === 'restart') tcPr = '<w:vMerge w:val="restart"/>' + tcPr;
+        else if (opts?.vMerge === 'continue') tcPr = '<w:vMerge/>' + tcPr;
+        if (opts?.gridSpan) tcPr += `<w:gridSpan w:val="${opts.gridSpan}"/>`;
+        const rPr = '<w:rPr><w:b/><w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr>';
         const pPr = '<w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/>' + rPr + '</w:pPr>';
-        return '<w:tc><w:tcPr>' + tcPrInner + '</w:tcPr>'
+        return '<w:tc><w:tcPr>' + tcPr + '</w:tcPr>'
           + '<w:p>' + pPr
           + (text ? '<w:r>' + rPr + `<w:t xml:space="preserve">${xmlEscape(text)}</w:t></w:r>` : '')
           + '</w:p></w:tc>';
       };
 
-      // Helper: regular data cell (centered, size 20)
-      const dataCell532 = (text: string) => {
-        return '<w:tc><w:tcPr>'
-          + '<w:vAlign w:val="center"/>'
-          + '</w:tcPr>'
-          + '<w:p><w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/>'
-          + '<w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:pPr>'
-          + '<w:r><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>'
-          + `<w:t xml:space="preserve">${xmlEscape(text)}</w:t>`
-          + '</w:r></w:p></w:tc>';
-      };
+      const dCell = (text: string) =>
+        '<w:tc><w:tcPr><w:vAlign w:val="center"/></w:tcPr>'
+        + '<w:p><w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/>'
+        + '<w:rPr><w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr></w:pPr>'
+        + '<w:r><w:rPr><w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr>'
+        + `<w:t xml:space="preserve">${xmlEscape(text)}</w:t>`
+        + '</w:r></w:p></w:tc>';
 
-      // ── Row 0: Column headers ──
-      // Batch Number (vMerge restart) | AR Number (vMerge restart) | Description (vMerge restart) | Identification → {compound} per col
-      let dynRows532 = '<w:tr><w:trPr><w:trHeight w:val="432"/><w:jc w:val="center"/></w:trPr>';
-      dynRows532 += headerCell532('Batch Number', { vMerge: 'restart' });
-      dynRows532 += headerCell532('AR. Number', { vMerge: 'restart' });
-      dynRows532 += headerCell532('Description', { vMerge: 'restart' });
-      if (compounds.length === 0) {
-        dynRows532 += headerCell532('Identification');
-      } else if (compounds.length === 1) {
-        dynRows532 += headerCell532(`Identification\n${compounds[0]}`);
-      } else {
-        // multiple compounds: span all compound cols under "Identification"
-        dynRows532 += headerCell532('Identification', { gridSpan: compounds.length });
-      }
+      let dynRows532 = '';
+
+      // ── Row 0: Top header ──
+      // Batch# (vMerge restart) | AR# (vMerge restart) | "Critical Parameters (Limit)" spanning all param cols
+      dynRows532 += '<w:tr><w:trPr><w:trHeight w:val="432"/><w:jc w:val="center"/></w:trPr>';
+      dynRows532 += hCell('Batch\nNumber', { vMerge: 'restart' });
+      dynRows532 += hCell('AR.\nNumber', { vMerge: 'restart' });
+      dynRows532 += hCell('Critical Parameters (Limit)', { gridSpan: paramCols });
       dynRows532 += '</w:tr>';
 
-      // ── Row 1: Limit row (subheader) ──
-      // For single compound, this is a vMerge continue for first 3 cols and shows limit text.
-      // For multiple compounds, shows compound name in each column.
-      if (compounds.length > 1) {
-        // subheader: vMerge continue | vMerge continue | vMerge continue | compound1 | compound2 ...
-        dynRows532 += '<w:tr><w:trPr><w:trHeight w:val="432"/><w:jc w:val="center"/></w:trPr>';
-        dynRows532 += headerCell532('', { vMerge: 'continue' });
-        dynRows532 += headerCell532('', { vMerge: 'continue' });
-        dynRows532 += headerCell532('', { vMerge: 'continue' });
-        for (const compound of compounds) {
-          dynRows532 += headerCell532(compound);
-        }
-        dynRows532 += '</w:tr>';
-      }
-
-      // ── Row 2: Limit values row ──
-      const descLimit = xmlEscape((fhdr.descriptionLimit || '').trim());
+      // ── Row 1: Sub-headers with limits ──
+      // vMerge continue for Batch/AR, then individual parameter columns
       dynRows532 += '<w:tr><w:trPr><w:trHeight w:val="432"/><w:jc w:val="center"/></w:trPr>';
-      dynRows532 += headerCell532('Limit →');
-      dynRows532 += headerCell532('');
-      dynRows532 += headerCell532(descLimit);
-      if (compounds.length === 0) {
-        dynRows532 += headerCell532('');
-      } else {
-        for (let ci = 0; ci < compounds.length; ci++) {
-          dynRows532 += headerCell532(xmlEscape(specs[ci] || ''));
-        }
+      dynRows532 += hCell('', { vMerge: 'continue' });
+      dynRows532 += hCell('', { vMerge: 'continue' });
+      //  pH
+      dynRows532 += hCell(`pH\n(${(fhdr.phLimit || '').trim() || '--'})`);
+      //  Uniformity of Filled Volume
+      const unif = (fhdr.uniformityLimit || '').trim();
+      dynRows532 += hCell(`Uniformity of\nFilled Volume\n${unif ? '(' + unif + ')' : ''}`);
+      //  Capping
+      dynRows532 += hCell(`Capping\n${(fhdr.cappingLimit || '').trim() || 'Cap should be properly placed'}`);
+      //  Sterility
+      dynRows532 += hCell(`Sterility\n${(fhdr.sterilityLimit || '').trim() || 'No growth'}`);
+      //  Related Substances (one per compound)
+      for (const rs of rsCompounds) {
+        dynRows532 += hCell(`Related Substances\n${rs.compound}\n${(rs.limit || '').trim()}`);
+      }
+      //  Assay (one per compound)
+      for (const ac of assayCompounds) {
+        const limitLine = (ac.limit || '').split('\n')[0].trim();
+        dynRows532 += hCell(`Assay (%)\n${ac.compound}\n${limitLine}`);
       }
       dynRows532 += '</w:tr>';
 
       // ── Data rows ──
       if (finishRows.length === 0) {
-        // No FINISH COA data — show empty state so stale template rows are cleared
-        const emptyColSpan = 2 + 1 + Math.max(compounds.length, 1);
         dynRows532 += '<w:tr><w:trPr><w:jc w:val="center"/></w:trPr>'
-          + '<w:tc><w:tcPr><w:gridSpan w:val="' + emptyColSpan + '"/><w:vAlign w:val="center"/></w:tcPr>'
+          + '<w:tc><w:tcPr><w:gridSpan w:val="' + totalCols532 + '"/><w:vAlign w:val="center"/></w:tcPr>'
           + '<w:p><w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/>'
-          + '<w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:pPr>'
-          + '<w:r><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>'
+          + '<w:rPr><w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr></w:pPr>'
+          + '<w:r><w:rPr><w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr>'
           + '<w:t>No Finish Stage COA data found for the selected product and year.</w:t>'
           + '</w:r></w:p></w:tc></w:tr>';
       } else {
         for (const row of finishRows) {
-        dynRows532 += '<w:tr><w:trPr><w:jc w:val="center"/></w:trPr>';
-        dynRows532 += dataCell532(row.batchNumber);
-        dynRows532 += dataCell532(row.arNumber);
-        dynRows532 += dataCell532(row.description);
-          if (compounds.length === 0) {
-            dynRows532 += dataCell532('Complies');
-          } else {
-            for (let ci = 0; ci < compounds.length; ci++) {
-              const id = row.identification.find((i: any) => i.compound === compounds[ci]);
-              dynRows532 += dataCell532(id?.result || 'Complies');
-            }
+          dynRows532 += '<w:tr><w:trPr><w:jc w:val="center"/></w:trPr>';
+          dynRows532 += dCell(row.batchNumber || '');
+          dynRows532 += dCell(row.arNumber    || '');
+          dynRows532 += dCell(row.ph          || '--');
+          dynRows532 += dCell(row.uniformity  || '--');
+          dynRows532 += dCell(row.capping     || 'Complies');
+          dynRows532 += dCell(row.sterility   || 'Complies');
+          for (const rsCol of rsCompounds) {
+            const rs = (row.relatedSubstances || []).find((r: any) => r.compound === rsCol.compound);
+            dynRows532 += dCell(rs?.result || 'Complies');
+          }
+          for (const acCol of assayCompounds) {
+            const a = (row.assays || []).find((a: any) => a.compound === acCol.compound);
+            dynRows532 += dCell(a?.result || '--');
           }
           dynRows532 += '</w:tr>';
         }
@@ -3521,27 +3630,23 @@ if (cpkTblStart !== -1 && origCpkTable) {
 
       // Replace the 5.3.2 data table
       docXml = docXml.substring(0, finishTblStart) + replacementTable532 + docXml.substring(finishTblEnd);
-      console.log(`  ✅ Section 5.3.2 data table replaced: ${compounds.length} identification compounds, ${data.finishInProcessData.length} rows`);
+      console.log(`  ✅ Section 5.3.2 table replaced: ${rsCompounds.length} RS + ${assayCompounds.length} Assay cols, ${finishRows.length} rows`);
 
-      // Also try to find and update the remark table immediately after
+      // Update remark table after the data table
       const remarkSearchStart532 = finishTblStart + replacementTable532.length;
       const remarkAnchor532 = docXml.indexOf('Remark:', remarkSearchStart532);
       if (remarkAnchor532 !== -1 && (remarkAnchor532 - remarkSearchStart532) < 5000) {
         const remarkTblStart532 = docXml.lastIndexOf('<w:tbl>', remarkAnchor532);
-        const remarkTblEnd532 = docXml.indexOf('</w:tbl>', remarkAnchor532);
+        const remarkTblEnd532   = docXml.indexOf('</w:tbl>', remarkAnchor532);
         if (remarkTblStart532 !== -1 && remarkTblEnd532 !== -1 && remarkTblStart532 > finishTblStart) {
           const remarkTblEndFull532 = remarkTblEnd532 + 8;
           const origRemark532 = docXml.substring(remarkTblStart532, remarkTblEndFull532);
-          const remarkTblPr532 = origRemark532.match(/<w:tblPr>[\s\S]*?<\/w:tblPr>/)?.[0] || '<w:tblPr><w:tblW w:w="5000" w:type="pct"/></w:tblPr>';
+          const remarkTblPr532   = origRemark532.match(/<w:tblPr>[\s\S]*?<\/w:tblPr>/)?.[0] || '<w:tblPr><w:tblW w:w="5000" w:type="pct"/></w:tblPr>';
           const remarkTblGrid532 = origRemark532.match(/<w:tblGrid>[\s\S]*?<\/w:tblGrid>/)?.[0] || '<w:tblGrid><w:gridCol w:w="10000"/></w:tblGrid>';
-
-          // Extract signature row (Prepared By QA / Reviewed By QA - last row)
           const remarkOrigRows532 = [...origRemark532.matchAll(/<w:tr\b[\s\S]*?<\/w:tr>/g)];
           const signatureRow532 = remarkOrigRows532.length > 1 ? remarkOrigRows532[remarkOrigRows532.length - 1][0] : '';
-
-          const remarkText532 = `In-process parameters at finish stage for ${xmlEscape(data.product_name)} found (Satisfactory) within the limit as per in-process specification during the review period.`;
-
-          const remarkContentRow532 = '<w:tr><w:tc><w:tcPr><w:gridSpan w:val="' + totalCols + '"/>'
+          const remarkText532 = `Finished product parameters for ${xmlEscape(data.product_name)} found (Satisfactory) within the limit as per specification during the review period.`;
+          const remarkContentRow532 = '<w:tr><w:tc><w:tcPr><w:gridSpan w:val="' + totalCols532 + '"/>'
             + '<w:shd w:val="clear" w:color="auto" w:fill="D9D9D9"/>'
             + '</w:tcPr>'
             + '<w:p><w:pPr><w:rPr><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:pPr>'
@@ -3551,10 +3656,8 @@ if (cpkTblStart !== -1 && origCpkTable) {
             + '<w:r><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>'
             + `<w:t xml:space="preserve">${xmlEscape(remarkText532)}</w:t></w:r></w:p>`
             + '</w:tc></w:tr>';
-
           const replacementRemark532 = '<w:tbl>' + remarkTblPr532 + remarkTblGrid532
             + remarkContentRow532 + signatureRow532 + '</w:tbl>';
-
           docXml = docXml.substring(0, remarkTblStart532) + replacementRemark532 + docXml.substring(remarkTblEndFull532);
           console.log(`  ✅ Section 5.3.2 remark table replaced`);
         }
@@ -3563,6 +3666,8 @@ if (cpkTblStart !== -1 && origCpkTable) {
       console.warn('Section 5.3.2: Could not find finish stage table in template — table not populated');
     }
   }
+
+
 
   // ── 12. Write modified XML back and generate output ─────────
   zip.file('word/document.xml', docXml);

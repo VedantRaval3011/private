@@ -1,0 +1,9 @@
+HTTP/1.1 500 Internal Server Error
+vary: rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch
+content-type: application/json
+Date: Mon, 02 Mar 2026 07:19:44 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+Transfer-Encoding: chunked
+
+{"error":"Formula not found for product code: BIIBA"}

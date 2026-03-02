@@ -1,0 +1,22 @@
+Original docXml length: 1717116
+40% start position: 686846
+  "Finished Product Analysis" occurrence #0 at idx 41445 (2.4%)
+    -> BEFORE 40% start, would be SKIPPED
+  "Finished Product Analysis" occurrence #1 at idx 849204 (49.5%)
+    -> This one is AFTER 40% start, would be selected
+    -> Next <w:tbl> at: 850649, distance: 1445
+    -> Table found! First 10 texts: Batch Number | AR. Number | Critical Parameters (Limit) | Description | Identification  | Sodium Hyaluronate |   Limit | Opalescent solution, free from any type of visible particles | . | The retention time of the major peak in the
+  "Finished Product" occurrence #0 at idx 41445 (2.4%)
+    -> BEFORE 40% start, would be SKIPPED
+  "Finished Product" occurrence #1 at idx 849204 (49.5%)
+    -> This one is AFTER 40% start, would be selected
+    -> Next <w:tbl> at: 850649, distance: 1445
+    -> Table found! First 10 texts: Batch Number | AR. Number | Critical Parameters (Limit) | Description | Identification  | Sodium Hyaluronate |   Limit | Opalescent solution, free from any type of visible particles | . | The retention time of the major peak in the
+
+Raw XML around "Finished Product Analysis":
+<w:tab/>
+<w:t>Finished Product Analysis (Specification No: SPFHY208B1D, SPFHY208B4D, SPFRE208B3D, SPFDH208B2D)
+</w:t>
+<w:tab/>
+
+First "Finished Product" from 40%: idx=849204 (49.5%)

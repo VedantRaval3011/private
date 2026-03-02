@@ -12,7 +12,8 @@ interface BulkInProcessRow {
   arNumber: string;
   description: string;
   ph: string;
-  assay: string;
+  assay: string; // first compound (backward compat)
+  assays?: { compound: string; value: string }[];
 }
 
 interface BulkHeader {
@@ -20,6 +21,7 @@ interface BulkHeader {
   phLimit: string;
   assayCompound: string;
   assayLimit: string;
+  assayColumns?: { compound: string; limit: string }[];
 }
 
 interface ProcessCapabilityResults {
@@ -178,9 +180,23 @@ function BulkCalculationContent() {
 
   // Compute process capability
   const phValues = useMemo(() => bulkData.map(r => parseFloat(r.ph)).filter(n => !isNaN(n)), [bulkData]);
+  // First assay (backward compat)
   const assayValues = useMemo(() => bulkData.map(r => parseFloat(r.assay)).filter(n => !isNaN(n)), [bulkData]);
   const phStats = useMemo(() => header ? calculateProcessCapability(phValues, header.phLimit || '') : null, [phValues, header]);
   const assayStats = useMemo(() => header ? calculateProcessCapability(assayValues, header.assayLimit || '') : null, [assayValues, header]);
+
+  // Dynamic per-compound stats for all assay columns
+  const assayColumns = header?.assayColumns || [];
+  const allAssayStats = useMemo(() =>
+    assayColumns.map((col, ci) => {
+      const vals = bulkData.map(r => {
+        if (r.assays && r.assays[ci]) return parseFloat(r.assays[ci].value);
+        if (ci === 0) return parseFloat(r.assay);
+        return NaN;
+      }).filter(n => !isNaN(n));
+      return { col, stats: calculateProcessCapability(vals, col.limit || '') };
+    }),
+  [bulkData, assayColumns]);
 
   // Derived values for the table
   const uslLslPh = phStats ? phStats.usl - phStats.lsl : NaN;
@@ -301,7 +317,11 @@ function BulkCalculationContent() {
                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
                     <thead>
                       <tr style={{ background: 'linear-gradient(135deg, #0891b2 0%, #06b6d4 100%)' }}>
-                        {['Sr No', 'Batch Number', 'AR Number', 'Description', 'pH', `Assay (%) ${header?.assayCompound || ''}`].map((h, i) => (
+                        {['Sr No', 'Batch Number', 'AR Number', 'Description', 'pH',
+                          ...(assayColumns.length > 0
+                            ? assayColumns.map(col => `Assay (%) ${col.compound}`)
+                            : [`Assay (%) ${header?.assayCompound || ''}`])
+                        ].map((h, i) => (
                           <th key={i} style={{
                             padding: '0.875rem 1rem', textAlign: 'left', fontWeight: 700,
                             color: 'white', whiteSpace: 'nowrap', textTransform: 'uppercase',
@@ -328,7 +348,15 @@ function BulkCalculationContent() {
                           <td style={{ padding: '0.75rem 1rem', borderBottom: '1px solid rgba(6,182,212,0.15)', fontFamily: 'monospace', color: '#0891b2' }}>{row.arNumber}</td>
                           <td style={{ padding: '0.75rem 1rem', borderBottom: '1px solid rgba(6,182,212,0.15)', maxWidth: '300px', overflow: 'hidden', textOverflow: 'ellipsis' }}>{row.description}</td>
                           <td style={{ padding: '0.75rem 1rem', borderBottom: '1px solid rgba(6,182,212,0.15)', fontWeight: 600, textAlign: 'center' }}>{row.ph}</td>
-                          <td style={{ padding: '0.75rem 1rem', borderBottom: '1px solid rgba(6,182,212,0.15)', fontWeight: 600, textAlign: 'center' }}>{row.assay}</td>
+                          {/* Dynamic assay columns */}
+                          {assayColumns.length > 0
+                            ? assayColumns.map((col, ci) => (
+                                <td key={ci} style={{ padding: '0.75rem 1rem', borderBottom: '1px solid rgba(6,182,212,0.15)', fontWeight: 600, textAlign: 'center' }}>
+                                  {row.assays?.[ci]?.value ?? (ci === 0 ? row.assay : '')}
+                                </td>
+                              ))
+                            : <td style={{ padding: '0.75rem 1rem', borderBottom: '1px solid rgba(6,182,212,0.15)', fontWeight: 600, textAlign: 'center' }}>{row.assay}</td>
+                          }
                         </tr>
                       ))}
                     </tbody>
@@ -338,82 +366,93 @@ function BulkCalculationContent() {
             </SectionCard>
 
             {/* Process Capability Table */}
-            <SectionCard title="Process Capability & Performance Parameters (Cp, Cpk, Pp, Ppk)" icon="📈" gradient="linear-gradient(135deg, #7c3aed 0%, #a855f7 100%)">
-              {(!phStats && !assayStats) ? (
+            <SectionCard title="Process Capability &amp; Performance Parameters (Cp, Cpk, Pp, Ppk)" icon="📈" gradient="linear-gradient(135deg, #7c3aed 0%, #a855f7 100%)">
+              {(!phStats && allAssayStats.length === 0) ? (
                 <p style={{ color: '#6b7280', textAlign: 'center', padding: '2rem' }}>
                   Insufficient data to compute process capability (need at least 2 data points with valid limits).
                 </p>
-              ) : (
-                <div style={{ overflowX: 'auto', borderRadius: '12px', border: '2px solid #8b5cf6', boxShadow: '0 4px 16px rgba(0,0,0,0.06)' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
-                    <thead>
-                      <tr style={{ background: 'linear-gradient(135deg, #7c3aed 0%, #a855f7 100%)' }}>
-                        <th colSpan={5} style={{ padding: '1rem', textAlign: 'center', color: 'white', fontWeight: 800, fontSize: '0.95rem', letterSpacing: '-0.01em' }}>
-                          Process Capability & Performance Parameters
-                        </th>
-                      </tr>
-                      <tr style={{ background: 'linear-gradient(135deg, #6d28d9 0%, #7c3aed 100%)' }}>
-                        <th colSpan={2} style={{ padding: '0.75rem 1rem', textAlign: 'center', color: 'white', fontWeight: 700, fontSize: '0.8rem' }}></th>
-                        <th style={{ padding: '0.75rem 1rem', textAlign: 'center', color: 'white', fontWeight: 700, fontSize: '0.85rem' }}>pH</th>
-                        <th style={{ padding: '0.75rem 1rem', textAlign: 'center', color: 'white', fontWeight: 700, fontSize: '0.85rem' }}>
-                          Assay (%) {header?.assayCompound || ''}
-                        </th>
-                        <th style={{ padding: '0.75rem 1rem', textAlign: 'center', color: 'white', fontWeight: 700, fontSize: '0.85rem', width: '60px' }}>Info</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {/* Basic Statistics */}
-                      <CpkRow label="Average" ph={fmt5(phStats?.average)} assay={fmt5(assayStats?.average)} onInfoClick={() => setSelectedRowInfo({ id: 'average', label: 'Average' })} />
-                      <CpkRow label="Maximum" ph={fmt5(phStats?.max)} assay={fmt5(assayStats?.max)} shade onInfoClick={() => setSelectedRowInfo({ id: 'max', label: 'Maximum' })} />
-                      <CpkRow label="Minimum" ph={fmt5(phStats?.min)} assay={fmt5(assayStats?.min)} onInfoClick={() => setSelectedRowInfo({ id: 'min', label: 'Minimum' })} />
-                      <CpkRow label="USL − LSL" ph={fmt5(uslLslPh)} assay={fmt5(uslLslAssay)} shade onInfoClick={() => setSelectedRowInfo({ id: 'usl-lsl', label: 'USL − LSL' })} />
-                      <CpkRow label="USL − Average" ph={fmt5(uslAvgPh)} assay={fmt5(uslAvgAssay)} onInfoClick={() => setSelectedRowInfo({ id: 'usl-avg', label: 'USL − Average' })} />
-                      <CpkRow label="Average − LSL" ph={fmt5(avgLslPh)} assay={fmt5(avgLslAssay)} shade onInfoClick={() => setSelectedRowInfo({ id: 'avg-lsl', label: 'Average − LSL' })} />
+              ) : (() => {
+                // Total columns = label(span 2) + pH(1) + N assay(N) + Info(1)
+                const totalCpkCols = 2 + 1 + allAssayStats.length + 1;
+                const fmt5A = (getter: (s: ProcessCapabilityResults | null) => number | undefined) =>
+                  allAssayStats.map(a => fmt5(getter(a.stats)));
+                const fmt2A = (getter: (s: ProcessCapabilityResults | null) => number | undefined) =>
+                  allAssayStats.map(a => fmt2(getter(a.stats)));
+                return (
+                  <div style={{ overflowX: 'auto', borderRadius: '12px', border: '2px solid #8b5cf6', boxShadow: '0 4px 16px rgba(0,0,0,0.06)' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                      <thead>
+                        <tr style={{ background: 'linear-gradient(135deg, #7c3aed 0%, #a855f7 100%)' }}>
+                          <th colSpan={totalCpkCols} style={{ padding: '1rem', textAlign: 'center', color: 'white', fontWeight: 800, fontSize: '0.95rem', letterSpacing: '-0.01em' }}>
+                            Process Capability &amp; Performance Parameters
+                          </th>
+                        </tr>
+                        <tr style={{ background: 'linear-gradient(135deg, #6d28d9 0%, #7c3aed 100%)' }}>
+                          <th colSpan={2} style={{ padding: '0.75rem 1rem', textAlign: 'center', color: 'white', fontWeight: 700, fontSize: '0.8rem' }}></th>
+                          <th style={{ padding: '0.75rem 1rem', textAlign: 'center', color: 'white', fontWeight: 700, fontSize: '0.85rem' }}>pH</th>
+                          {allAssayStats.map((a, ci) => (
+                            <th key={ci} style={{ padding: '0.75rem 1rem', textAlign: 'center', color: 'white', fontWeight: 700, fontSize: '0.85rem' }}>
+                              Assay (%) {a.col.compound}
+                            </th>
+                          ))}
+                          <th style={{ padding: '0.75rem 1rem', textAlign: 'center', color: 'white', fontWeight: 700, fontSize: '0.85rem', width: '60px' }}>Info</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {/* Basic Statistics */}
+                        <CpkRow totalCols={totalCpkCols} label="Average" ph={fmt5(phStats?.average)} assayVals={fmt5A(s => s?.average)} onInfoClick={() => setSelectedRowInfo({ id: 'average', label: 'Average' })} />
+                        <CpkRow totalCols={totalCpkCols} label="Maximum" ph={fmt5(phStats?.max)} assayVals={fmt5A(s => s?.max)} shade onInfoClick={() => setSelectedRowInfo({ id: 'max', label: 'Maximum' })} />
+                        <CpkRow totalCols={totalCpkCols} label="Minimum" ph={fmt5(phStats?.min)} assayVals={fmt5A(s => s?.min)} onInfoClick={() => setSelectedRowInfo({ id: 'min', label: 'Minimum' })} />
+                        <CpkRow totalCols={totalCpkCols} label="USL − LSL" ph={fmt5(uslLslPh)} assayVals={allAssayStats.map(a => fmt5(a.stats ? a.stats.usl - a.stats.lsl : undefined))} shade onInfoClick={() => setSelectedRowInfo({ id: 'usl-lsl', label: 'USL − LSL' })} />
+                        <CpkRow totalCols={totalCpkCols} label="USL − Average" ph={fmt5(uslAvgPh)} assayVals={allAssayStats.map(a => fmt5(a.stats ? a.stats.usl - a.stats.average : undefined))} onInfoClick={() => setSelectedRowInfo({ id: 'usl-avg', label: 'USL − Average' })} />
+                        <CpkRow totalCols={totalCpkCols} label="Average − LSL" ph={fmt5(avgLslPh)} assayVals={allAssayStats.map(a => fmt5(a.stats ? a.stats.average - a.stats.lsl : undefined))} shade onInfoClick={() => setSelectedRowInfo({ id: 'avg-lsl', label: 'Average − LSL' })} />
 
-                      {/* Short-Term Section Header */}
-                      <tr style={{ background: 'linear-gradient(135deg, rgba(124,58,237,0.08) 0%, rgba(139,92,246,0.12) 100%)' }}>
-                        <td colSpan={5} style={{ padding: '0.75rem 1rem', fontWeight: 800, color: '#5b21b6', fontSize: '0.9rem', textAlign: 'center', borderBottom: '2px solid rgba(139,92,246,0.2)' }}>
-                          Short-Term Statistics (Process Capability)
-                        </td>
-                      </tr>
-                      <CpkRow label="Estimated Std Deviation (σ)" ph={fmt5(phStats?.sigmaEstimated)} assay={fmt5(assayStats?.sigmaEstimated)} onInfoClick={() => setSelectedRowInfo({ id: 'sigma-est', label: 'Estimated Std Deviation (σ)' })} />
-                      <CpkRow label="3σ = (3 × σ)" ph={fmt2(phStats ? phStats.sigmaEstimated * 3 : undefined)} assay={fmt2(assayStats ? assayStats.sigmaEstimated * 3 : undefined)} shade onInfoClick={() => setSelectedRowInfo({ id: '3sigma', label: '3σ' })} />
-                      <CpkRow label="6σ = (6 × σ)" ph={fmt2(phStats ? phStats.sigmaEstimated * 6 : undefined)} assay={fmt2(assayStats ? assayStats.sigmaEstimated * 6 : undefined)} onInfoClick={() => setSelectedRowInfo({ id: '6sigma', label: '6σ' })} />
-                      <CpkRow label="Cpku = (USL − Average) / 3σ" ph={fmt2(phStats?.cpku)} assay={fmt2(assayStats?.cpku)} shade onInfoClick={() => setSelectedRowInfo({ id: 'cpku', label: 'Cpku' })} />
-                      <CpkRow label="Cpkl = (Average − LSL) / 3σ" ph={fmt2(phStats?.cpkl)} assay={fmt2(assayStats?.cpkl)} onInfoClick={() => setSelectedRowInfo({ id: 'cpkl', label: 'Cpkl' })} />
-                      <CpkRow label="Cpk = Min(Cpkl, Cpku)" ph={fmt2(phStats?.cpk)} assay={fmt2(assayStats?.cpk)} shade highlight onInfoClick={() => setSelectedRowInfo({ id: 'cpk', label: 'Cpk' })} />
-                      <CpkRow label="Cp = (USL − LSL) / 6σ" ph={fmt2(phStats?.cp)} assay={fmt2(assayStats?.cp)} highlight onInfoClick={() => setSelectedRowInfo({ id: 'cp', label: 'Cp' })} />
+                        {/* Short-Term Section Header */}
+                        <tr style={{ background: 'linear-gradient(135deg, rgba(124,58,237,0.08) 0%, rgba(139,92,246,0.12) 100%)' }}>
+                          <td colSpan={totalCpkCols} style={{ padding: '0.75rem 1rem', fontWeight: 800, color: '#5b21b6', fontSize: '0.9rem', textAlign: 'center', borderBottom: '2px solid rgba(139,92,246,0.2)' }}>
+                            Short-Term Statistics (Process Capability)
+                          </td>
+                        </tr>
+                        <CpkRow totalCols={totalCpkCols} label="Estimated Std Deviation (σ)" ph={fmt5(phStats?.sigmaEstimated)} assayVals={fmt5A(s => s?.sigmaEstimated)} onInfoClick={() => setSelectedRowInfo({ id: 'sigma-est', label: 'Estimated Std Deviation (σ)' })} />
+                        <CpkRow totalCols={totalCpkCols} label="3σ = (3 × σ)" ph={fmt2(phStats ? phStats.sigmaEstimated * 3 : undefined)} assayVals={fmt2A(s => s ? s.sigmaEstimated * 3 : undefined)} shade onInfoClick={() => setSelectedRowInfo({ id: '3sigma', label: '3σ' })} />
+                        <CpkRow totalCols={totalCpkCols} label="6σ = (6 × σ)" ph={fmt2(phStats ? phStats.sigmaEstimated * 6 : undefined)} assayVals={fmt2A(s => s ? s.sigmaEstimated * 6 : undefined)} onInfoClick={() => setSelectedRowInfo({ id: '6sigma', label: '6σ' })} />
+                        <CpkRow totalCols={totalCpkCols} label="Cpku = (USL − Average) / 3σ" ph={fmt2(phStats?.cpku)} assayVals={fmt2A(s => s?.cpku)} shade onInfoClick={() => setSelectedRowInfo({ id: 'cpku', label: 'Cpku' })} />
+                        <CpkRow totalCols={totalCpkCols} label="Cpkl = (Average − LSL) / 3σ" ph={fmt2(phStats?.cpkl)} assayVals={fmt2A(s => s?.cpkl)} onInfoClick={() => setSelectedRowInfo({ id: 'cpkl', label: 'Cpkl' })} />
+                        <CpkRow totalCols={totalCpkCols} label="Cpk = Min(Cpkl, Cpku)" ph={fmt2(phStats?.cpk)} assayVals={fmt2A(s => s?.cpk)} shade highlight onInfoClick={() => setSelectedRowInfo({ id: 'cpk', label: 'Cpk' })} />
+                        <CpkRow totalCols={totalCpkCols} label="Cp = (USL − LSL) / 6σ" ph={fmt2(phStats?.cp)} assayVals={fmt2A(s => s?.cp)} highlight onInfoClick={() => setSelectedRowInfo({ id: 'cp', label: 'Cp' })} />
 
-                      {/* Long-Term Section Header */}
-                      <tr style={{ background: 'linear-gradient(135deg, rgba(124,58,237,0.08) 0%, rgba(139,92,246,0.12) 100%)' }}>
-                        <td colSpan={5} style={{ padding: '0.75rem 1rem', fontWeight: 800, color: '#5b21b6', fontSize: '0.9rem', textAlign: 'center', borderBottom: '2px solid rgba(139,92,246,0.2)' }}>
-                          Long-Term Statistics (Process Performance)
-                        </td>
-                      </tr>
-                      <CpkRow label="Sample Std Deviation (S)" ph={fmt5(phStats?.sigmaSample)} assay={fmt5(assayStats?.sigmaSample)} onInfoClick={() => setSelectedRowInfo({ id: 'sigma-sample', label: 'Sample Std Deviation (S)' })} />
-                      <CpkRow label="3S = (3 × S)" ph={fmt2(phStats ? phStats.sigmaSample * 3 : undefined)} assay={fmt2(assayStats ? assayStats.sigmaSample * 3 : undefined)} shade onInfoClick={() => setSelectedRowInfo({ id: '3s', label: '3S' })} />
-                      <CpkRow label="6S = (6 × S)" ph={fmt2(phStats ? phStats.sigmaSample * 6 : undefined)} assay={fmt2(assayStats ? assayStats.sigmaSample * 6 : undefined)} onInfoClick={() => setSelectedRowInfo({ id: '6s', label: '6S' })} />
-                      <CpkRow label="Ppku = (USL − Average) / 3S" ph={fmt2(phStats?.ppku)} assay={fmt2(assayStats?.ppku)} shade onInfoClick={() => setSelectedRowInfo({ id: 'ppku', label: 'Ppku' })} />
-                      <CpkRow label="Ppkl = (Average − LSL) / 3S" ph={fmt2(phStats?.ppkl)} assay={fmt2(assayStats?.ppkl)} onInfoClick={() => setSelectedRowInfo({ id: 'ppkl', label: 'Ppkl' })} />
-                      <CpkRow label="Ppk = Min(Ppkl, Ppku)" ph={fmt2(phStats?.ppk)} assay={fmt2(assayStats?.ppk)} shade highlight onInfoClick={() => setSelectedRowInfo({ id: 'ppk', label: 'Ppk' })} />
-                      <CpkRow label="Pp = (USL − LSL) / 6S" ph={fmt2(phStats?.pp)} assay={fmt2(assayStats?.pp)} highlight onInfoClick={() => setSelectedRowInfo({ id: 'pp', label: 'Pp' })} />
+                        {/* Long-Term Section Header */}
+                        <tr style={{ background: 'linear-gradient(135deg, rgba(124,58,237,0.08) 0%, rgba(139,92,246,0.12) 100%)' }}>
+                          <td colSpan={totalCpkCols} style={{ padding: '0.75rem 1rem', fontWeight: 800, color: '#5b21b6', fontSize: '0.9rem', textAlign: 'center', borderBottom: '2px solid rgba(139,92,246,0.2)' }}>
+                            Long-Term Statistics (Process Performance)
+                          </td>
+                        </tr>
+                        <CpkRow totalCols={totalCpkCols} label="Sample Std Deviation (S)" ph={fmt5(phStats?.sigmaSample)} assayVals={fmt5A(s => s?.sigmaSample)} onInfoClick={() => setSelectedRowInfo({ id: 'sigma-sample', label: 'Sample Std Deviation (S)' })} />
+                        <CpkRow totalCols={totalCpkCols} label="3S = (3 × S)" ph={fmt2(phStats ? phStats.sigmaSample * 3 : undefined)} assayVals={fmt2A(s => s ? s.sigmaSample * 3 : undefined)} shade onInfoClick={() => setSelectedRowInfo({ id: '3s', label: '3S' })} />
+                        <CpkRow totalCols={totalCpkCols} label="6S = (6 × S)" ph={fmt2(phStats ? phStats.sigmaSample * 6 : undefined)} assayVals={fmt2A(s => s ? s.sigmaSample * 6 : undefined)} onInfoClick={() => setSelectedRowInfo({ id: '6s', label: '6S' })} />
+                        <CpkRow totalCols={totalCpkCols} label="Ppku = (USL − Average) / 3S" ph={fmt2(phStats?.ppku)} assayVals={fmt2A(s => s?.ppku)} shade onInfoClick={() => setSelectedRowInfo({ id: 'ppku', label: 'Ppku' })} />
+                        <CpkRow totalCols={totalCpkCols} label="Ppkl = (Average − LSL) / 3S" ph={fmt2(phStats?.ppkl)} assayVals={fmt2A(s => s?.ppkl)} onInfoClick={() => setSelectedRowInfo({ id: 'ppkl', label: 'Ppkl' })} />
+                        <CpkRow totalCols={totalCpkCols} label="Ppk = Min(Ppkl, Ppku)" ph={fmt2(phStats?.ppk)} assayVals={fmt2A(s => s?.ppk)} shade highlight onInfoClick={() => setSelectedRowInfo({ id: 'ppk', label: 'Ppk' })} />
+                        <CpkRow totalCols={totalCpkCols} label="Pp = (USL − LSL) / 6S" ph={fmt2(phStats?.pp)} assayVals={fmt2A(s => s?.pp)} highlight onInfoClick={() => setSelectedRowInfo({ id: 'pp', label: 'Pp' })} />
 
-                      {/* Capability conclusion */}
-                      <tr style={{ background: 'linear-gradient(135deg, rgba(124,58,237,0.12) 0%, rgba(168,85,247,0.15) 100%)' }}>
-                        <td colSpan={5} style={{
-                          padding: '1rem', textAlign: 'center', fontWeight: 800, fontSize: '0.95rem',
-                          color: (phStats?.isCapable && assayStats?.isCapable) ? '#059669' : '#dc2626',
-                          borderTop: '2px solid rgba(139,92,246,0.3)',
-                        }}>
-                          {(phStats?.isCapable && assayStats?.isCapable)
-                            ? '✅ Process is Capable (All indices > 1.33)'
-                            : '⚠️ Process may require attention (Not all indices > 1.33)'}
-                        </td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-              )}
+                        {/* Capability conclusion */}
+                        <tr style={{ background: 'linear-gradient(135deg, rgba(124,58,237,0.12) 0%, rgba(168,85,247,0.15) 100%)' }}>
+                          <td colSpan={totalCpkCols} style={{
+                            padding: '1rem', textAlign: 'center', fontWeight: 800, fontSize: '0.95rem',
+                            color: (phStats?.isCapable && allAssayStats.every(a => a.stats?.isCapable)) ? '#059669' : '#dc2626',
+                            borderTop: '2px solid rgba(139,92,246,0.3)',
+                          }}>
+                            {(phStats?.isCapable && allAssayStats.every(a => a.stats?.isCapable))
+                              ? '✅ Process is Capable (All indices > 1.33)'
+                              : '⚠️ Process may require attention (Not all indices > 1.33)'}
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                );
+              })()}
+
 
               {/* Info Button */}
               <div style={{ marginTop: '1.5rem', display: 'flex', justifyContent: 'center' }}>
@@ -516,7 +555,15 @@ function SectionCard({ title, icon, gradient, children }: { title: string; icon:
   );
 }
 
-function CpkRow({ label, ph, assay, shade, highlight, onInfoClick }: { label: string; ph: string; assay: string; shade?: boolean; highlight?: boolean; onInfoClick?: () => void }) {
+function CpkRow({ totalCols, label, ph, assayVals, shade, highlight, onInfoClick }: {
+  totalCols: number;
+  label: string;
+  ph: string;
+  assayVals: string[];
+  shade?: boolean;
+  highlight?: boolean;
+  onInfoClick?: () => void;
+}) {
   const bgColor = highlight
     ? 'linear-gradient(135deg, rgba(124,58,237,0.06) 0%, rgba(168,85,247,0.1) 100%)'
     : shade ? 'rgba(139,92,246,0.04)' : 'transparent';
@@ -526,9 +573,12 @@ function CpkRow({ label, ph, assay, shade, highlight, onInfoClick }: { label: st
     return !isNaN(n) && n > 1.33;
   };
 
+  // Label colSpan = totalCols - ph - assays - info = totalCols - assayVals.length - 2
+  const labelColSpan = totalCols - assayVals.length - 2;
+
   return (
     <tr style={{ background: bgColor }}>
-      <td colSpan={2} style={{
+      <td colSpan={labelColSpan > 0 ? labelColSpan : 2} style={{
         padding: '0.7rem 1rem', fontWeight: highlight ? 800 : 600,
         color: highlight ? '#5b21b6' : '#374151', fontSize: '0.84rem',
         borderBottom: '1px solid rgba(139,92,246,0.1)',
@@ -542,13 +592,15 @@ function CpkRow({ label, ph, assay, shade, highlight, onInfoClick }: { label: st
       }}>
         {ph}
       </td>
-      <td style={{
-        padding: '0.7rem 1rem', textAlign: 'center', fontWeight: highlight ? 800 : 500,
-        fontSize: '0.85rem', borderBottom: '1px solid rgba(139,92,246,0.1)',
-        color: highlight && isCapable(assay) ? '#059669' : highlight && !isCapable(assay) && assay !== 'N/A' ? '#dc2626' : '#374151',
-      }}>
-        {assay}
-      </td>
+      {assayVals.map((av, i) => (
+        <td key={i} style={{
+          padding: '0.7rem 1rem', textAlign: 'center', fontWeight: highlight ? 800 : 500,
+          fontSize: '0.85rem', borderBottom: '1px solid rgba(139,92,246,0.1)',
+          color: highlight && isCapable(av) ? '#059669' : highlight && !isCapable(av) && av !== 'N/A' ? '#dc2626' : '#374151',
+        }}>
+          {av}
+        </td>
+      ))}
       <td style={{
         padding: '0.4rem 1rem', textAlign: 'center', borderBottom: '1px solid rgba(139,92,246,0.1)',
       }}>
@@ -572,6 +624,7 @@ function CpkRow({ label, ph, assay, shade, highlight, onInfoClick }: { label: st
     </tr>
   );
 }
+
 
 // ─── Row Calculation Modal ───
 
