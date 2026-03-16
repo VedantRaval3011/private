@@ -138,7 +138,7 @@ function isRelatedSubstanceTest(testName: string, result?: string): boolean {
  * Check if a test represents actual assay data (% content)
  * Assay data typically has percentage results and should NOT contain impurity data
  */
-function isAssayData(testName: string, result: string): boolean {
+function isAssayData(testName: string, result: string, forceAssay = false): boolean {
   const upperName = testName.toUpperCase();
   const upperResult = result.toUpperCase();
   
@@ -160,6 +160,8 @@ function isAssayData(testName: string, result: string): boolean {
                               upperResult.includes('% W/V') ||
                               /\d+\.?\d*\s*%\s*i\.?e\.?/i.test(result);
                         
+  if (forceAssay && hasAssayPercentage) return true;
+
   // Check if it's a known active ingredient
   const isKnownActive = ['DORZOLAMIDE', 'TIMOLOL', 'CEPHALEXIN', 'NEOMYCIN', 
                          'PREDNISOLONE', 'DEXAMETHASONE', 'OFLOXACIN', 
@@ -710,9 +712,22 @@ function extractFinishData(g1Data: unknown, rootData: unknown): FinishStageData 
   const testGroups = getTestGroups(g1Data);
   
   for (const group of testGroups) {
-    const groupName = findValueCI(group as Record<string, unknown>, ['PROTEST'], '');
-    const groupCategory = classifyTest(groupName);
+    let groupName = findValueCI(group as Record<string, unknown>, ['PROTEST'], '');
     const details = getTestDetails(group);
+    
+    // Dynamic Group Header Inference: If PROTEST is missing, and the first detail has PROTEST1 but dot/empty RESULT, use it as groupName
+    if (!groupName && details.length > 0) {
+      const firstDetail = details[0] as Record<string, unknown>;
+      if (firstDetail) {
+         const firstResult = findValueCI(firstDetail, ['RESULT'], '').trim();
+         const firstTest = findValueCI(firstDetail, ['PROTEST1'], '').trim();
+         if (firstTest && (firstResult === '.' || firstResult === '')) {
+             groupName = firstTest;
+         }
+      }
+    }
+    
+    const groupCategory = classifyTest(groupName);
     
     for (const detail of details) {
       if (!detail || typeof detail !== 'object') continue;
@@ -859,7 +874,7 @@ function extractFinishData(g1Data: unknown, rootData: unknown): FinishStageData 
           
           if (testName !== '.' && !testName.toUpperCase().startsWith('ASSAY')) {
             // Only add if this is actual assay data (has % result)
-            if (isAssayData(testName, result)) {
+            if (isAssayData(testName, result, groupCategory === 'assay')) {
               const limitMatch = limits.match(/(\d+\.?\d*)\s*%?\s*to\s*(\d+\.?\d*)\s*%?/i);
               
               // Use proper pharmaceutical naming: SALT E.Q. BASE
@@ -896,7 +911,7 @@ function extractFinishData(g1Data: unknown, rootData: unknown): FinishStageData 
           }
           
           // Only add to assay if it's actual assay data with % results
-          if (isAssayData(testName, result)) {
+          if (isAssayData(testName, result, groupCategory === 'assay')) {
             const limitMatch = limits.match(/(\d+\.?\d*)\s*%?\s*to\s*(\d+\.?\d*)\s*%?/i);
             
             // Use proper pharmaceutical naming: SALT E.Q. BASE

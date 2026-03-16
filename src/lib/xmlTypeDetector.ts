@@ -31,6 +31,14 @@ export function detectXmlType(xmlContent: string): XmlFileType {
     return 'PRODUCT_MASTER';
   }
 
+  // Check for Yield Statement XML
+  // Matches "YIELD STATEMENT", "<YIELDSTATEMENT>", or "LIST_G_MATCODE" + "STANDARDYIELD"
+  // Must be checked early because it shares multiple tags with BATCH files
+  if (content.includes('<YIELDSTATEMENT>') || content.includes('YIELDSTATEMENT') || 
+      (content.includes('LIST_G_MATCODE') && content.includes('STANDARDYIELD') && content.includes('ACTFILLING'))) {
+    return 'YIELD';
+  }
+
   // Check for Batch Creation XML (BATCHCRREGI format)
   // Look for characteristic tags
   const batchIndicators = [
@@ -217,6 +225,8 @@ export function getFileTypeName(type: XmlFileType): string {
       return 'Material Rejection';
     case 'PRODUCT_MASTER':
       return 'Product Master';
+    case 'YIELD':
+      return 'Yield Statement';
     default:
       return 'Unknown';
   }

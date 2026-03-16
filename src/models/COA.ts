@@ -153,8 +153,8 @@ const COASchema = new Schema<ICOA>({
   collection: 'coas'
 });
 
-// Compound unique index to prevent duplicate batch+stage combinations
-COASchema.index({ batchNumber: 1, stage: 1 }, { unique: true });
+// Compound unique index to prevent duplicate batch+stage+arNumber combinations
+COASchema.index({ batchNumber: 1, stage: 1, arNumber: 1 }, { unique: true });
 
 // Index for finding linked batches (same batch, both stages)
 COASchema.index({ batchNumber: 1, uploadedAt: -1 });

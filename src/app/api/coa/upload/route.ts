@@ -73,10 +73,11 @@ export async function POST(request: NextRequest): Promise<NextResponse<COAUpload
         
         const record = parseResult.data;
         
-        // Check for existing record with same batch+stage
+        // Check for existing record with same batch+stage+arNumber
         const existingRecord = await COA.findOne({
           batchNumber: record.batchNumber,
           stage: record.stage,
+          arNumber: record.arNumber,
         });
         
         if (existingRecord) {

@@ -17,6 +17,7 @@ import { parseInwardRegisterXml } from './inwardParser';
 import { parseRmCoaXml } from './rmCoaParser';
 import { parseProductMasterXml } from './productMasterParser';
 import { parseMaterialRejectionXml } from './materialRejectionParser';
+import { parseYieldXml } from './yieldParser';
 import ProductMaster from '@/models/ProductMaster';
 import RMCOA from '@/models/RMCOA';
 import ProcessingLog from '@/models/ProcessingLog';
@@ -26,6 +27,7 @@ import COA from '@/models/COA';
 import Requisition from '@/models/Requisition';
 import InwardRegister from '@/models/InwardRegister';
 import MaterialRejection from '@/models/MaterialRejection';
+import Yield from '@/models/Yield';
 import { v4 as uuidv4 } from 'uuid';
 import type {
   XmlFileInfo,
@@ -562,49 +564,78 @@ export async function processXmlFile(fileInfo: XmlFileInfo): Promise<IngestionRe
         message: `Successfully processed ${products.length} products from Product Master`,
         businessKey,
       };
-    } else if (fileType === 'MATERIAL_REJECTION') {
-      // Process Material Rejection XML
-      const parseResult = parseMaterialRejectionXml(content);
+    } else if (fileType === 'YIELD') {
+      const result = await processYieldXml(content, fileName, fileSize, contentHash);
+      businessKey = result.businessKey;
 
-      if (!parseResult.success) {
-        throw new Error(parseResult.errors.join(', ') || 'Failed to parse Material Rejection XML');
+      if (result.duplicate) {
+        await ProcessingLog.findOneAndUpdate(
+          { contentHash },
+          {
+            contentHash,
+            fileName,
+            fileType: 'YIELD',
+            status: 'DUPLICATE',
+            businessKey,
+            fileSize,
+            itemStats: result.itemStats,
+            processedAt: new Date(),
+          },
+          { upsert: true }
+        );
+
+        const duplicateMessage = result.itemStats
+          ? `All ${result.itemStats.totalItems} yield records are duplicates`
+          : 'Yield file already processed';
+
+        return {
+          fileName,
+          fileType: 'YIELD',
+          status: 'DUPLICATE',
+          message: duplicateMessage,
+          businessKey,
+          itemStats: result.itemStats,
+        };
       }
 
-      console.log(`Processing ${parseResult.records.length} rejection records from ${fileName}`);
+      // Partial success - some items were new, some were duplicates
+      if (result.itemStats && result.itemStats.duplicateItems > 0) {
+        await ProcessingLog.findOneAndUpdate(
+          { contentHash },
+          {
+            contentHash,
+            fileName,
+            fileType: 'YIELD',
+            status: 'SUCCESS',
+            businessKey,
+            fileSize,
+            itemStats: result.itemStats,
+            processedAt: new Date(),
+          },
+          { upsert: true }
+        );
 
-      let newCount = 0;
-      let dupCount = 0;
-
-      for (const record of parseResult.records) {
-        try {
-          const result = await MaterialRejection.findOneAndUpdate(
-            { arNumber: record.arNumber, materialCode: record.materialCode },
-            {
-              ...record,
-              sourceFile: fileName,
-              contentHash,
-              uploadedAt: new Date(),
-            },
-            { upsert: true, new: true }
-          );
-          if (result) newCount++;
-        } catch (e: any) {
-          if (e.code === 11000) {
-            dupCount++;
-          } else {
-            throw e;
-          }
-        }
+        return {
+          fileName,
+          fileType: 'YIELD',
+          status: 'SUCCESS',
+          message: `Stored ${result.itemStats.newItems} new yield records (${result.itemStats.duplicateItems} duplicates skipped)`,
+          businessKey,
+          itemStats: result.itemStats,
+        };
       }
+    }
 
-      businessKey = `MATERIAL-REJECTION-${fileName}`;
-
+    // Step 5: Log successful processing
+    // Use findOneAndUpdate for all files to handle reprocessing and avoid duplicate key errors
+    // Skip persistent success log for YIELD files as requested by user
+    if (fileType !== 'YIELD') {
       await ProcessingLog.findOneAndUpdate(
         { contentHash },
         {
           contentHash,
           fileName,
-          fileType: 'MATERIAL_REJECTION',
+          fileType,
           status: 'SUCCESS',
           businessKey,
           fileSize,
@@ -612,31 +643,7 @@ export async function processXmlFile(fileInfo: XmlFileInfo): Promise<IngestionRe
         },
         { upsert: true }
       );
-
-      return {
-        fileName,
-        fileType: 'MATERIAL_REJECTION',
-        status: 'SUCCESS',
-        message: `Processed ${parseResult.records.length} rejection records (${dupCount} duplicates skipped)`,
-        businessKey,
-      };
     }
-
-    // Step 5: Log successful processing
-    // Use findOneAndUpdate for all files to handle reprocessing and avoid duplicate key errors
-    await ProcessingLog.findOneAndUpdate(
-      { contentHash },
-      {
-        contentHash,
-        fileName,
-        fileType,
-        status: 'SUCCESS',
-        businessKey,
-        fileSize,
-        processedAt: new Date(),
-      },
-      { upsert: true }
-    );
 
     return {
       fileName,
@@ -1229,12 +1236,13 @@ async function processCOAXml(
   }
 
   const record = parseResult.data;
-  const businessKey = `${record.batchNumber}-${record.stage}`;
+  const businessKey = `${record.batchNumber}-${record.arNumber || 'NO_AR'}-${record.stage}`;
 
   // Check for duplicate in database
   const existing = await COA.findOne({
     batchNumber: record.batchNumber,
-    stage: record.stage
+    stage: record.stage,
+    arNumber: record.arNumber
   });
 
   if (existing) {
@@ -1838,6 +1846,127 @@ async function processRmCoaXml(
     recordId: newRecord._id.toString(),
     duplicate: false,
     message: `Stored RM COA for ${record.materialName} (AR: ${record.arNo})`
+  };
+}
+
+/**
+ * Process Yield XML and store in database
+ * Implements duplicate detection based on batchNo + productCode
+ * Only new records are stored
+ */
+async function processYieldXml(
+  content: string,
+  fileName: string,
+  fileSize: number,
+  contentHash: string
+): Promise<{
+  businessKey?: string;
+  duplicate: boolean;
+  itemStats?: ItemLevelStats;
+}> {
+  const parseResult = await parseYieldXml(content);
+
+  if (!parseResult.success || !parseResult.data) {
+    throw new Error(parseResult.errors.join(', ') || 'Failed to parse Yield XML');
+  }
+
+  const data = parseResult.data;
+  const businessKey = `YIELD-${fileName}`;
+
+  // Check for exact file duplicate
+  const existingExactMatch = await Yield.findOne({ contentHash });
+  if (existingExactMatch) {
+    const duplicateDetails: DuplicateItemDetail[] = data.map(record => ({
+      batchNumber: record.batchNo,
+      itemCode: record.productCode,
+      itemName: record.productName || 'N/A',
+      type: 'Yield',
+      reason: 'Exact file already processed',
+      existingFileName: existingExactMatch.sourceFile
+    }));
+
+    return {
+      businessKey,
+      duplicate: true,
+      itemStats: {
+        totalItems: data.length,
+        newItems: 0,
+        duplicateItems: data.length,
+        duplicateDetails,
+        successfulDetails: []
+      }
+    };
+  }
+
+  // OPTIMIZED DUPLICATE DETECTION
+  // Get all unique combinations from DB to check duplicates in memory
+  const allBatchNos = data.map(r => r.batchNo);
+  const allProductCodes = data.map(r => r.productCode);
+  
+  // Use a targeted query to find existing records that might match our batch/product pairs
+  // For safety with large datasets, we can use $or but for 1100 records, fetching the mapping is better
+  const existingRecords = await Yield.find({
+    batchNo: { $in: allBatchNos },
+    productCode: { $in: allProductCodes }
+  }, { batchNo: 1, productCode: 1, sourceFile: 1 }).lean();
+
+  const existingMap = new Map<string, string>();
+  existingRecords.forEach(r => {
+    existingMap.set(`${r.batchNo}-${r.productCode}`, r.sourceFile || 'Unknown');
+  });
+
+  const duplicateDetails: DuplicateItemDetail[] = [];
+  const successfulDetails: SuccessfulItemDetail[] = [];
+  const recordsToInsert: any[] = [];
+
+  for (const record of data) {
+    const key = `${record.batchNo}-${record.productCode}`;
+    const existingFileName = existingMap.get(key);
+
+    if (existingFileName) {
+      duplicateDetails.push({
+        batchNumber: record.batchNo,
+        itemCode: record.productCode,
+        itemName: record.productName || 'N/A',
+        type: 'Yield',
+        reason: 'Duplicate: Already exists in database',
+        existingFileName
+      });
+    } else {
+      recordsToInsert.push({
+        ...record,
+        sourceFile: fileName,
+        contentHash,
+        uploadedAt: new Date()
+      });
+      
+      successfulDetails.push({
+        batchNumber: record.batchNo,
+        itemCode: record.productCode,
+        itemName: record.productName || 'N/A',
+        type: 'Yield'
+      });
+    }
+  }
+
+  // BULK INSERT
+  if (recordsToInsert.length > 0) {
+    // Using insertMany with ordered: false to continue on error if any (though we checked duplicates)
+    await Yield.insertMany(recordsToInsert, { ordered: false });
+  }
+
+  const itemStats: ItemLevelStats = {
+    totalItems: data.length,
+    newItems: recordsToInsert.length,
+    duplicateItems: duplicateDetails.length,
+    duplicateDetails,
+    successfulDetails
+  };
+
+  return {
+    businessKey,
+    duplicate: recordsToInsert.length === 0,
+    itemStats
   };
 }
 

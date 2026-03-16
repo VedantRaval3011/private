@@ -6,7 +6,7 @@
 // ============================================
 // XML File Type Detection
 // ============================================
-export type XmlFileType = 'BATCH' | 'FORMULA' | 'COA' | 'RM_COA' | 'REQUISITION' | 'INWARD_REGISTER' | 'PRODUCT_MASTER' | 'MATERIAL_REJECTION' | 'UNKNOWN';
+export type XmlFileType = 'BATCH' | 'FORMULA' | 'COA' | 'RM_COA' | 'REQUISITION' | 'INWARD_REGISTER' | 'PRODUCT_MASTER' | 'MATERIAL_REJECTION' | 'YIELD' | 'UNKNOWN';
 
 // ============================================
 // Item-Level Duplicate Statistics
@@ -69,6 +69,31 @@ export interface FormulaLevelStats {
 }
 
 // ============================================
+// Yield-Level Duplicate Statistics
+// ============================================
+export interface DuplicateYieldDetail {
+  batchNo: string;
+  productCode: string;
+  productName: string;
+  reason: string;
+  existingFileName: string;
+}
+
+export interface SuccessfulYieldDetail {
+  batchNo: string;
+  productCode: string;
+  productName: string;
+}
+
+export interface YieldLevelStats {
+  totalYields: number;
+  newYields: number;
+  duplicateYields: number;
+  duplicateDetails: DuplicateYieldDetail[];
+  successfulDetails: SuccessfulYieldDetail[];
+}
+
+// ============================================
 // Processing Log Record
 // ============================================
 export interface ProcessingLogRecord {
@@ -83,6 +108,7 @@ export interface ProcessingLogRecord {
   fileSize: number;
   itemStats?: ItemLevelStats;   // Item-level duplicate statistics (for batches)
   formulaStats?: FormulaLevelStats; // Formula-level duplicate statistics
+  yieldStats?: YieldLevelStats; // Yield-level duplicate statistics
 }
 
 // ============================================
@@ -97,6 +123,7 @@ export interface IngestionResult {
   recordId?: string;            // MongoDB _id of stored record
   itemStats?: ItemLevelStats;   // Item-level duplicate statistics (for batches)
   formulaStats?: FormulaLevelStats; // Formula-level duplicate statistics
+  yieldStats?: YieldLevelStats; // Yield-level duplicate statistics
 }
 
 // ============================================
