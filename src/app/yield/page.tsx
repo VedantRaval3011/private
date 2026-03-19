@@ -9,9 +9,13 @@ import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 
 interface IPackingDetail {
+  itemCode: string;
+  batchSize: string;
+  batchUom: string;
+  prodQty: number;
   packing: string;
-  qty: string;
-  total: number;
+  packQty: string;
+  cQty: string;
 }
 
 interface YieldItem {
@@ -392,7 +396,7 @@ export default function YieldPage() {
                   <th rowSpan={2} onClick={() => handleSort('batchSizeLtrOrKg')} style={{ padding: '0.75rem', textAlign: 'left', fontSize: '0.65rem', fontWeight: '700', color: 'var(--muted-foreground)', textTransform: 'uppercase', borderRight: '1px solid var(--border)', minWidth: '110px', cursor: 'pointer' }}>
                     BATCH SIZE<br/>ADD : R.R. {sortField === 'batchSizeLtrOrKg' && <span>{sortDirection === 'asc' ? '↑' : '↓'}</span>}
                   </th>
-                  <th colSpan={3} style={{ padding: '0.5rem', textAlign: 'center', fontSize: '0.65rem', fontWeight: '700', color: 'var(--muted-foreground)', textTransform: 'uppercase', borderBottom: '1px solid var(--border)', borderRight: '1px solid var(--border)' }}>
+                  <th colSpan={7} style={{ padding: '0.5rem', textAlign: 'center', fontSize: '0.65rem', fontWeight: '700', color: 'var(--muted-foreground)', textTransform: 'uppercase', borderBottom: '1px solid var(--border)', borderRight: '1px solid var(--border)' }}>
                     &lt;-----TRANSFER IN BONDED-----&gt;
                   </th>
                   <th rowSpan={2} onClick={() => handleSort('testingQty')} style={{ padding: '0.75rem', textAlign: 'right', fontSize: '0.65rem', fontWeight: '700', color: 'var(--muted-foreground)', textTransform: 'uppercase', borderRight: '1px solid var(--border)', cursor: 'pointer' }}>
@@ -421,17 +425,21 @@ export default function YieldPage() {
                   </th>
                 </tr>
                 <tr>
+                  <th style={{ padding: '0.5rem 0.75rem', textAlign: 'left', fontSize: '0.65rem', fontWeight: '700', color: 'var(--muted-foreground)', textTransform: 'uppercase', borderRight: '1px solid var(--border)' }}>ITEM CODE</th>
+                  <th style={{ padding: '0.5rem 0.75rem', textAlign: 'right', fontSize: '0.65rem', fontWeight: '700', color: 'var(--muted-foreground)', textTransform: 'uppercase', borderRight: '1px solid var(--border)' }}>BAT SIZE</th>
+                  <th style={{ padding: '0.5rem 0.75rem', textAlign: 'left', fontSize: '0.65rem', fontWeight: '700', color: 'var(--muted-foreground)', textTransform: 'uppercase', borderRight: '1px solid var(--border)' }}>UOM</th>
+                  <th style={{ padding: '0.5rem 0.75rem', textAlign: 'right', fontSize: '0.65rem', fontWeight: '700', color: 'var(--muted-foreground)', textTransform: 'uppercase', borderRight: '1px solid var(--border)' }}>PROD QTY</th>
                   <th onClick={() => handleSort('totalProducedQty')} style={{ padding: '0.5rem 0.75rem', textAlign: 'left', fontSize: '0.65rem', fontWeight: '700', color: 'var(--muted-foreground)', textTransform: 'uppercase', borderRight: '1px solid var(--border)', cursor: 'pointer' }}>
-                    PACKING {sortField === 'totalProducedQty' && <span>{sortDirection === 'asc' ? '↑' : '↓'}</span>}
+                    PACK {sortField === 'totalProducedQty' && <span>{sortDirection === 'asc' ? '↑' : '↓'}</span>}
                   </th>
-                  <th style={{ padding: '0.5rem 0.75rem', textAlign: 'right', fontSize: '0.65rem', fontWeight: '700', color: 'var(--muted-foreground)', textTransform: 'uppercase', borderRight: '1px solid var(--border)' }}>QTY</th>
-                  <th style={{ padding: '0.5rem 0.75rem', textAlign: 'right', fontSize: '0.65rem', fontWeight: '700', color: 'var(--muted-foreground)', textTransform: 'uppercase', borderRight: '1px solid var(--border)' }}>TOTAL</th>
+                  <th style={{ padding: '0.5rem 0.75rem', textAlign: 'right', fontSize: '0.65rem', fontWeight: '700', color: 'var(--muted-foreground)', textTransform: 'uppercase', borderRight: '1px solid var(--border)' }}>PACK QTY</th>
+                  <th style={{ padding: '0.5rem 0.75rem', textAlign: 'right', fontSize: '0.65rem', fontWeight: '700', color: 'var(--muted-foreground)', textTransform: 'uppercase', borderRight: '1px solid var(--border)' }}>CQTY</th>
                 </tr>
               </thead>
               <tbody>
                 {loading ? (
                   <tr>
-                    <td colSpan={8} style={{ padding: '3rem', textAlign: 'center', color: 'var(--muted-foreground)' }}>
+                    <td colSpan={16} style={{ padding: '3rem', textAlign: 'center', color: 'var(--muted-foreground)' }}>
                       <svg className="animate-spin" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ display: 'inline-block', marginBottom: '0.5rem' }}>
                         <path d="M21 12a9 9 0 11-6.219-8.56" strokeLinecap="round" />
                       </svg>
@@ -440,7 +448,7 @@ export default function YieldPage() {
                   </tr>
                 ) : sortedData.length === 0 ? (
                   <tr>
-                    <td colSpan={8} style={{ padding: '3rem', textAlign: 'center', color: 'var(--muted-foreground)' }}>
+                    <td colSpan={16} style={{ padding: '3rem', textAlign: 'center', color: 'var(--muted-foreground)' }}>
                       <div style={{ fontSize: '1.125rem', fontWeight: '500' }}>No yields found</div>
                       <div style={{ fontSize: '0.875rem', marginTop: '0.5rem' }}>
                         {searchTerm ? 'Try a different search term' : 'Upload a Yield Statement XML file from the home page'}
@@ -474,16 +482,27 @@ export default function YieldPage() {
                       </td>
                       
                       {/* Packing Details Block */}
+                      <td style={{ padding: '0.75rem', fontSize: '0.8rem', color: 'var(--foreground)', verticalAlign: 'top', borderRight: '1px solid var(--border)', fontFamily: 'monospace' }}>
+                        {(item.packingDetails || []).map((p, i) => <div key={i} style={{ marginBottom: '0.25rem' }}>{p.itemCode || '-'}</div>)}
+                      </td>
+                      <td style={{ padding: '0.75rem', fontSize: '0.8rem', color: 'var(--foreground)', textAlign: 'right', verticalAlign: 'top', borderRight: '1px solid var(--border)' }}>
+                        {(item.packingDetails || []).map((p, i) => <div key={i} style={{ marginBottom: '0.25rem' }}>{p.batchSize || '-'}</div>)}
+                      </td>
                       <td style={{ padding: '0.75rem', fontSize: '0.8rem', color: 'var(--foreground)', verticalAlign: 'top', borderRight: '1px solid var(--border)' }}>
-                        {(item.packingDetails || []).map((p, i) => <div key={i} style={{ marginBottom: '0.25rem' }}>{p.packing}</div>)}
+                        {(item.packingDetails || []).map((p, i) => <div key={i} style={{ marginBottom: '0.25rem' }}>{p.batchUom || '-'}</div>)}
                       </td>
                       <td style={{ padding: '0.75rem', fontSize: '0.8rem', color: 'var(--foreground)', textAlign: 'right', verticalAlign: 'top', borderRight: '1px solid var(--border)' }}>
-                        {(item.packingDetails || []).map((p, i) => <div key={i} style={{ marginBottom: '0.25rem' }}>{p.qty}</div>)}
-                        {(item.packingDetails || []).length > 1 && <div style={{ marginTop: '0.5rem', fontWeight: '600' }}>Total</div>}
-                      </td>
-                      <td style={{ padding: '0.75rem', fontSize: '0.8rem', color: 'var(--foreground)', textAlign: 'right', verticalAlign: 'top', borderRight: '1px solid var(--border)' }}>
-                        {(item.packingDetails || []).map((p, i) => <div key={i} style={{ marginBottom: '0.25rem' }}>{p.total?.toFixed(3)}</div>)}
+                        {(item.packingDetails || []).map((p, i) => <div key={i} style={{ marginBottom: '0.25rem' }}>{p.prodQty?.toFixed(3)}</div>)}
                         {(item.packingDetails || []).length > 1 && <div style={{ marginTop: '0.5rem', fontWeight: '600', borderTop: '1px solid var(--border)', paddingTop: '0.25rem' }}>{item.totalProducedQty?.toFixed(3)}</div>}
+                      </td>
+                      <td style={{ padding: '0.75rem', fontSize: '0.8rem', color: 'var(--foreground)', verticalAlign: 'top', borderRight: '1px solid var(--border)' }}>
+                        {(item.packingDetails || []).map((p, i) => <div key={i} style={{ marginBottom: '0.25rem' }}>{p.packing || '-'}</div>)}
+                      </td>
+                      <td style={{ padding: '0.75rem', fontSize: '0.8rem', color: 'var(--foreground)', textAlign: 'right', verticalAlign: 'top', borderRight: '1px solid var(--border)' }}>
+                        {(item.packingDetails || []).map((p, i) => <div key={i} style={{ marginBottom: '0.25rem' }}>{p.packQty || '-'}</div>)}
+                      </td>
+                      <td style={{ padding: '0.75rem', fontSize: '0.8rem', color: 'var(--foreground)', textAlign: 'right', verticalAlign: 'top', borderRight: '1px solid var(--border)' }}>
+                        {(item.packingDetails || []).map((p, i) => <div key={i} style={{ marginBottom: '0.25rem' }}>{p.cQty || '-'}</div>)}
                       </td>
 
                       <td style={{ padding: '0.75rem', fontSize: '0.8rem', color: 'var(--foreground)', textAlign: 'right', verticalAlign: 'top', borderRight: '1px solid var(--border)' }}>

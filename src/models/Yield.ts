@@ -1,9 +1,13 @@
 import mongoose, { Schema, Document, Model } from 'mongoose';
 
 export interface IPackingDetail {
-  packing: string;
-  qty: string;
-  total: number;
+  itemCode: string;    // ITEM
+  batchSize: string;   // BATSIZE
+  batchUom: string;    // BATUOM
+  prodQty: number;     // PRODQTY
+  packing: string;     // PACK
+  packQty: string;     // PACKQTY
+  cQty: string;        // CQTY
 }
 
 export interface IYieldItem {
@@ -39,9 +43,13 @@ export interface IYieldDocument extends IYieldItem, Document {
 }
 
 const PackingDetailSchema = new Schema<IPackingDetail>({
-  packing: { type: String, required: true },
-  qty: { type: String, required: true },
-  total: { type: Number, required: true }
+  itemCode: { type: String, default: '' },
+  batchSize: { type: String, default: '' },
+  batchUom: { type: String, default: '' },
+  prodQty: { type: Number, default: 0 },
+  packing: { type: String, default: '' },
+  packQty: { type: String, default: '' },
+  cQty: { type: String, default: '' },
 }, { _id: false });
 
 const YieldItemSchema = new Schema<IYieldDocument>({

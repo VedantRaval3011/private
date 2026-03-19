@@ -207,6 +207,17 @@ interface FormulaListResponse {
     ppmCoaInwardQualifiedBatchNumbersList?: string[];
 }
 
+interface AstRstEntry {
+    hasAccelerated: boolean;
+    hasLongTerm: boolean;
+    mfrNo: string;
+}
+
+interface AstRstData {
+    byMfr: Record<string, AstRstEntry>;
+    byProductCode: Record<string, AstRstEntry>;
+}
+
 // ============================================
 // Section Component (from FormulaDisplay) - Enhanced with vibrant colors
 // ============================================
@@ -963,6 +974,10 @@ function APQRPreviewModal({ isOpen, onClose, data, isLoading, onGenerate, produc
 export default function FormulaDataPage() {
     const [formulas, setFormulas] = useState<FormulaRecord[]>([]);
     const [isLoading, setIsLoading] = useState(true);
+    const [astRstData, setAstRstData] = useState<AstRstData>({ byMfr: {}, byProductCode: {} });
+    const [astRstLoading, setAstRstLoading] = useState(false);
+    const [astRstScannedFiles, setAstRstScannedFiles] = useState<number | null>(null);
+    const [astRstLastLoaded, setAstRstLastLoaded] = useState<Date | null>(null);
     const [expandedMfc, setExpandedMfc] = useState<string | null>(null);
     const [searchTerm, setSearchTerm] = useState('');
     const [selectedManufacturer, setSelectedManufacturer] = useState<string | null>(null);
@@ -1269,6 +1284,8 @@ export default function FormulaDataPage() {
 
     // MFC Summary Table modal state
     const [showMfcSummaryTable, setShowMfcSummaryTable] = useState(false);
+    const [showAstRstAnalysis, setShowAstRstAnalysis] = useState(false);
+    const [astRstAnalysisTab, setAstRstAnalysisTab] = useState<'missing' | 'orphaned' | 'found'>('missing');
     const [mfcTableSortColumn, setMfcTableSortColumn] = useState<'sr' | 'mfc' | 'product' | 'batches'>('sr');
     const [mfcTableSortDirection, setMfcTableSortDirection] = useState<'asc' | 'desc'>('asc');
 
@@ -1764,6 +1781,17 @@ export default function FormulaDataPage() {
         fetchFormulas();
         fetchBatchReconciliation();
         fetchAllBatches();
+        // Fetch AST & RST availability data
+        fetch('/api/ast-rst')
+            .then(r => r.json())
+            .then(d => {
+                if (d.success) {
+                    setAstRstData({ byMfr: d.byMfr, byProductCode: d.byProductCode });
+                    setAstRstScannedFiles(d.scannedFiles ?? null);
+                    setAstRstLastLoaded(new Date());
+                }
+            })
+            .catch(() => { /* silently ignore if unavailable */ });
     }, [fetchFormulas, fetchBatchReconciliation, fetchAllBatches]);
 
     // Calculate unique AR counts per section and per formula for RM and PM COA footer display
@@ -5474,11 +5502,24 @@ export default function FormulaDataPage() {
 
         if (searchTerm) {
             const term = searchTerm.toLowerCase();
+
+            // Build a set of product codes matched via MFR No. in AST/RST docs
+            const mfrMatchedCodes = new Set<string>();
+            for (const [mfrNo, entry] of Object.entries(astRstData.byMfr)) {
+                if (mfrNo.toLowerCase().includes(term)) {
+                    // Find all product codes linked to this MFR No.
+                    for (const [code, info] of Object.entries(astRstData.byProductCode)) {
+                        if (info.mfrNo === mfrNo) mfrMatchedCodes.add(code);
+                    }
+                }
+            }
+
             result = result.filter(f =>
                 f.masterFormulaDetails.masterCardNo?.toLowerCase().includes(term) ||
                 f.masterFormulaDetails.productCode?.toLowerCase().includes(term) ||
                 f.masterFormulaDetails.productName?.toLowerCase().includes(term) ||
-                f.masterFormulaDetails.genericName?.toLowerCase().includes(term)
+                f.masterFormulaDetails.genericName?.toLowerCase().includes(term) ||
+                (mfrMatchedCodes.size > 0 && mfrMatchedCodes.has(f.masterFormulaDetails.productCode))
             );
         }
 
@@ -5496,7 +5537,7 @@ export default function FormulaDataPage() {
         }
 
         return result;
-    }, [formulas, selectedManufacturer, searchTerm, mfcSortOrder]);
+    }, [formulas, selectedManufacturer, searchTerm, mfcSortOrder, astRstData]);
 
     // Separate formulas into categories with DEDUPLICATION by product code
     const { mainFormulas, lowBatchFormulas, noBatchFormulas, placeboFormulas, sectionBatchTotals } = useMemo(() => {
@@ -9622,17 +9663,55 @@ export default function FormulaDataPage() {
                         {mfcNo}
                     </div>
 
-                    {/* Product Name */}
+                    {/* Product Name + AST/RST badges */}
                     <div style={{
                         flex: 1,
                         fontSize: '0.9rem',
                         fontWeight: '600',
                         color: '#1f2937',
                         display: 'flex',
-                        alignItems: 'center',
-                        gap: '0.75rem',
+                        flexDirection: 'column',
+                        gap: '4px',
                     }}>
-                        {formula.masterFormulaDetails.productName}
+                        <span>{formula.masterFormulaDetails.productName}</span>
+                        {(() => {
+                            const code = formula.masterFormulaDetails.productCode;
+                            const info = astRstData.byProductCode[code];
+                            return (
+                                <div style={{ display: 'flex', gap: '4px' }}>
+                                    <div style={{
+                                        padding: '0.15rem 0.5rem',
+                                        borderRadius: '8px',
+                                        fontSize: '0.6rem',
+                                        fontWeight: '700',
+                                        whiteSpace: 'nowrap',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '2px',
+                                        background: info ? (info.hasAccelerated ? 'linear-gradient(135deg, #d1fae5, #a7f3d0)' : 'linear-gradient(135deg, #fee2e2, #fecaca)') : '#f3f4f6',
+                                        color: info ? (info.hasAccelerated ? '#065f46' : '#991b1b') : '#9ca3af',
+                                        border: info ? (info.hasAccelerated ? '1px solid #6ee7b7' : '1px solid #fca5a5') : '1px solid #e5e7eb',
+                                    }}>
+                                        {info ? (info.hasAccelerated ? '✅' : '❌') : '—'} Acc
+                                    </div>
+                                    <div style={{
+                                        padding: '0.15rem 0.5rem',
+                                        borderRadius: '8px',
+                                        fontSize: '0.6rem',
+                                        fontWeight: '700',
+                                        whiteSpace: 'nowrap',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '2px',
+                                        background: info ? (info.hasLongTerm ? 'linear-gradient(135deg, #dbeafe, #bfdbfe)' : 'linear-gradient(135deg, #fee2e2, #fecaca)') : '#f3f4f6',
+                                        color: info ? (info.hasLongTerm ? '#1e40af' : '#991b1b') : '#9ca3af',
+                                        border: info ? (info.hasLongTerm ? '1px solid #93c5fd' : '1px solid #fca5a5') : '1px solid #e5e7eb',
+                                    }}>
+                                        {info ? (info.hasLongTerm ? '✅' : '❌') : '—'} LT
+                                    </div>
+                                </div>
+                            );
+                        })()}
                     </div>
 
                     {/* Stacked Batch Counts */}
@@ -9750,6 +9829,21 @@ export default function FormulaDataPage() {
                 </button>
             </div>
         );
+    };
+
+    const reloadAstRst = async () => {
+        setAstRstLoading(true);
+        try {
+            const res = await fetch('/api/ast-rst?refresh=true');
+            const d = await res.json();
+            if (d.success) {
+                setAstRstData({ byMfr: d.byMfr, byProductCode: d.byProductCode });
+                setAstRstScannedFiles(d.scannedFiles ?? null);
+                setAstRstLastLoaded(new Date());
+            }
+        } catch { /* ignore */ } finally {
+            setAstRstLoading(false);
+        }
     };
 
     return (
@@ -10190,6 +10284,50 @@ export default function FormulaDataPage() {
                                 </div>
                             </div>
                         )}
+                    </div>
+
+                    {/* Reload AST & RST Button */}
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
+                        <button
+                            onClick={reloadAstRst}
+                            disabled={astRstLoading}
+                            title="Force re-scan the AST & RST folder for new documents"
+                            style={{
+                                padding: '0.6rem 1rem',
+                                borderRadius: '12px',
+                                border: '1px solid rgba(255,255,255,0.35)',
+                                background: astRstLoading
+                                    ? 'rgba(255,255,255,0.1)'
+                                    : 'linear-gradient(135deg, rgba(255,255,255,0.25) 0%, rgba(255,255,255,0.12) 100%)',
+                                color: 'white',
+                                fontSize: '0.72rem',
+                                fontWeight: '700',
+                                cursor: astRstLoading ? 'not-allowed' : 'pointer',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '6px',
+                                backdropFilter: 'blur(12px)',
+                                boxShadow: '0 2px 8px rgba(0,0,0,0.1), inset 0 1px 0 rgba(255,255,255,0.2)',
+                                transition: 'all 0.2s ease',
+                                opacity: astRstLoading ? 0.7 : 1,
+                                whiteSpace: 'nowrap',
+                            }}
+                            onMouseEnter={e => { if (!astRstLoading) e.currentTarget.style.background = 'linear-gradient(135deg, rgba(255,255,255,0.35) 0%, rgba(255,255,255,0.2) 100%)'; }}
+                            onMouseLeave={e => { if (!astRstLoading) e.currentTarget.style.background = 'linear-gradient(135deg, rgba(255,255,255,0.25) 0%, rgba(255,255,255,0.12) 100%)'; }}
+                        >
+                            <span style={{ fontSize: '0.9rem', display: 'inline-block', animation: astRstLoading ? 'spin 1s linear infinite' : 'none' }}>
+                                {astRstLoading ? '⟳' : '🔄'}
+                            </span>
+                            {astRstLoading ? 'Scanning...' : 'Reload AST & RST'}
+                        </button>
+                        <div style={{ fontSize: '0.6rem', color: 'rgba(255,255,255,0.7)', textAlign: 'center' }}>
+                            {astRstScannedFiles !== null && (
+                                <span>{astRstScannedFiles} files</span>
+                            )}
+                            {astRstLastLoaded && (
+                                <span> · {astRstLastLoaded.toLocaleTimeString()}</span>
+                            )}
+                        </div>
                     </div>
                 </div>
             </header>
@@ -11212,6 +11350,61 @@ export default function FormulaDataPage() {
                                 MFC Summary Table
                             </button>
 
+                            {/* AST & RST Analysis Button */}
+                            <button
+                                onClick={() => setShowAstRstAnalysis(true)}
+                                style={{
+                                    padding: '0.75rem 1rem',
+                                    borderRadius: 'var(--radius-md)',
+                                    border: '1px solid #f59e0b',
+                                    background: 'linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%)',
+                                    color: '#b45309',
+                                    cursor: 'pointer',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '0.5rem',
+                                    fontWeight: '600',
+                                    fontSize: '0.9rem',
+                                    transition: 'all 0.2s ease',
+                                    boxShadow: '0 2px 8px rgba(245, 158, 11, 0.25)',
+                                    position: 'relative' as const,
+                                }}
+                                onMouseEnter={(e) => {
+                                    e.currentTarget.style.transform = 'scale(1.02)';
+                                    e.currentTarget.style.boxShadow = '0 4px 12px rgba(245, 158, 11, 0.35)';
+                                }}
+                                onMouseLeave={(e) => {
+                                    e.currentTarget.style.transform = 'scale(1)';
+                                    e.currentTarget.style.boxShadow = '0 2px 8px rgba(245, 158, 11, 0.25)';
+                                }}
+                            >
+                                <span style={{ fontSize: '1.1rem' }}>🔬</span>
+                                AST & RST Analysis
+                                {(() => {
+                                    const missing = formulas.filter(f => {
+                                        const info = astRstData.byProductCode[f.masterFormulaDetails.productCode];
+                                        return !info || !info.hasAccelerated || !info.hasLongTerm;
+                                    }).length;
+                                    return missing > 0 ? (
+                                        <span style={{
+                                            position: 'absolute',
+                                            top: '-6px',
+                                            right: '-6px',
+                                            background: '#ef4444',
+                                            color: 'white',
+                                            borderRadius: '50%',
+                                            width: '18px',
+                                            height: '18px',
+                                            fontSize: '0.6rem',
+                                            fontWeight: '800',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
+                                        }}>{missing}</span>
+                                    ) : null;
+                                })()}
+                            </button>
+
                             {selectedManufacturer && (
                                 <button
                                     onClick={() => setSelectedManufacturer(null)}
@@ -11488,7 +11681,47 @@ export default function FormulaDataPage() {
                                                     alignItems: 'center',
                                                     gap: '0.75rem',
                                                 }}>
-                                                    {formula.masterFormulaDetails.productName}
+                                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                                        <span>{formula.masterFormulaDetails.productName}</span>
+                                                        {(() => {
+                                                            const code = formula.masterFormulaDetails.productCode;
+                                                            const info = astRstData.byProductCode[code];
+                                                            return (
+                                                                <div style={{ display: 'flex', gap: '4px' }}>
+                                                                    <div style={{
+                                                                        padding: '0.15rem 0.5rem',
+                                                                        borderRadius: '8px',
+                                                                        fontSize: '0.6rem',
+                                                                        fontWeight: '700',
+                                                                        whiteSpace: 'nowrap',
+                                                                        display: 'flex',
+                                                                        alignItems: 'center',
+                                                                        gap: '2px',
+                                                                        background: info ? (info.hasAccelerated ? 'linear-gradient(135deg, #d1fae5, #a7f3d0)' : 'linear-gradient(135deg, #fee2e2, #fecaca)') : '#f3f4f6',
+                                                                        color: info ? (info.hasAccelerated ? '#065f46' : '#991b1b') : '#9ca3af',
+                                                                        border: info ? (info.hasAccelerated ? '1px solid #6ee7b7' : '1px solid #fca5a5') : '1px solid #e5e7eb',
+                                                                    }}>
+                                                                        {info ? (info.hasAccelerated ? '✅' : '❌') : '—'} Acc
+                                                                    </div>
+                                                                    <div style={{
+                                                                        padding: '0.15rem 0.5rem',
+                                                                        borderRadius: '8px',
+                                                                        fontSize: '0.6rem',
+                                                                        fontWeight: '700',
+                                                                        whiteSpace: 'nowrap',
+                                                                        display: 'flex',
+                                                                        alignItems: 'center',
+                                                                        gap: '2px',
+                                                                        background: info ? (info.hasLongTerm ? 'linear-gradient(135deg, #dbeafe, #bfdbfe)' : 'linear-gradient(135deg, #fee2e2, #fecaca)') : '#f3f4f6',
+                                                                        color: info ? (info.hasLongTerm ? '#1e40af' : '#991b1b') : '#9ca3af',
+                                                                        border: info ? (info.hasLongTerm ? '1px solid #93c5fd' : '1px solid #fca5a5') : '1px solid #e5e7eb',
+                                                                    }}>
+                                                                        {info ? (info.hasLongTerm ? '✅' : '❌') : '—'} LT
+                                                                    </div>
+                                                                </div>
+                                                            );
+                                                        })()}
+                                                    </div>
                                                     {/* Batch Count Badges: Total and Unique with Reconciliation */}
                                                     {formula.totalBatchCount && formula.totalBatchCount > 0 && (() => {
                                                         const uniqueBatches = (formula.rmDataMatched || 0) + (formula.rmDataUnmatched || 0);
@@ -12291,6 +12524,24 @@ export default function FormulaDataPage() {
                                                             <InfoRow label="Reason for Change" value={formula.masterFormulaDetails.reasonForChange} />
                                                             <InfoRow label="Effective Batch No" value={formula.masterFormulaDetails.effectiveBatchNo} />
                                                             <InfoRow label="Date" value={formula.masterFormulaDetails.date} />
+                                                            {(() => {
+                                                                const code = formula.masterFormulaDetails.productCode;
+                                                                const info = astRstData.byProductCode[code];
+                                                                return (
+                                                                    <>
+                                                                        <InfoRow label="Accelerated Stability" value={
+                                                                            info
+                                                                                ? (info.hasAccelerated ? '✅ Available' : '❌ Not Available')
+                                                                                : '— Not Linked'
+                                                                        } />
+                                                                        <InfoRow label="Long-Term Stability" value={
+                                                                            info
+                                                                                ? (info.hasLongTerm ? '✅ Available' : '❌ Not Available')
+                                                                                : '— Not Linked'
+                                                                        } />
+                                                                    </>
+                                                                );
+                                                            })()}
                                                         </div>
                                                     </Section>
 
@@ -13540,6 +13791,7 @@ export default function FormulaDataPage() {
                     sr: number;
                     mfc: string;
                     product: string;
+                    masterProductCode: string; // masterFormulaDetails.productCode (for AST/RST fallback)
                     productName: string; // Product name from filling details or master formula
                     packingSize: string; // Packing size from filling details
                     batches: number;
@@ -13592,6 +13844,7 @@ export default function FormulaDataPage() {
                             sr: srCounter,
                             mfc: mfcNo,
                             product: productCode,
+                            masterProductCode: formula.masterFormulaDetails?.productCode || '',
                             productName: productInfo.productName,
                             packingSize: productInfo.packingSize,
                             batches: batchCounts[productCode] || 0,
@@ -13771,6 +14024,20 @@ export default function FormulaDataPage() {
                     if (mfcTableSortColumn !== column) return <span style={{ opacity: 0.3, marginLeft: '4px' }}>↕</span>;
                     return <span style={{ marginLeft: '4px' }}>{mfcTableSortDirection === 'asc' ? '↑' : '↓'}</span>;
                 };
+
+                // Pre-compute per-MFC AST/RST status (union across all product codes in each MFC)
+                // Check both fillingDetails product code and masterFormulaDetails product code
+                const mfcAstRstStatus: Record<string, { hasAccelerated: boolean; hasLongTerm: boolean }> = {};
+                sortedData.forEach((r: any) => {
+                    const mfc = r.mfc as string;
+                    if (!mfcAstRstStatus[mfc]) mfcAstRstStatus[mfc] = { hasAccelerated: false, hasLongTerm: false };
+                    const info = astRstData.byProductCode[r.product as string]
+                        || astRstData.byProductCode[r.masterProductCode as string];
+                    if (info) {
+                        if (info.hasAccelerated) mfcAstRstStatus[mfc].hasAccelerated = true;
+                        if (info.hasLongTerm) mfcAstRstStatus[mfc].hasLongTerm = true;
+                    }
+                });
 
                 return (
                     <div
@@ -14013,6 +14280,28 @@ export default function FormulaDataPage() {
                                             >
                                                 Batches <SortIndicator column="batches" />
                                             </th>
+                                            <th style={{
+                                                padding: '0.5rem 0.6rem',
+                                                textAlign: 'center',
+                                                fontWeight: '600',
+                                                color: '#334155',
+                                                borderBottom: '2px solid #e2e8f0',
+                                                whiteSpace: 'nowrap',
+                                                background: '#f0fdf4',
+                                            }}>
+                                                Acc. Format
+                                            </th>
+                                            <th style={{
+                                                padding: '0.5rem 0.6rem',
+                                                textAlign: 'center',
+                                                fontWeight: '600',
+                                                color: '#334155',
+                                                borderBottom: '2px solid #e2e8f0',
+                                                whiteSpace: 'nowrap',
+                                                background: '#eff6ff',
+                                            }}>
+                                                LT Format
+                                            </th>
                                         </tr>
                                     </thead>
                                     <tbody>
@@ -14136,6 +14425,42 @@ export default function FormulaDataPage() {
                                                             {row.batches}
                                                         </td>
                                                     )}
+                                                    {/* Accelerated Format - merge at MFC level */}
+                                                    {(!mergeSrMfc || mergeInfo.isFirstInGroup) && (
+                                                        <td
+                                                            rowSpan={mergeSrMfc && mergeInfo.groupSize > 1 ? mergeInfo.groupSize : 1}
+                                                            style={{
+                                                                padding: '0.35rem 0.5rem',
+                                                                borderBottom: '1px solid #e2e8f0',
+                                                                textAlign: 'center',
+                                                                verticalAlign: 'middle',
+                                                                background: '#f0fdf4',
+                                                                fontSize: '1rem',
+                                                            }}
+                                                        >
+                                                            {mfcAstRstStatus[row.mfc]
+                                                                ? (mfcAstRstStatus[row.mfc].hasAccelerated ? '✅' : '❌')
+                                                                : '—'}
+                                                        </td>
+                                                    )}
+                                                    {/* Long-Term Format - merge at MFC level */}
+                                                    {(!mergeSrMfc || mergeInfo.isFirstInGroup) && (
+                                                        <td
+                                                            rowSpan={mergeSrMfc && mergeInfo.groupSize > 1 ? mergeInfo.groupSize : 1}
+                                                            style={{
+                                                                padding: '0.35rem 0.5rem',
+                                                                borderBottom: '1px solid #e2e8f0',
+                                                                textAlign: 'center',
+                                                                verticalAlign: 'middle',
+                                                                background: '#eff6ff',
+                                                                fontSize: '1rem',
+                                                            }}
+                                                        >
+                                                            {mfcAstRstStatus[row.mfc]
+                                                                ? (mfcAstRstStatus[row.mfc].hasLongTerm ? '✅' : '❌')
+                                                                : '—'}
+                                                        </td>
+                                                    )}
                                                 </tr>
                                             );
                                         })}
@@ -14178,6 +14503,349 @@ export default function FormulaDataPage() {
                                 >
                                     Close
                                 </button>
+                            </div>
+                        </div>
+                    </div>
+                );
+            })()}
+
+            {/* AST & RST Analysis Modal */}
+            {showAstRstAnalysis && (() => {
+                // Build missing data list (formulas with no/partial AST/RST)
+                const missingList = formulas.map(f => {
+                    const code = f.masterFormulaDetails.productCode;
+                    const info = astRstData.byProductCode[code];
+                    return {
+                        mfc: f.masterFormulaDetails.masterCardNo || 'N/A',
+                        productCode: code,
+                        productName: f.masterFormulaDetails.productName || 'N/A',
+                        hasAcc: info?.hasAccelerated ?? false,
+                        hasLT: info?.hasLongTerm ?? false,
+                        linked: !!info,
+                    };
+                }).filter(r => !r.hasAcc || !r.hasLT);
+
+                // Build orphaned docs list (MFR nos in docs but no formula match)
+                const allFormulaCodes = new Set(formulas.map(f => f.masterFormulaDetails.productCode));
+                const orphanedDocs: { mfrNo: string; productCodes: string[]; hasAcc: boolean; hasLT: boolean }[] = [];
+                const seenMfr = new Set<string>();
+                for (const [code, info] of Object.entries(astRstData.byProductCode)) {
+                    if (!allFormulaCodes.has(code) && !seenMfr.has(info.mfrNo)) {
+                        seenMfr.add(info.mfrNo);
+                        const codesForMfr = Object.entries(astRstData.byProductCode)
+                            .filter(([, v]) => v.mfrNo === info.mfrNo)
+                            .map(([k]) => k);
+                        orphanedDocs.push({ mfrNo: info.mfrNo, productCodes: codesForMfr, hasAcc: info.hasAccelerated, hasLT: info.hasLongTerm });
+                    }
+                }
+
+                const missingAcc = missingList.filter(r => !r.hasAcc).length;
+                const missingLT = missingList.filter(r => !r.hasLT).length;
+                const notLinked = missingList.filter(r => !r.linked).length;
+
+                // Build found list (formulas with BOTH Acc and LT)
+                const foundList = formulas.map(f => {
+                    const code = f.masterFormulaDetails.productCode;
+                    const info = astRstData.byProductCode[code];
+                    return {
+                        mfc: f.masterFormulaDetails.masterCardNo || 'N/A',
+                        productCode: code,
+                        productName: f.masterFormulaDetails.productName || 'N/A',
+                        mfrNo: info?.mfrNo || '',
+                        hasAcc: info?.hasAccelerated ?? false,
+                        hasLT: info?.hasLongTerm ?? false,
+                    };
+                }).filter(r => r.hasAcc && r.hasLT);
+
+                const thStyle: React.CSSProperties = {
+                    padding: '0.5rem 0.75rem', textAlign: 'left', fontWeight: '700',
+                    fontSize: '0.7rem', color: '#64748b', textTransform: 'uppercase',
+                    borderBottom: '2px solid #e2e8f0', whiteSpace: 'nowrap', background: '#f8fafc',
+                };
+                const tdStyle: React.CSSProperties = {
+                    padding: '0.45rem 0.75rem', borderBottom: '1px solid #f1f5f9',
+                    fontSize: '0.78rem', verticalAlign: 'middle',
+                };
+
+                const exportToExcel = async () => {
+                    const XLSX = await import('xlsx');
+                    const wb = XLSX.utils.book_new();
+
+                    // Sheet 1: Missing Acc / LT
+                    const missingRows = missingList.map((r, i) => ({
+                        '#': i + 1,
+                        'MFC Number': r.mfc,
+                        'Product Code': r.productCode,
+                        'Product Name': r.productName,
+                        'Acc Format': r.hasAcc ? 'YES' : (r.linked ? 'MISSING' : 'No Doc'),
+                        'LT Format': r.hasLT ? 'YES' : (r.linked ? 'MISSING' : 'No Doc'),
+                        'Status': !r.linked ? 'No AST/RST docs found'
+                            : !r.hasAcc && !r.hasLT ? 'Both missing'
+                            : !r.hasAcc ? 'Acc missing'
+                            : 'LT missing',
+                    }));
+                    const ws1 = XLSX.utils.json_to_sheet(missingRows);
+                    ws1['!cols'] = [{ wch: 4 }, { wch: 22 }, { wch: 16 }, { wch: 40 }, { wch: 12 }, { wch: 12 }, { wch: 22 }];
+                    XLSX.utils.book_append_sheet(wb, ws1, 'Missing Acc-LT');
+
+                    // Sheet 2: Fully Linked
+                    const foundRows = foundList.map((r, i) => ({
+                        '#': i + 1,
+                        'MFC Number': r.mfc,
+                        'MFR No. (in Doc)': r.mfrNo,
+                        'Product Code': r.productCode,
+                        'Product Name': r.productName,
+                        'Acc Format': 'YES',
+                        'LT Format': 'YES',
+                    }));
+                    const ws2 = XLSX.utils.json_to_sheet(foundRows);
+                    ws2['!cols'] = [{ wch: 4 }, { wch: 22 }, { wch: 22 }, { wch: 16 }, { wch: 40 }, { wch: 12 }, { wch: 12 }];
+                    XLSX.utils.book_append_sheet(wb, ws2, 'Fully Linked');
+
+                    // Sheet 3: Orphaned Docs
+                    const orphanedRows = orphanedDocs.map((r, i) => ({
+                        '#': i + 1,
+                        'MFR No. (in Doc)': r.mfrNo,
+                        'Product Codes in Doc': r.productCodes.join(', '),
+                        'Acc Format': r.hasAcc ? 'YES' : 'NO',
+                        'LT Format': r.hasLT ? 'YES' : 'NO',
+                    }));
+                    const ws3 = XLSX.utils.json_to_sheet(orphanedRows);
+                    ws3['!cols'] = [{ wch: 4 }, { wch: 24 }, { wch: 30 }, { wch: 12 }, { wch: 12 }];
+                    XLSX.utils.book_append_sheet(wb, ws3, 'Docs Without Formula Match');
+
+                    // Summary sheet
+                    const summaryRows = [
+                        { 'Report': 'AST & RST Analysis Report' },
+                        { 'Report': `Generated: ${new Date().toLocaleString()}` },
+                        { 'Report': '' },
+                        { 'Report': 'Summary' },
+                        { 'Report': `Total formulas in DB: ${formulas.length}` },
+                        { 'Report': `Product codes in AST & RST docs: ${Object.keys(astRstData.byProductCode).length}` },
+                        { 'Report': `Fully linked (both Acc & LT): ${foundList.length}` },
+                        { 'Report': `Missing Acc and/or LT: ${missingList.length}` },
+                        { 'Report': `  - Acc missing: ${missingAcc}` },
+                        { 'Report': `  - LT missing: ${missingLT}` },
+                        { 'Report': `  - No docs at all: ${notLinked}` },
+                        { 'Report': `Orphaned docs (not in DB): ${orphanedDocs.length}` },
+                    ];
+                    const ws0 = XLSX.utils.json_to_sheet(summaryRows, { skipHeader: true });
+                    ws0['!cols'] = [{ wch: 50 }];
+                    XLSX.utils.book_append_sheet(wb, ws0, 'Summary');
+
+                    // Move Summary to front
+                    wb.SheetNames = ['Summary', 'Missing Acc-LT', 'Fully Linked', 'Docs Without Formula Match'];
+
+                    XLSX.writeFile(wb, `AST_RST_Analysis_${new Date().toISOString().slice(0, 10)}.xlsx`);
+                };
+
+                return (
+                    <div
+                        style={{ position: 'fixed', inset: 0, zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0.5rem' }}
+                        onClick={() => setShowAstRstAnalysis(false)}
+                    >
+                        <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.5)' }} />
+                        <div
+                            style={{ position: 'relative', background: 'white', borderRadius: '12px', width: '100%', maxWidth: '1000px', maxHeight: '92vh', display: 'flex', flexDirection: 'column', boxShadow: '0 25px 50px rgba(0,0,0,0.25)', overflow: 'hidden' }}
+                            onClick={e => e.stopPropagation()}
+                        >
+                            {/* Header */}
+                            <div style={{ padding: '0.75rem 1rem', background: 'linear-gradient(135deg, #b45309 0%, #f59e0b 100%)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                    <span style={{ fontSize: '1.1rem' }}>🔬</span>
+                                    <span style={{ fontSize: '1rem', fontWeight: '700', color: 'white' }}>AST & RST Analysis</span>
+                                    <span style={{ padding: '2px 8px', background: 'rgba(255,255,255,0.2)', borderRadius: '10px', fontSize: '0.7rem', color: 'white', fontWeight: '600' }}>
+                                        {missingList.length} issues
+                                    </span>
+                                </div>
+                                <button onClick={() => setShowAstRstAnalysis(false)} style={{ width: '28px', height: '28px', border: 'none', background: 'rgba(255,255,255,0.2)', color: 'white', borderRadius: '6px', cursor: 'pointer', fontSize: '1rem' }}>✕</button>
+                            </div>
+
+                            {/* Tabs */}
+                            <div style={{ display: 'flex', borderBottom: '2px solid #e2e8f0', background: '#fafafa' }}>
+                                {([
+                                    { key: 'missing', label: `Missing Acc / LT (${missingList.length})`, icon: '⚠️' },
+                                    { key: 'found', label: `Fully Linked (${foundList.length})`, icon: '✅' },
+                                    { key: 'orphaned', label: `Docs Without Formula Match (${orphanedDocs.length})`, icon: '📄' },
+                                ] as const).map(tab => (
+                                    <button
+                                        key={tab.key}
+                                        onClick={() => setAstRstAnalysisTab(tab.key)}
+                                        style={{
+                                            padding: '0.6rem 1.25rem', border: 'none', cursor: 'pointer', fontSize: '0.8rem', fontWeight: '600',
+                                            background: astRstAnalysisTab === tab.key ? 'white' : 'transparent',
+                                            color: astRstAnalysisTab === tab.key ? (tab.key === 'found' ? '#065f46' : '#b45309') : '#64748b',
+                                            borderBottom: astRstAnalysisTab === tab.key ? `2px solid ${tab.key === 'found' ? '#059669' : '#f59e0b'}` : '2px solid transparent',
+                                            marginBottom: '-2px', display: 'flex', alignItems: 'center', gap: '6px',
+                                        }}
+                                    >
+                                        {tab.icon} {tab.label}
+                                    </button>
+                                ))}
+                            </div>
+
+                            {/* Content */}
+                            <div style={{ flex: 1, overflow: 'auto' }}>
+                                {astRstAnalysisTab === 'missing' && (
+                                    <>
+                                        {/* Summary chips */}
+                                        <div style={{ display: 'flex', gap: '8px', padding: '10px 12px', background: '#fffbeb', borderBottom: '1px solid #fde68a' }}>
+                                            <span style={{ padding: '3px 10px', borderRadius: '10px', background: '#fee2e2', color: '#991b1b', fontSize: '0.7rem', fontWeight: '700' }}>❌ Acc missing: {missingAcc}</span>
+                                            <span style={{ padding: '3px 10px', borderRadius: '10px', background: '#fee2e2', color: '#991b1b', fontSize: '0.7rem', fontWeight: '700' }}>❌ LT missing: {missingLT}</span>
+                                            <span style={{ padding: '3px 10px', borderRadius: '10px', background: '#f3f4f6', color: '#374151', fontSize: '0.7rem', fontWeight: '700' }}>— Not linked: {notLinked}</span>
+                                        </div>
+                                        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                                            <thead>
+                                                <tr>
+                                                    <th style={thStyle}>#</th>
+                                                    <th style={thStyle}>MFC Number</th>
+                                                    <th style={thStyle}>Product Code</th>
+                                                    <th style={thStyle}>Product Name</th>
+                                                    <th style={{ ...thStyle, textAlign: 'center' }}>Acc Format</th>
+                                                    <th style={{ ...thStyle, textAlign: 'center' }}>LT Format</th>
+                                                    <th style={thStyle}>Status</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {missingList.map((r, i) => (
+                                                    <tr key={i} style={{ background: i % 2 === 0 ? 'white' : '#fafafa' }}>
+                                                        <td style={{ ...tdStyle, color: '#94a3b8', width: '36px' }}>{i + 1}</td>
+                                                        <td style={{ ...tdStyle, fontFamily: 'monospace', fontWeight: '700', color: '#7c3aed', whiteSpace: 'nowrap' }}>{r.mfc}</td>
+                                                        <td style={{ ...tdStyle, fontFamily: 'monospace', color: '#0891b2', whiteSpace: 'nowrap' }}>{r.productCode}</td>
+                                                        <td style={{ ...tdStyle, color: '#374151', maxWidth: '220px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.productName}>{r.productName}</td>
+                                                        <td style={{ ...tdStyle, textAlign: 'center' }}>
+                                                            <span style={{ padding: '2px 8px', borderRadius: '8px', fontSize: '0.7rem', fontWeight: '700', background: r.hasAcc ? '#d1fae5' : (r.linked ? '#fee2e2' : '#f3f4f6'), color: r.hasAcc ? '#065f46' : (r.linked ? '#991b1b' : '#9ca3af') }}>
+                                                                {r.hasAcc ? '✅' : (r.linked ? '❌' : '—')}
+                                                            </span>
+                                                        </td>
+                                                        <td style={{ ...tdStyle, textAlign: 'center' }}>
+                                                            <span style={{ padding: '2px 8px', borderRadius: '8px', fontSize: '0.7rem', fontWeight: '700', background: r.hasLT ? '#dbeafe' : (r.linked ? '#fee2e2' : '#f3f4f6'), color: r.hasLT ? '#1e40af' : (r.linked ? '#991b1b' : '#9ca3af') }}>
+                                                                {r.hasLT ? '✅' : (r.linked ? '❌' : '—')}
+                                                            </span>
+                                                        </td>
+                                                        <td style={tdStyle}>
+                                                            {!r.linked
+                                                                ? <span style={{ fontSize: '0.7rem', color: '#6b7280', fontStyle: 'italic' }}>No AST/RST docs found</span>
+                                                                : !r.hasAcc && !r.hasLT
+                                                                    ? <span style={{ fontSize: '0.7rem', color: '#dc2626', fontWeight: '600' }}>Both missing</span>
+                                                                    : !r.hasAcc
+                                                                        ? <span style={{ fontSize: '0.7rem', color: '#d97706', fontWeight: '600' }}>Acc missing</span>
+                                                                        : <span style={{ fontSize: '0.7rem', color: '#2563eb', fontWeight: '600' }}>LT missing</span>
+                                                            }
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                        {missingList.length === 0 && (
+                                            <div style={{ padding: '3rem', textAlign: 'center', color: '#059669', fontSize: '1rem', fontWeight: '600' }}>
+                                                ✅ All MFCs have both Accelerated and Long-Term formats linked!
+                                            </div>
+                                        )}
+                                    </>
+                                )}
+
+                                {astRstAnalysisTab === 'found' && (
+                                    <>
+                                        <div style={{ padding: '10px 12px', background: '#f0fdf4', borderBottom: '1px solid #a7f3d0', fontSize: '0.75rem', color: '#065f46', fontWeight: '600' }}>
+                                            ✅ {foundList.length} formula{foundList.length !== 1 ? 's' : ''} fully linked — both Accelerated and Long-Term formats available.
+                                        </div>
+                                        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                                            <thead>
+                                                <tr>
+                                                    <th style={thStyle}>#</th>
+                                                    <th style={thStyle}>MFC Number</th>
+                                                    <th style={thStyle}>MFR No. (in Doc)</th>
+                                                    <th style={thStyle}>Product Code</th>
+                                                    <th style={thStyle}>Product Name</th>
+                                                    <th style={{ ...thStyle, textAlign: 'center' }}>Acc Format</th>
+                                                    <th style={{ ...thStyle, textAlign: 'center' }}>LT Format</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {foundList.map((r, i) => (
+                                                    <tr key={i} style={{ background: i % 2 === 0 ? 'white' : '#f9fffe' }}>
+                                                        <td style={{ ...tdStyle, color: '#94a3b8', width: '36px' }}>{i + 1}</td>
+                                                        <td style={{ ...tdStyle, fontFamily: 'monospace', fontWeight: '700', color: '#7c3aed', whiteSpace: 'nowrap' }}>{r.mfc}</td>
+                                                        <td style={{ ...tdStyle, fontFamily: 'monospace', color: '#b45309', whiteSpace: 'nowrap' }}>{r.mfrNo || '—'}</td>
+                                                        <td style={{ ...tdStyle, fontFamily: 'monospace', color: '#0891b2', whiteSpace: 'nowrap' }}>{r.productCode}</td>
+                                                        <td style={{ ...tdStyle, color: '#374151', maxWidth: '220px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.productName}>{r.productName}</td>
+                                                        <td style={{ ...tdStyle, textAlign: 'center' }}>
+                                                            <span style={{ padding: '2px 8px', borderRadius: '8px', fontSize: '0.7rem', fontWeight: '700', background: '#d1fae5', color: '#065f46' }}>✅</span>
+                                                        </td>
+                                                        <td style={{ ...tdStyle, textAlign: 'center' }}>
+                                                            <span style={{ padding: '2px 8px', borderRadius: '8px', fontSize: '0.7rem', fontWeight: '700', background: '#dbeafe', color: '#1e40af' }}>✅</span>
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                        {foundList.length === 0 && (
+                                            <div style={{ padding: '3rem', textAlign: 'center', color: '#64748b', fontSize: '1rem' }}>
+                                                No formulas are fully linked yet.
+                                            </div>
+                                        )}
+                                    </>
+                                )}
+
+                                {astRstAnalysisTab === 'orphaned' && (
+                                    <>
+                                        <div style={{ padding: '10px 12px', background: '#fff7ed', borderBottom: '1px solid #fed7aa', fontSize: '0.75rem', color: '#92400e' }}>
+                                            📄 These MFR numbers were found inside AST & RST documents but their product codes do not match any formula in the database.
+                                        </div>
+                                        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                                            <thead>
+                                                <tr>
+                                                    <th style={thStyle}>#</th>
+                                                    <th style={thStyle}>MFR No. (in Doc)</th>
+                                                    <th style={thStyle}>Product Codes in Doc</th>
+                                                    <th style={{ ...thStyle, textAlign: 'center' }}>Acc</th>
+                                                    <th style={{ ...thStyle, textAlign: 'center' }}>LT</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {orphanedDocs.map((r, i) => (
+                                                    <tr key={i} style={{ background: i % 2 === 0 ? 'white' : '#fafafa' }}>
+                                                        <td style={{ ...tdStyle, color: '#94a3b8', width: '36px' }}>{i + 1}</td>
+                                                        <td style={{ ...tdStyle, fontFamily: 'monospace', fontWeight: '700', color: '#b45309' }}>{r.mfrNo}</td>
+                                                        <td style={{ ...tdStyle, fontFamily: 'monospace', color: '#64748b' }}>{r.productCodes.join(', ')}</td>
+                                                        <td style={{ ...tdStyle, textAlign: 'center' }}>
+                                                            <span style={{ padding: '2px 8px', borderRadius: '8px', fontSize: '0.7rem', fontWeight: '700', background: r.hasAcc ? '#d1fae5' : '#fee2e2', color: r.hasAcc ? '#065f46' : '#991b1b' }}>
+                                                                {r.hasAcc ? '✅' : '❌'}
+                                                            </span>
+                                                        </td>
+                                                        <td style={{ ...tdStyle, textAlign: 'center' }}>
+                                                            <span style={{ padding: '2px 8px', borderRadius: '8px', fontSize: '0.7rem', fontWeight: '700', background: r.hasLT ? '#dbeafe' : '#fee2e2', color: r.hasLT ? '#1e40af' : '#991b1b' }}>
+                                                                {r.hasLT ? '✅' : '❌'}
+                                                            </span>
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                        {orphanedDocs.length === 0 && (
+                                            <div style={{ padding: '3rem', textAlign: 'center', color: '#059669', fontSize: '1rem', fontWeight: '600' }}>
+                                                ✅ All AST & RST documents are linked to a formula in the database!
+                                            </div>
+                                        )}
+                                    </>
+                                )}
+                            </div>
+
+                            {/* Footer */}
+                            <div style={{ padding: '0.5rem 1rem', background: '#f8fafc', borderTop: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <span style={{ fontSize: '0.7rem', color: '#64748b' }}>
+                                    {Object.keys(astRstData.byProductCode).length} product codes in AST & RST docs · {formulas.length} formulas in DB · ✅ {foundList.length} fully linked · ⚠️ {missingList.length} issues · 📄 {orphanedDocs.length} orphaned
+                                </span>
+                                <div style={{ display: 'flex', gap: '8px' }}>
+                                    <button
+                                        onClick={exportToExcel}
+                                        style={{ padding: '0.3rem 0.9rem', borderRadius: '6px', border: '1px solid #16a34a', background: 'linear-gradient(135deg, #16a34a, #15803d)', color: 'white', cursor: 'pointer', fontSize: '0.75rem', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '5px' }}
+                                    >
+                                        📥 Export to Excel
+                                    </button>
+                                    <button onClick={() => setShowAstRstAnalysis(false)} style={{ padding: '0.3rem 0.9rem', borderRadius: '6px', border: '1px solid #e2e8f0', background: 'white', color: '#374151', cursor: 'pointer', fontSize: '0.75rem', fontWeight: '500' }}>Close</button>
+                                </div>
                             </div>
                         </div>
                     </div>

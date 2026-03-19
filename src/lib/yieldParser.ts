@@ -116,19 +116,18 @@ export async function parseYieldXml(xmlContent: string): Promise<{
         if (listGProdQty) {
           const gProdQtyArr: any[] = listGProdQty.G_PRODQTY || [];
           for (const prodQty of gProdQtyArr) {
-            const pack = prodQty?.PACK?.[0] ? String(prodQty.PACK[0]).trim() : 'N/A';
-            
-            const rawPackQty = prodQty?.PACKQTY?.[0] ? String(prodQty.PACKQTY[0]).trim() : '';
-            const rawCQty = prodQty?.CQTY?.[0] ? String(prodQty.CQTY[0]).trim() : '';
-            
-            const qtyStr = rawPackQty || rawCQty || '0';
-            
-            const totalStr = prodQty?.PRODQTY?.[0] ? String(prodQty.PRODQTY[0]).trim() : '0';
-            const total = totalStr ? parseFloat(totalStr) : 0;
-            
-            const totalNum = isNaN(total) ? 0 : total;
-            packingDetails.push({ packing: pack, qty: qtyStr, total: totalNum });
-            totalProducedQty += totalNum;
+            const itemCode = prodQty?.ITEM?.[0] ? String(prodQty.ITEM[0]).trim() : '';
+            const batchSize = prodQty?.BATSIZE?.[0] ? String(prodQty.BATSIZE[0]).trim() : '';
+            const batchUom = prodQty?.BATUOM?.[0] ? String(prodQty.BATUOM[0]).trim() : '';
+            const pack = prodQty?.PACK?.[0] ? String(prodQty.PACK[0]).trim() : '';
+            const packQty = prodQty?.PACKQTY?.[0] ? String(prodQty.PACKQTY[0]).trim() : '';
+            const cQty = prodQty?.CQTY?.[0] ? String(prodQty.CQTY[0]).trim() : '';
+
+            const prodQtyStr = prodQty?.PRODQTY?.[0] ? String(prodQty.PRODQTY[0]).trim() : '0';
+            const prodQtyNum = parseFloat(prodQtyStr) || 0;
+
+            packingDetails.push({ itemCode, batchSize, batchUom, prodQty: prodQtyNum, packing: pack, packQty, cQty });
+            totalProducedQty += prodQtyNum;
           }
         }
 

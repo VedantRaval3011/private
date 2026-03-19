@@ -568,58 +568,13 @@ export async function processXmlFile(fileInfo: XmlFileInfo): Promise<IngestionRe
       const result = await processYieldXml(content, fileName, fileSize, contentHash);
       businessKey = result.businessKey;
 
-      if (result.duplicate) {
-        await ProcessingLog.findOneAndUpdate(
-          { contentHash },
-          {
-            contentHash,
-            fileName,
-            fileType: 'YIELD',
-            status: 'DUPLICATE',
-            businessKey,
-            fileSize,
-            itemStats: result.itemStats,
-            processedAt: new Date(),
-          },
-          { upsert: true }
-        );
-
-        const duplicateMessage = result.itemStats
-          ? `All ${result.itemStats.totalItems} yield records are duplicates`
-          : 'Yield file already processed';
-
-        return {
-          fileName,
-          fileType: 'YIELD',
-          status: 'DUPLICATE',
-          message: duplicateMessage,
-          businessKey,
-          itemStats: result.itemStats,
-        };
-      }
-
-      // Partial success - some items were new, some were duplicates
-      if (result.itemStats && result.itemStats.duplicateItems > 0) {
-        await ProcessingLog.findOneAndUpdate(
-          { contentHash },
-          {
-            contentHash,
-            fileName,
-            fileType: 'YIELD',
-            status: 'SUCCESS',
-            businessKey,
-            fileSize,
-            itemStats: result.itemStats,
-            processedAt: new Date(),
-          },
-          { upsert: true }
-        );
-
+      // No processing logs for YIELD - always re-process without duplicate errors
+      if (result.itemStats) {
         return {
           fileName,
           fileType: 'YIELD',
           status: 'SUCCESS',
-          message: `Stored ${result.itemStats.newItems} new yield records (${result.itemStats.duplicateItems} duplicates skipped)`,
+          message: `Processed ${result.itemStats.totalItems} yield records`,
           businessKey,
           itemStats: result.itemStats,
         };
@@ -1873,99 +1828,40 @@ async function processYieldXml(
   const data = parseResult.data;
   const businessKey = `YIELD-${fileName}`;
 
-  // Check for exact file duplicate
-  const existingExactMatch = await Yield.findOne({ contentHash });
-  if (existingExactMatch) {
-    const duplicateDetails: DuplicateItemDetail[] = data.map(record => ({
-      batchNumber: record.batchNo,
-      itemCode: record.productCode,
-      itemName: record.productName || 'N/A',
-      type: 'Yield',
-      reason: 'Exact file already processed',
-      existingFileName: existingExactMatch.sourceFile
-    }));
-
-    return {
-      businessKey,
-      duplicate: true,
-      itemStats: {
-        totalItems: data.length,
-        newItems: 0,
-        duplicateItems: data.length,
-        duplicateDetails,
-        successfulDetails: []
-      }
-    };
-  }
-
-  // OPTIMIZED DUPLICATE DETECTION
-  // Get all unique combinations from DB to check duplicates in memory
-  const allBatchNos = data.map(r => r.batchNo);
-  const allProductCodes = data.map(r => r.productCode);
-  
-  // Use a targeted query to find existing records that might match our batch/product pairs
-  // For safety with large datasets, we can use $or but for 1100 records, fetching the mapping is better
-  const existingRecords = await Yield.find({
-    batchNo: { $in: allBatchNos },
-    productCode: { $in: allProductCodes }
-  }, { batchNo: 1, productCode: 1, sourceFile: 1 }).lean();
-
-  const existingMap = new Map<string, string>();
-  existingRecords.forEach(r => {
-    existingMap.set(`${r.batchNo}-${r.productCode}`, r.sourceFile || 'Unknown');
-  });
-
-  const duplicateDetails: DuplicateItemDetail[] = [];
+  // Always upsert all yield records so re-processing updates existing data with new fields
   const successfulDetails: SuccessfulItemDetail[] = [];
-  const recordsToInsert: any[] = [];
 
   for (const record of data) {
-    const key = `${record.batchNo}-${record.productCode}`;
-    const existingFileName = existingMap.get(key);
-
-    if (existingFileName) {
-      duplicateDetails.push({
-        batchNumber: record.batchNo,
-        itemCode: record.productCode,
-        itemName: record.productName || 'N/A',
-        type: 'Yield',
-        reason: 'Duplicate: Already exists in database',
-        existingFileName
-      });
-    } else {
-      recordsToInsert.push({
+    await Yield.findOneAndUpdate(
+      { batchNo: record.batchNo, productCode: record.productCode },
+      {
         ...record,
         sourceFile: fileName,
         contentHash,
-        uploadedAt: new Date()
-      });
-      
-      successfulDetails.push({
-        batchNumber: record.batchNo,
-        itemCode: record.productCode,
-        itemName: record.productName || 'N/A',
-        type: 'Yield'
-      });
-    }
-  }
+        uploadedAt: new Date(),
+      },
+      { upsert: true, new: true }
+    );
 
-  // BULK INSERT
-  if (recordsToInsert.length > 0) {
-    // Using insertMany with ordered: false to continue on error if any (though we checked duplicates)
-    await Yield.insertMany(recordsToInsert, { ordered: false });
+    successfulDetails.push({
+      batchNumber: record.batchNo,
+      itemCode: record.productCode,
+      itemName: record.productName || 'N/A',
+      type: 'Yield'
+    });
   }
 
   const itemStats: ItemLevelStats = {
     totalItems: data.length,
-    newItems: recordsToInsert.length,
-    duplicateItems: duplicateDetails.length,
-    duplicateDetails,
+    newItems: data.length,
+    duplicateItems: 0,
+    duplicateDetails: [],
     successfulDetails
   };
 
   return {
     businessKey,
-    duplicate: recordsToInsert.length === 0,
+    duplicate: false,
     itemStats
   };
 }

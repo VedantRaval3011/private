@@ -69,7 +69,7 @@ export default function ProcessingLogsPage() {
     const [typeFilter, setTypeFilter] = useState<string>('');
     const [isDeleting, setIsDeleting] = useState(false);
     const [deleteMessage, setDeleteMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
-    const [showConfirmModal, setShowConfirmModal] = useState<'orphaned' | 'all' | null>(null);
+    const [showConfirmModal, setShowConfirmModal] = useState<'orphaned' | 'all' | 'coa' | 'yield' | null>(null);
     const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
 
     const fetchLogs = useCallback(async () => {
@@ -134,6 +134,46 @@ export default function ProcessingLogsPage() {
             }
         } catch (error) {
             setDeleteMessage({ type: 'error', text: 'Network error while deleting logs' });
+        } finally {
+            setIsDeleting(false);
+        }
+    };
+
+    const handleDeleteYieldLogs = async () => {
+        setIsDeleting(true);
+        setDeleteMessage(null);
+        setShowConfirmModal(null);
+        try {
+            const response = await fetch('/api/ingestion/logs?fileType=YIELD', { method: 'DELETE' });
+            const data = await response.json();
+            if (data.success) {
+                setDeleteMessage({ type: 'success', text: data.message });
+                fetchLogs();
+            } else {
+                setDeleteMessage({ type: 'error', text: data.error || 'Failed to delete Yield logs' });
+            }
+        } catch (error) {
+            setDeleteMessage({ type: 'error', text: 'Network error while deleting Yield logs' });
+        } finally {
+            setIsDeleting(false);
+        }
+    };
+
+    const handleDeleteCOALogs = async () => {
+        setIsDeleting(true);
+        setDeleteMessage(null);
+        setShowConfirmModal(null);
+        try {
+            const response = await fetch('/api/ingestion/logs?fileType=COA', { method: 'DELETE' });
+            const data = await response.json();
+            if (data.success) {
+                setDeleteMessage({ type: 'success', text: data.message });
+                fetchLogs();
+            } else {
+                setDeleteMessage({ type: 'error', text: data.error || 'Failed to delete COA logs' });
+            }
+        } catch (error) {
+            setDeleteMessage({ type: 'error', text: 'Network error while deleting COA logs' });
         } finally {
             setIsDeleting(false);
         }
@@ -384,6 +424,44 @@ export default function ProcessingLogsPage() {
                             }}
                         >
                             🧹 Clean Orphaned Logs
+                        </button>
+                        <button
+                            onClick={() => setShowConfirmModal('coa')}
+                            disabled={isDeleting}
+                            style={{
+                                padding: '0.625rem 1.25rem',
+                                borderRadius: 'var(--radius-md)',
+                                border: 'none',
+                                background: 'linear-gradient(135deg, #8b5cf6, #7c3aed)',
+                                color: 'white',
+                                cursor: 'pointer',
+                                fontWeight: '500',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '0.5rem',
+                                opacity: isDeleting ? 0.7 : 1,
+                            }}
+                        >
+                            🗂️ Delete COA Logs
+                        </button>
+                        <button
+                            onClick={() => setShowConfirmModal('yield')}
+                            disabled={isDeleting}
+                            style={{
+                                padding: '0.625rem 1.25rem',
+                                borderRadius: 'var(--radius-md)',
+                                border: 'none',
+                                background: 'linear-gradient(135deg, #06b6d4, #0891b2)',
+                                color: 'white',
+                                cursor: 'pointer',
+                                fontWeight: '500',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '0.5rem',
+                                opacity: isDeleting ? 0.7 : 1,
+                            }}
+                        >
+                            📊 Delete Yield Logs
                         </button>
                         <button
                             onClick={() => setShowConfirmModal('all')}
@@ -808,9 +886,9 @@ export default function ProcessingLogsPage() {
                             fontSize: '1.25rem',
                             fontWeight: '600',
                             marginBottom: '1rem',
-                            color: showConfirmModal === 'all' ? '#ef4444' : '#f59e0b',
+                            color: showConfirmModal === 'all' ? '#ef4444' : showConfirmModal === 'coa' ? '#8b5cf6' : showConfirmModal === 'yield' ? '#06b6d4' : '#f59e0b',
                         }}>
-                            {showConfirmModal === 'all' ? '⚠️ Delete ALL Processing Logs?' : '🧹 Clean Orphaned Logs?'}
+                            {showConfirmModal === 'all' ? '⚠️ Delete ALL Processing Logs?' : showConfirmModal === 'coa' ? '🗂️ Delete COA (Bulk & Finish) Logs?' : showConfirmModal === 'yield' ? '📊 Delete Yield Logs?' : '🧹 Clean Orphaned Logs?'}
                         </h3>
                         <p style={{ color: 'var(--muted-foreground)', marginBottom: '1.5rem', lineHeight: 1.6 }}>
                             {showConfirmModal === 'all' ? (
@@ -818,6 +896,16 @@ export default function ProcessingLogsPage() {
                                     This will <strong>permanently delete ALL {total} processing log(s)</strong>.
                                     This action cannot be undone. After deletion, all files will be
                                     considered as &quot;new&quot; and can be re-processed.
+                                </>
+                            ) : showConfirmModal === 'coa' ? (
+                                <>
+                                    This will <strong>delete all BULK and FINISH COA processing logs</strong>.
+                                    After deletion, those COA files can be re-uploaded without being flagged as duplicates.
+                                </>
+                            ) : showConfirmModal === 'yield' ? (
+                                <>
+                                    This will <strong>delete all Yield Statement processing logs</strong>.
+                                    After deletion, yield files can be re-processed without being flagged as duplicates.
                                 </>
                             ) : (
                                 <>
@@ -841,20 +929,24 @@ export default function ProcessingLogsPage() {
                                 Cancel
                             </button>
                             <button
-                                onClick={showConfirmModal === 'all' ? handleDeleteAll : handleDeleteOrphaned}
+                                onClick={showConfirmModal === 'all' ? handleDeleteAll : showConfirmModal === 'coa' ? handleDeleteCOALogs : showConfirmModal === 'yield' ? handleDeleteYieldLogs : handleDeleteOrphaned}
                                 style={{
                                     padding: '0.625rem 1.25rem',
                                     borderRadius: 'var(--radius-md)',
                                     border: 'none',
                                     background: showConfirmModal === 'all'
                                         ? 'linear-gradient(135deg, #ef4444, #dc2626)'
+                                        : showConfirmModal === 'coa'
+                                        ? 'linear-gradient(135deg, #8b5cf6, #7c3aed)'
+                                        : showConfirmModal === 'yield'
+                                        ? 'linear-gradient(135deg, #06b6d4, #0891b2)'
                                         : 'linear-gradient(135deg, #f59e0b, #d97706)',
                                     color: 'white',
                                     cursor: 'pointer',
                                     fontWeight: '500',
                                 }}
                             >
-                                {showConfirmModal === 'all' ? 'Delete All Logs' : 'Clean Orphaned Logs'}
+                                {showConfirmModal === 'all' ? 'Delete All Logs' : showConfirmModal === 'coa' ? 'Delete COA Logs' : showConfirmModal === 'yield' ? 'Delete Yield Logs' : 'Clean Orphaned Logs'}
                             </button>
                         </div>
                     </div>
