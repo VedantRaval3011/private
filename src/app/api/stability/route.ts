@@ -2,13 +2,13 @@ import { NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
 
-interface AstRstEntry {
+interface StabilityEntry {
     hasAccelerated: boolean;
     hasLongTerm: boolean;
 }
 
-interface AstRstResult {
-    byMfrKey: Record<string, AstRstEntry>;
+interface StabilityResult {
+    byMfrKey: Record<string, StabilityEntry>;
 }
 
 function isAcceleratedFile(filename: string): boolean {
@@ -40,13 +40,12 @@ function walkDir(dir: string): string[] {
 
 /**
  * Extract a canonical MFR key from the file's parent folder path.
- * Folders are named like "PRODUCT NAME (MFRHEBC002.01)" or "(MFCUDPH028.07)".
- * We extract the raw code (e.g. MFRHEBC002.01) and strip the 3-char prefix
- * (MFR/MFC/MFE) to get the canonical key (e.g. HEBC002.01).
+ * Folders are named like "PRODUCT NAME (MFRHDNC150.06)".
+ * We extract the raw code and strip the 3-char prefix to get the key (e.g. HDNC150.06).
  *
  * This canonical key matches the DB masterCardNo when transformed as:
  *   masterCardNo.replace(/^MF[A-Z]{1,2}\//, '').replace(/\//g, '')
- * e.g. "MFC/H/EBC002.01" → "HEBC002.01"
+ * e.g. "MFC/H/DNC150.06" → "HDNC150.06"
  */
 function extractMfrKeyFromPath(filePath: string): string | null {
     const dirParts = path.dirname(filePath).split(path.sep);
@@ -62,7 +61,7 @@ function extractMfrKeyFromPath(filePath: string): string | null {
 }
 
 // Module-level cache
-let cachedResult: AstRstResult | null = null;
+let cachedResult: StabilityResult | null = null;
 let cacheTimestamp = 0;
 const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
@@ -75,18 +74,18 @@ export async function GET(request: Request) {
         return NextResponse.json({ success: true, ...cachedResult, cached: true });
     }
 
-    const astRstDir = path.join(process.cwd(), 'AST & RST');
+    const stabilityDir = path.join(process.cwd(), 'ONLY STABILITY');
 
-    if (!fs.existsSync(astRstDir)) {
+    if (!fs.existsSync(stabilityDir)) {
         return NextResponse.json({
             success: false,
-            error: 'AST & RST directory not found',
+            error: 'ONLY STABILITY directory not found',
             byMfrKey: {},
         });
     }
 
-    const files = walkDir(astRstDir);
-    const byMfrKey: Record<string, AstRstEntry> = {};
+    const files = walkDir(stabilityDir);
+    const byMfrKey: Record<string, StabilityEntry> = {};
 
     for (const filePath of files) {
         const filename = path.basename(filePath);

@@ -207,15 +207,26 @@ interface FormulaListResponse {
     ppmCoaInwardQualifiedBatchNumbersList?: string[];
 }
 
-interface AstRstEntry {
+interface DocEntry {
     hasAccelerated: boolean;
     hasLongTerm: boolean;
-    mfrNo: string;
 }
 
 interface AstRstData {
-    byMfr: Record<string, AstRstEntry>;
-    byProductCode: Record<string, AstRstEntry>;
+    byMfrKey: Record<string, DocEntry>;
+}
+
+interface StabilityData {
+    byMfrKey: Record<string, DocEntry>;
+}
+
+/**
+ * Convert a masterCardNo (e.g. "MFC/H/DNC150.06") to the canonical key
+ * used by both the AST & RST and ONLY STABILITY API routes.
+ * Strips "MF<one letter>/" prefix then all remaining slashes → "HDNC150.06"
+ */
+function toMfrKey(masterCardNo: string): string {
+    return masterCardNo.replace(/^MF[A-Z]\//, '').replace(/\//g, '');
 }
 
 // ============================================
@@ -974,10 +985,14 @@ function APQRPreviewModal({ isOpen, onClose, data, isLoading, onGenerate, produc
 export default function FormulaDataPage() {
     const [formulas, setFormulas] = useState<FormulaRecord[]>([]);
     const [isLoading, setIsLoading] = useState(true);
-    const [astRstData, setAstRstData] = useState<AstRstData>({ byMfr: {}, byProductCode: {} });
+    const [astRstData, setAstRstData] = useState<AstRstData>({ byMfrKey: {} });
     const [astRstLoading, setAstRstLoading] = useState(false);
     const [astRstScannedFiles, setAstRstScannedFiles] = useState<number | null>(null);
     const [astRstLastLoaded, setAstRstLastLoaded] = useState<Date | null>(null);
+    const [stabilityData, setStabilityData] = useState<StabilityData>({ byMfrKey: {} });
+    const [stabilityLoading, setStabilityLoading] = useState(false);
+    const [stabilityScannedFiles, setStabilityScannedFiles] = useState<number | null>(null);
+    const [stabilityLastLoaded, setStabilityLastLoaded] = useState<Date | null>(null);
     const [expandedMfc, setExpandedMfc] = useState<string | null>(null);
     const [searchTerm, setSearchTerm] = useState('');
     const [selectedManufacturer, setSelectedManufacturer] = useState<string | null>(null);
@@ -1286,6 +1301,8 @@ export default function FormulaDataPage() {
     const [showMfcSummaryTable, setShowMfcSummaryTable] = useState(false);
     const [showAstRstAnalysis, setShowAstRstAnalysis] = useState(false);
     const [astRstAnalysisTab, setAstRstAnalysisTab] = useState<'missing' | 'orphaned' | 'found'>('missing');
+    const [showStabilityAnalysis, setShowStabilityAnalysis] = useState(false);
+    const [stabilityAnalysisTab, setStabilityAnalysisTab] = useState<'missing' | 'orphaned' | 'found'>('missing');
     const [mfcTableSortColumn, setMfcTableSortColumn] = useState<'sr' | 'mfc' | 'product' | 'batches'>('sr');
     const [mfcTableSortDirection, setMfcTableSortDirection] = useState<'asc' | 'desc'>('asc');
 
@@ -1786,9 +1803,20 @@ export default function FormulaDataPage() {
             .then(r => r.json())
             .then(d => {
                 if (d.success) {
-                    setAstRstData({ byMfr: d.byMfr, byProductCode: d.byProductCode });
+                    setAstRstData({ byMfrKey: d.byMfrKey ?? {} });
                     setAstRstScannedFiles(d.scannedFiles ?? null);
                     setAstRstLastLoaded(new Date());
+                }
+            })
+            .catch(() => { /* silently ignore if unavailable */ });
+        // Fetch ONLY STABILITY availability data
+        fetch('/api/stability')
+            .then(r => r.json())
+            .then(d => {
+                if (d.success) {
+                    setStabilityData({ byMfrKey: d.byMfrKey ?? {} });
+                    setStabilityScannedFiles(d.scannedFiles ?? null);
+                    setStabilityLastLoaded(new Date());
                 }
             })
             .catch(() => { /* silently ignore if unavailable */ });
@@ -5503,23 +5531,11 @@ export default function FormulaDataPage() {
         if (searchTerm) {
             const term = searchTerm.toLowerCase();
 
-            // Build a set of product codes matched via MFR No. in AST/RST docs
-            const mfrMatchedCodes = new Set<string>();
-            for (const [mfrNo, entry] of Object.entries(astRstData.byMfr)) {
-                if (mfrNo.toLowerCase().includes(term)) {
-                    // Find all product codes linked to this MFR No.
-                    for (const [code, info] of Object.entries(astRstData.byProductCode)) {
-                        if (info.mfrNo === mfrNo) mfrMatchedCodes.add(code);
-                    }
-                }
-            }
-
             result = result.filter(f =>
                 f.masterFormulaDetails.masterCardNo?.toLowerCase().includes(term) ||
                 f.masterFormulaDetails.productCode?.toLowerCase().includes(term) ||
                 f.masterFormulaDetails.productName?.toLowerCase().includes(term) ||
-                f.masterFormulaDetails.genericName?.toLowerCase().includes(term) ||
-                (mfrMatchedCodes.size > 0 && mfrMatchedCodes.has(f.masterFormulaDetails.productCode))
+                f.masterFormulaDetails.genericName?.toLowerCase().includes(term)
             );
         }
 
@@ -9675,8 +9691,12 @@ export default function FormulaDataPage() {
                     }}>
                         <span>{formula.masterFormulaDetails.productName}</span>
                         {(() => {
-                            const code = formula.masterFormulaDetails.productCode;
-                            const info = astRstData.byProductCode[code];
+                            const key = toMfrKey(formula.masterFormulaDetails.masterCardNo);
+                            const aInfo = astRstData.byMfrKey[key];
+                            const sInfo = stabilityData.byMfrKey[key];
+                            const hasAnyData = aInfo !== undefined || sInfo !== undefined;
+                            const hasAcc = (aInfo?.hasAccelerated || sInfo?.hasAccelerated) ?? false;
+                            const hasLT = (aInfo?.hasLongTerm || sInfo?.hasLongTerm) ?? false;
                             return (
                                 <div style={{ display: 'flex', gap: '4px' }}>
                                     <div style={{
@@ -9688,11 +9708,11 @@ export default function FormulaDataPage() {
                                         display: 'flex',
                                         alignItems: 'center',
                                         gap: '2px',
-                                        background: info ? (info.hasAccelerated ? 'linear-gradient(135deg, #d1fae5, #a7f3d0)' : 'linear-gradient(135deg, #fee2e2, #fecaca)') : '#f3f4f6',
-                                        color: info ? (info.hasAccelerated ? '#065f46' : '#991b1b') : '#9ca3af',
-                                        border: info ? (info.hasAccelerated ? '1px solid #6ee7b7' : '1px solid #fca5a5') : '1px solid #e5e7eb',
+                                        background: hasAnyData ? (hasAcc ? 'linear-gradient(135deg, #d1fae5, #a7f3d0)' : 'linear-gradient(135deg, #fee2e2, #fecaca)') : '#f3f4f6',
+                                        color: hasAnyData ? (hasAcc ? '#065f46' : '#991b1b') : '#9ca3af',
+                                        border: hasAnyData ? (hasAcc ? '1px solid #6ee7b7' : '1px solid #fca5a5') : '1px solid #e5e7eb',
                                     }}>
-                                        {info ? (info.hasAccelerated ? '✅' : '❌') : '—'} Acc
+                                        {hasAnyData ? (hasAcc ? '✅' : '❌') : '—'} Acc
                                     </div>
                                     <div style={{
                                         padding: '0.15rem 0.5rem',
@@ -9703,11 +9723,11 @@ export default function FormulaDataPage() {
                                         display: 'flex',
                                         alignItems: 'center',
                                         gap: '2px',
-                                        background: info ? (info.hasLongTerm ? 'linear-gradient(135deg, #dbeafe, #bfdbfe)' : 'linear-gradient(135deg, #fee2e2, #fecaca)') : '#f3f4f6',
-                                        color: info ? (info.hasLongTerm ? '#1e40af' : '#991b1b') : '#9ca3af',
-                                        border: info ? (info.hasLongTerm ? '1px solid #93c5fd' : '1px solid #fca5a5') : '1px solid #e5e7eb',
+                                        background: hasAnyData ? (hasLT ? 'linear-gradient(135deg, #dbeafe, #bfdbfe)' : 'linear-gradient(135deg, #fee2e2, #fecaca)') : '#f3f4f6',
+                                        color: hasAnyData ? (hasLT ? '#1e40af' : '#991b1b') : '#9ca3af',
+                                        border: hasAnyData ? (hasLT ? '1px solid #93c5fd' : '1px solid #fca5a5') : '1px solid #e5e7eb',
                                     }}>
-                                        {info ? (info.hasLongTerm ? '✅' : '❌') : '—'} LT
+                                        {hasAnyData ? (hasLT ? '✅' : '❌') : '—'} LT
                                     </div>
                                 </div>
                             );
@@ -9837,12 +9857,27 @@ export default function FormulaDataPage() {
             const res = await fetch('/api/ast-rst?refresh=true');
             const d = await res.json();
             if (d.success) {
-                setAstRstData({ byMfr: d.byMfr, byProductCode: d.byProductCode });
+                setAstRstData({ byMfrKey: d.byMfrKey ?? {} });
                 setAstRstScannedFiles(d.scannedFiles ?? null);
                 setAstRstLastLoaded(new Date());
             }
         } catch { /* ignore */ } finally {
             setAstRstLoading(false);
+        }
+    };
+
+    const reloadStability = async () => {
+        setStabilityLoading(true);
+        try {
+            const res = await fetch('/api/stability?refresh=true');
+            const d = await res.json();
+            if (d.success) {
+                setStabilityData({ byMfrKey: d.byMfrKey ?? {} });
+                setStabilityScannedFiles(d.scannedFiles ?? null);
+                setStabilityLastLoaded(new Date());
+            }
+        } catch { /* ignore */ } finally {
+            setStabilityLoading(false);
         }
     };
 
@@ -10326,6 +10361,50 @@ export default function FormulaDataPage() {
                             )}
                             {astRstLastLoaded && (
                                 <span> · {astRstLastLoaded.toLocaleTimeString()}</span>
+                            )}
+                        </div>
+                    </div>
+
+                    {/* Reload Stability Button */}
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
+                        <button
+                            onClick={reloadStability}
+                            disabled={stabilityLoading}
+                            title="Force re-scan the ONLY STABILITY folder for new documents"
+                            style={{
+                                padding: '0.6rem 1rem',
+                                borderRadius: '12px',
+                                border: '1px solid rgba(255,255,255,0.35)',
+                                background: stabilityLoading
+                                    ? 'rgba(255,255,255,0.1)'
+                                    : 'linear-gradient(135deg, rgba(255,255,255,0.25) 0%, rgba(255,255,255,0.12) 100%)',
+                                color: 'white',
+                                fontSize: '0.72rem',
+                                fontWeight: '700',
+                                cursor: stabilityLoading ? 'not-allowed' : 'pointer',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '6px',
+                                backdropFilter: 'blur(12px)',
+                                boxShadow: '0 2px 8px rgba(0,0,0,0.1), inset 0 1px 0 rgba(255,255,255,0.2)',
+                                transition: 'all 0.2s ease',
+                                opacity: stabilityLoading ? 0.7 : 1,
+                                whiteSpace: 'nowrap',
+                            }}
+                            onMouseEnter={e => { if (!stabilityLoading) e.currentTarget.style.background = 'linear-gradient(135deg, rgba(255,255,255,0.35) 0%, rgba(255,255,255,0.2) 100%)'; }}
+                            onMouseLeave={e => { if (!stabilityLoading) e.currentTarget.style.background = 'linear-gradient(135deg, rgba(255,255,255,0.25) 0%, rgba(255,255,255,0.12) 100%)'; }}
+                        >
+                            <span style={{ fontSize: '0.9rem', display: 'inline-block', animation: stabilityLoading ? 'spin 1s linear infinite' : 'none' }}>
+                                {stabilityLoading ? '⟳' : '🔄'}
+                            </span>
+                            {stabilityLoading ? 'Scanning...' : 'Reload Stability'}
+                        </button>
+                        <div style={{ fontSize: '0.6rem', color: 'rgba(255,255,255,0.7)', textAlign: 'center' }}>
+                            {stabilityScannedFiles !== null && (
+                                <span>{stabilityScannedFiles} files</span>
+                            )}
+                            {stabilityLastLoaded && (
+                                <span> · {stabilityLastLoaded.toLocaleTimeString()}</span>
                             )}
                         </div>
                     </div>
@@ -11350,6 +11429,64 @@ export default function FormulaDataPage() {
                                 MFC Summary Table
                             </button>
 
+                            {/* ONLY STABILITY Analysis Button */}
+                            <button
+                                onClick={() => setShowStabilityAnalysis(true)}
+                                style={{
+                                    padding: '0.75rem 1rem',
+                                    borderRadius: 'var(--radius-md)',
+                                    border: '1px solid #10b981',
+                                    background: 'linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%)',
+                                    color: '#047857',
+                                    cursor: 'pointer',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '0.5rem',
+                                    fontWeight: '600',
+                                    fontSize: '0.9rem',
+                                    transition: 'all 0.2s ease',
+                                    boxShadow: '0 2px 8px rgba(16, 185, 129, 0.25)',
+                                    position: 'relative' as const,
+                                }}
+                                onMouseEnter={(e) => {
+                                    e.currentTarget.style.transform = 'scale(1.02)';
+                                    e.currentTarget.style.boxShadow = '0 4px 12px rgba(16, 185, 129, 0.35)';
+                                }}
+                                onMouseLeave={(e) => {
+                                    e.currentTarget.style.transform = 'scale(1)';
+                                    e.currentTarget.style.boxShadow = '0 2px 8px rgba(16, 185, 129, 0.25)';
+                                }}
+                            >
+                                <span style={{ fontSize: '1.1rem' }}>🌡️</span>
+                                ONLY STABILITY Analysis
+                                {(() => {
+                                    const missing = formulas.filter(f => {
+                                        const key = toMfrKey(f.masterFormulaDetails.masterCardNo);
+                                        const sInfo = stabilityData.byMfrKey[key];
+                                        const hasAcc = sInfo?.hasAccelerated ?? false;
+                                        const hasLT = sInfo?.hasLongTerm ?? false;
+                                        return !hasAcc || !hasLT;
+                                    }).length;
+                                    return missing > 0 ? (
+                                        <span style={{
+                                            position: 'absolute',
+                                            top: '-6px',
+                                            right: '-6px',
+                                            background: '#ef4444',
+                                            color: 'white',
+                                            borderRadius: '50%',
+                                            width: '18px',
+                                            height: '18px',
+                                            fontSize: '0.6rem',
+                                            fontWeight: '800',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
+                                        }}>{missing}</span>
+                                    ) : null;
+                                })()}
+                            </button>
+
                             {/* AST & RST Analysis Button */}
                             <button
                                 onClick={() => setShowAstRstAnalysis(true)}
@@ -11382,8 +11519,12 @@ export default function FormulaDataPage() {
                                 AST & RST Analysis
                                 {(() => {
                                     const missing = formulas.filter(f => {
-                                        const info = astRstData.byProductCode[f.masterFormulaDetails.productCode];
-                                        return !info || !info.hasAccelerated || !info.hasLongTerm;
+                                        const key = toMfrKey(f.masterFormulaDetails.masterCardNo);
+                                        const aInfo = astRstData.byMfrKey[key];
+                                        const sInfo = stabilityData.byMfrKey[key];
+                                        const hasAcc = (aInfo?.hasAccelerated || sInfo?.hasAccelerated) ?? false;
+                                        const hasLT = (aInfo?.hasLongTerm || sInfo?.hasLongTerm) ?? false;
+                                        return !hasAcc || !hasLT;
                                     }).length;
                                     return missing > 0 ? (
                                         <span style={{
@@ -11684,8 +11825,12 @@ export default function FormulaDataPage() {
                                                     <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                                                         <span>{formula.masterFormulaDetails.productName}</span>
                                                         {(() => {
-                                                            const code = formula.masterFormulaDetails.productCode;
-                                                            const info = astRstData.byProductCode[code];
+                                                            const key = toMfrKey(formula.masterFormulaDetails.masterCardNo);
+                                                            const aInfo = astRstData.byMfrKey[key];
+                                                            const sInfo = stabilityData.byMfrKey[key];
+                                                            const hasAnyData = aInfo !== undefined || sInfo !== undefined;
+                                                            const hasAcc = (aInfo?.hasAccelerated || sInfo?.hasAccelerated) ?? false;
+                                                            const hasLT = (aInfo?.hasLongTerm || sInfo?.hasLongTerm) ?? false;
                                                             return (
                                                                 <div style={{ display: 'flex', gap: '4px' }}>
                                                                     <div style={{
@@ -11697,11 +11842,11 @@ export default function FormulaDataPage() {
                                                                         display: 'flex',
                                                                         alignItems: 'center',
                                                                         gap: '2px',
-                                                                        background: info ? (info.hasAccelerated ? 'linear-gradient(135deg, #d1fae5, #a7f3d0)' : 'linear-gradient(135deg, #fee2e2, #fecaca)') : '#f3f4f6',
-                                                                        color: info ? (info.hasAccelerated ? '#065f46' : '#991b1b') : '#9ca3af',
-                                                                        border: info ? (info.hasAccelerated ? '1px solid #6ee7b7' : '1px solid #fca5a5') : '1px solid #e5e7eb',
+                                                                        background: hasAnyData ? (hasAcc ? 'linear-gradient(135deg, #d1fae5, #a7f3d0)' : 'linear-gradient(135deg, #fee2e2, #fecaca)') : '#f3f4f6',
+                                                                        color: hasAnyData ? (hasAcc ? '#065f46' : '#991b1b') : '#9ca3af',
+                                                                        border: hasAnyData ? (hasAcc ? '1px solid #6ee7b7' : '1px solid #fca5a5') : '1px solid #e5e7eb',
                                                                     }}>
-                                                                        {info ? (info.hasAccelerated ? '✅' : '❌') : '—'} Acc
+                                                                        {hasAnyData ? (hasAcc ? '✅' : '❌') : '—'} Acc
                                                                     </div>
                                                                     <div style={{
                                                                         padding: '0.15rem 0.5rem',
@@ -11712,11 +11857,11 @@ export default function FormulaDataPage() {
                                                                         display: 'flex',
                                                                         alignItems: 'center',
                                                                         gap: '2px',
-                                                                        background: info ? (info.hasLongTerm ? 'linear-gradient(135deg, #dbeafe, #bfdbfe)' : 'linear-gradient(135deg, #fee2e2, #fecaca)') : '#f3f4f6',
-                                                                        color: info ? (info.hasLongTerm ? '#1e40af' : '#991b1b') : '#9ca3af',
-                                                                        border: info ? (info.hasLongTerm ? '1px solid #93c5fd' : '1px solid #fca5a5') : '1px solid #e5e7eb',
+                                                                        background: hasAnyData ? (hasLT ? 'linear-gradient(135deg, #dbeafe, #bfdbfe)' : 'linear-gradient(135deg, #fee2e2, #fecaca)') : '#f3f4f6',
+                                                                        color: hasAnyData ? (hasLT ? '#1e40af' : '#991b1b') : '#9ca3af',
+                                                                        border: hasAnyData ? (hasLT ? '1px solid #93c5fd' : '1px solid #fca5a5') : '1px solid #e5e7eb',
                                                                     }}>
-                                                                        {info ? (info.hasLongTerm ? '✅' : '❌') : '—'} LT
+                                                                        {hasAnyData ? (hasLT ? '✅' : '❌') : '—'} LT
                                                                     </div>
                                                                 </div>
                                                             );
@@ -12525,18 +12670,22 @@ export default function FormulaDataPage() {
                                                             <InfoRow label="Effective Batch No" value={formula.masterFormulaDetails.effectiveBatchNo} />
                                                             <InfoRow label="Date" value={formula.masterFormulaDetails.date} />
                                                             {(() => {
-                                                                const code = formula.masterFormulaDetails.productCode;
-                                                                const info = astRstData.byProductCode[code];
+                                                                const key = toMfrKey(formula.masterFormulaDetails.masterCardNo);
+                                                                const aInfo = astRstData.byMfrKey[key];
+                                                                const sInfo = stabilityData.byMfrKey[key];
+                                                                const hasAnyData = aInfo !== undefined || sInfo !== undefined;
+                                                                const hasAcc = (aInfo?.hasAccelerated || sInfo?.hasAccelerated) ?? false;
+                                                                const hasLT = (aInfo?.hasLongTerm || sInfo?.hasLongTerm) ?? false;
                                                                 return (
                                                                     <>
                                                                         <InfoRow label="Accelerated Stability" value={
-                                                                            info
-                                                                                ? (info.hasAccelerated ? '✅ Available' : '❌ Not Available')
+                                                                            hasAnyData
+                                                                                ? (hasAcc ? '✅ Available' : '❌ Not Available')
                                                                                 : '— Not Linked'
                                                                         } />
                                                                         <InfoRow label="Long-Term Stability" value={
-                                                                            info
-                                                                                ? (info.hasLongTerm ? '✅ Available' : '❌ Not Available')
+                                                                            hasAnyData
+                                                                                ? (hasLT ? '✅ Available' : '❌ Not Available')
                                                                                 : '— Not Linked'
                                                                         } />
                                                                     </>
@@ -14025,18 +14174,16 @@ export default function FormulaDataPage() {
                     return <span style={{ marginLeft: '4px' }}>{mfcTableSortDirection === 'asc' ? '↑' : '↓'}</span>;
                 };
 
-                // Pre-compute per-MFC AST/RST status (union across all product codes in each MFC)
-                // Check both fillingDetails product code and masterFormulaDetails product code
+                // Pre-compute per-MFC AST/RST + Stability status (union from both sources)
                 const mfcAstRstStatus: Record<string, { hasAccelerated: boolean; hasLongTerm: boolean }> = {};
                 sortedData.forEach((r: any) => {
                     const mfc = r.mfc as string;
                     if (!mfcAstRstStatus[mfc]) mfcAstRstStatus[mfc] = { hasAccelerated: false, hasLongTerm: false };
-                    const info = astRstData.byProductCode[r.product as string]
-                        || astRstData.byProductCode[r.masterProductCode as string];
-                    if (info) {
-                        if (info.hasAccelerated) mfcAstRstStatus[mfc].hasAccelerated = true;
-                        if (info.hasLongTerm) mfcAstRstStatus[mfc].hasLongTerm = true;
-                    }
+                    const key = toMfrKey(mfc);
+                    const aInfo = astRstData.byMfrKey[key];
+                    const sInfo = stabilityData.byMfrKey[key];
+                    if (aInfo?.hasAccelerated || sInfo?.hasAccelerated) mfcAstRstStatus[mfc].hasAccelerated = true;
+                    if (aInfo?.hasLongTerm || sInfo?.hasLongTerm) mfcAstRstStatus[mfc].hasLongTerm = true;
                 });
 
                 return (
@@ -14511,31 +14658,48 @@ export default function FormulaDataPage() {
 
             {/* AST & RST Analysis Modal */}
             {showAstRstAnalysis && (() => {
-                // Build missing data list (formulas with no/partial AST/RST)
+                // Build per-formula merged status from AST&RST + Stability
+                const getStatus = (f: typeof formulas[0]) => {
+                    const key = toMfrKey(f.masterFormulaDetails.masterCardNo);
+                    const aInfo = astRstData.byMfrKey[key];
+                    const sInfo = stabilityData.byMfrKey[key];
+                    return {
+                        linked: aInfo !== undefined || sInfo !== undefined,
+                        hasAcc: (aInfo?.hasAccelerated || sInfo?.hasAccelerated) ?? false,
+                        hasLT: (aInfo?.hasLongTerm || sInfo?.hasLongTerm) ?? false,
+                    };
+                };
+
+                // Build missing data list (formulas with no/partial AST/RST or Stability)
                 const missingList = formulas.map(f => {
-                    const code = f.masterFormulaDetails.productCode;
-                    const info = astRstData.byProductCode[code];
+                    const { linked, hasAcc, hasLT } = getStatus(f);
                     return {
                         mfc: f.masterFormulaDetails.masterCardNo || 'N/A',
-                        productCode: code,
+                        productCode: f.masterFormulaDetails.productCode,
                         productName: f.masterFormulaDetails.productName || 'N/A',
-                        hasAcc: info?.hasAccelerated ?? false,
-                        hasLT: info?.hasLongTerm ?? false,
-                        linked: !!info,
+                        hasAcc,
+                        hasLT,
+                        linked,
                     };
                 }).filter(r => !r.hasAcc || !r.hasLT);
 
-                // Build orphaned docs list (MFR nos in docs but no formula match)
-                const allFormulaCodes = new Set(formulas.map(f => f.masterFormulaDetails.productCode));
+                // Build orphaned docs list (MFR keys in docs but no formula match)
+                const allFormulaKeys = new Set(formulas.map(f => toMfrKey(f.masterFormulaDetails.masterCardNo)));
                 const orphanedDocs: { mfrNo: string; productCodes: string[]; hasAcc: boolean; hasLT: boolean }[] = [];
-                const seenMfr = new Set<string>();
-                for (const [code, info] of Object.entries(astRstData.byProductCode)) {
-                    if (!allFormulaCodes.has(code) && !seenMfr.has(info.mfrNo)) {
-                        seenMfr.add(info.mfrNo);
-                        const codesForMfr = Object.entries(astRstData.byProductCode)
-                            .filter(([, v]) => v.mfrNo === info.mfrNo)
-                            .map(([k]) => k);
-                        orphanedDocs.push({ mfrNo: info.mfrNo, productCodes: codesForMfr, hasAcc: info.hasAccelerated, hasLT: info.hasLongTerm });
+                const allDocKeys = new Set([
+                    ...Object.keys(astRstData.byMfrKey),
+                    ...Object.keys(stabilityData.byMfrKey),
+                ]);
+                for (const key of allDocKeys) {
+                    if (!allFormulaKeys.has(key)) {
+                        const aInfo = astRstData.byMfrKey[key];
+                        const sInfo = stabilityData.byMfrKey[key];
+                        orphanedDocs.push({
+                            mfrNo: key,
+                            productCodes: [],
+                            hasAcc: (aInfo?.hasAccelerated || sInfo?.hasAccelerated) ?? false,
+                            hasLT: (aInfo?.hasLongTerm || sInfo?.hasLongTerm) ?? false,
+                        });
                     }
                 }
 
@@ -14545,15 +14709,14 @@ export default function FormulaDataPage() {
 
                 // Build found list (formulas with BOTH Acc and LT)
                 const foundList = formulas.map(f => {
-                    const code = f.masterFormulaDetails.productCode;
-                    const info = astRstData.byProductCode[code];
+                    const { linked, hasAcc, hasLT } = getStatus(f);
                     return {
                         mfc: f.masterFormulaDetails.masterCardNo || 'N/A',
-                        productCode: code,
+                        productCode: f.masterFormulaDetails.productCode,
                         productName: f.masterFormulaDetails.productName || 'N/A',
-                        mfrNo: info?.mfrNo || '',
-                        hasAcc: info?.hasAccelerated ?? false,
-                        hasLT: info?.hasLongTerm ?? false,
+                        mfrNo: toMfrKey(f.masterFormulaDetails.masterCardNo),
+                        hasAcc,
+                        hasLT,
                     };
                 }).filter(r => r.hasAcc && r.hasLT);
 
@@ -14621,7 +14784,7 @@ export default function FormulaDataPage() {
                         { 'Report': '' },
                         { 'Report': 'Summary' },
                         { 'Report': `Total formulas in DB: ${formulas.length}` },
-                        { 'Report': `Product codes in AST & RST docs: ${Object.keys(astRstData.byProductCode).length}` },
+                        { 'Report': `MFR keys in AST & RST docs: ${Object.keys(astRstData.byMfrKey).length} · Stability docs: ${Object.keys(stabilityData.byMfrKey).length}` },
                         { 'Report': `Fully linked (both Acc & LT): ${foundList.length}` },
                         { 'Report': `Missing Acc and/or LT: ${missingList.length}` },
                         { 'Report': `  - Acc missing: ${missingAcc}` },
@@ -14835,7 +14998,7 @@ export default function FormulaDataPage() {
                             {/* Footer */}
                             <div style={{ padding: '0.5rem 1rem', background: '#f8fafc', borderTop: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                 <span style={{ fontSize: '0.7rem', color: '#64748b' }}>
-                                    {Object.keys(astRstData.byProductCode).length} product codes in AST & RST docs · {formulas.length} formulas in DB · ✅ {foundList.length} fully linked · ⚠️ {missingList.length} issues · 📄 {orphanedDocs.length} orphaned
+                                    {Object.keys(astRstData.byMfrKey).length} AST & RST · {Object.keys(stabilityData.byMfrKey).length} Stability · {formulas.length} formulas in DB · ✅ {foundList.length} fully linked · ⚠️ {missingList.length} issues · 📄 {orphanedDocs.length} unmatched
                                 </span>
                                 <div style={{ display: 'flex', gap: '8px' }}>
                                     <button
@@ -14845,6 +15008,358 @@ export default function FormulaDataPage() {
                                         📥 Export to Excel
                                     </button>
                                     <button onClick={() => setShowAstRstAnalysis(false)} style={{ padding: '0.3rem 0.9rem', borderRadius: '6px', border: '1px solid #e2e8f0', background: 'white', color: '#374151', cursor: 'pointer', fontSize: '0.75rem', fontWeight: '500' }}>Close</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                );
+            })()}\n\n            {/* ONLY STABILITY Analysis Modal */}
+            {showStabilityAnalysis && (() => {
+                // Build per-formula merged status from AST&RST + Stability
+                const getStatus = (f: typeof formulas[0]) => {
+                    const key = toMfrKey(f.masterFormulaDetails.masterCardNo);
+                    const sInfo = stabilityData.byMfrKey[key];
+                    return {
+                        linked: sInfo !== undefined,
+                        hasAcc: sInfo?.hasAccelerated ?? false,
+                        hasLT: sInfo?.hasLongTerm ?? false,
+                    };
+                };
+
+                // Build missing data list (formulas with no/partial ONLY STABILITY or Stability)
+                const missingList = formulas.map(f => {
+                    const { linked, hasAcc, hasLT } = getStatus(f);
+                    return {
+                        mfc: f.masterFormulaDetails.masterCardNo || 'N/A',
+                        productCode: f.masterFormulaDetails.productCode,
+                        productName: f.masterFormulaDetails.productName || 'N/A',
+                        hasAcc,
+                        hasLT,
+                        linked,
+                    };
+                }).filter(r => !r.hasAcc || !r.hasLT);
+
+                // Build orphaned docs list (MFR keys in docs but no formula match)
+                const allFormulaKeys = new Set(formulas.map(f => toMfrKey(f.masterFormulaDetails.masterCardNo)));
+                const orphanedDocs: { mfrNo: string; productCodes: string[]; hasAcc: boolean; hasLT: boolean }[] = [];
+                const allDocKeys = new Set([...Object.keys(stabilityData.byMfrKey)]);
+                for (const key of allDocKeys) {
+                    if (!allFormulaKeys.has(key)) {
+                        const sInfo = stabilityData.byMfrKey[key];
+                        orphanedDocs.push({
+                            mfrNo: key,
+                            productCodes: [],
+                            hasAcc: sInfo?.hasAccelerated ?? false,
+                            hasLT: sInfo?.hasLongTerm ?? false,
+                        });
+                    }
+                }
+
+                const missingAcc = missingList.filter(r => !r.hasAcc).length;
+                const missingLT = missingList.filter(r => !r.hasLT).length;
+                const notLinked = missingList.filter(r => !r.linked).length;
+
+                // Build found list (formulas with BOTH Acc and LT)
+                const foundList = formulas.map(f => {
+                    const { linked, hasAcc, hasLT } = getStatus(f);
+                    return {
+                        mfc: f.masterFormulaDetails.masterCardNo || 'N/A',
+                        productCode: f.masterFormulaDetails.productCode,
+                        productName: f.masterFormulaDetails.productName || 'N/A',
+                        mfrNo: toMfrKey(f.masterFormulaDetails.masterCardNo),
+                        hasAcc,
+                        hasLT,
+                    };
+                }).filter(r => r.hasAcc && r.hasLT);
+
+                const thStyle: React.CSSProperties = {
+                    padding: '0.5rem 0.75rem', textAlign: 'left', fontWeight: '700',
+                    fontSize: '0.7rem', color: '#64748b', textTransform: 'uppercase',
+                    borderBottom: '2px solid #e2e8f0', whiteSpace: 'nowrap', background: '#f8fafc',
+                };
+                const tdStyle: React.CSSProperties = {
+                    padding: '0.45rem 0.75rem', borderBottom: '1px solid #f1f5f9',
+                    fontSize: '0.78rem', verticalAlign: 'middle',
+                };
+
+                const exportToExcel = async () => {
+                    const XLSX = await import('xlsx');
+                    const wb = XLSX.utils.book_new();
+
+                    // Sheet 1: Missing Acc / LT
+                    const missingRows = missingList.map((r, i) => ({
+                        '#': i + 1,
+                        'MFC Number': r.mfc,
+                        'Product Code': r.productCode,
+                        'Product Name': r.productName,
+                        'Acc Format': r.hasAcc ? 'YES' : (r.linked ? 'MISSING' : 'No Doc'),
+                        'LT Format': r.hasLT ? 'YES' : (r.linked ? 'MISSING' : 'No Doc'),
+                        'Status': !r.linked ? 'No ONLY STABILITY docs found'
+                            : !r.hasAcc && !r.hasLT ? 'Both missing'
+                            : !r.hasAcc ? 'Acc missing'
+                            : 'LT missing',
+                    }));
+                    const ws1 = XLSX.utils.json_to_sheet(missingRows);
+                    ws1['!cols'] = [{ wch: 4 }, { wch: 22 }, { wch: 16 }, { wch: 40 }, { wch: 12 }, { wch: 12 }, { wch: 22 }];
+                    XLSX.utils.book_append_sheet(wb, ws1, 'Missing Acc-LT');
+
+                    // Sheet 2: Fully Linked
+                    const foundRows = foundList.map((r, i) => ({
+                        '#': i + 1,
+                        'MFC Number': r.mfc,
+                        'MFR No. (in Doc)': r.mfrNo,
+                        'Product Code': r.productCode,
+                        'Product Name': r.productName,
+                        'Acc Format': 'YES',
+                        'LT Format': 'YES',
+                    }));
+                    const ws2 = XLSX.utils.json_to_sheet(foundRows);
+                    ws2['!cols'] = [{ wch: 4 }, { wch: 22 }, { wch: 22 }, { wch: 16 }, { wch: 40 }, { wch: 12 }, { wch: 12 }];
+                    XLSX.utils.book_append_sheet(wb, ws2, 'Fully Linked');
+
+                    // Sheet 3: Orphaned Docs
+                    const orphanedRows = orphanedDocs.map((r, i) => ({
+                        '#': i + 1,
+                        'MFR No. (in Doc)': r.mfrNo,
+                        'Product Codes in Doc': r.productCodes.join(', '),
+                        'Acc Format': r.hasAcc ? 'YES' : 'NO',
+                        'LT Format': r.hasLT ? 'YES' : 'NO',
+                    }));
+                    const ws3 = XLSX.utils.json_to_sheet(orphanedRows);
+                    ws3['!cols'] = [{ wch: 4 }, { wch: 24 }, { wch: 30 }, { wch: 12 }, { wch: 12 }];
+                    XLSX.utils.book_append_sheet(wb, ws3, 'Docs Without Formula Match');
+
+                    // Summary sheet
+                    const summaryRows = [
+                        { 'Report': 'ONLY STABILITY Analysis Report' },
+                        { 'Report': `Generated: ${new Date().toLocaleString()}` },
+                        { 'Report': '' },
+                        { 'Report': 'Summary' },
+                        { 'Report': `Total formulas in DB: ${formulas.length}` },
+                        { 'Report': `MFR keys in ONLY STABILITY docs: ${Object.keys(stabilityData.byMfrKey).length}` },
+                        { 'Report': `Fully linked (both Acc & LT): ${foundList.length}` },
+                        { 'Report': `Missing Acc and/or LT: ${missingList.length}` },
+                        { 'Report': `  - Acc missing: ${missingAcc}` },
+                        { 'Report': `  - LT missing: ${missingLT}` },
+                        { 'Report': `  - No docs at all: ${notLinked}` },
+                        { 'Report': `Orphaned docs (not in DB): ${orphanedDocs.length}` },
+                    ];
+                    const ws0 = XLSX.utils.json_to_sheet(summaryRows, { skipHeader: true });
+                    ws0['!cols'] = [{ wch: 50 }];
+                    XLSX.utils.book_append_sheet(wb, ws0, 'Summary');
+
+                    // Move Summary to front
+                    wb.SheetNames = ['Summary', 'Missing Acc-LT', 'Fully Linked', 'Docs Without Formula Match'];
+
+                    XLSX.writeFile(wb, `ONLY_STABILITY_Analysis_${new Date().toISOString().slice(0, 10)}.xlsx`);
+                };
+
+                return (
+                    <div
+                        style={{ position: 'fixed', inset: 0, zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0.5rem' }}
+                        onClick={() => setShowStabilityAnalysis(false)}
+                    >
+                        <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.5)' }} />
+                        <div
+                            style={{ position: 'relative', background: 'white', borderRadius: '12px', width: '100%', maxWidth: '1000px', maxHeight: '92vh', display: 'flex', flexDirection: 'column', boxShadow: '0 25px 50px rgba(0,0,0,0.25)', overflow: 'hidden' }}
+                            onClick={e => e.stopPropagation()}
+                        >
+                            {/* Header */}
+                            <div style={{ padding: '0.75rem 1rem', background: 'linear-gradient(135deg, #047857 0%, #10b981 100%)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                    <span style={{ fontSize: '1.1rem' }}>🌡️</span>
+                                    <span style={{ fontSize: '1rem', fontWeight: '700', color: 'white' }}>ONLY STABILITY Analysis</span>
+                                    <span style={{ padding: '2px 8px', background: 'rgba(255,255,255,0.2)', borderRadius: '10px', fontSize: '0.7rem', color: 'white', fontWeight: '600' }}>
+                                        {missingList.length} issues
+                                    </span>
+                                </div>
+                                <button onClick={() => setShowStabilityAnalysis(false)} style={{ width: '28px', height: '28px', border: 'none', background: 'rgba(255,255,255,0.2)', color: 'white', borderRadius: '6px', cursor: 'pointer', fontSize: '1rem' }}>✕</button>
+                            </div>
+
+                            {/* Tabs */}
+                            <div style={{ display: 'flex', borderBottom: '2px solid #e2e8f0', background: '#fafafa' }}>
+                                {([
+                                    { key: 'missing', label: `Missing Acc / LT (${missingList.length})`, icon: '⚠️' },
+                                    { key: 'found', label: `Fully Linked (${foundList.length})`, icon: '✅' },
+                                    { key: 'orphaned', label: `Docs Without Formula Match (${orphanedDocs.length})`, icon: '📄' },
+                                ] as const).map(tab => (
+                                    <button
+                                        key={tab.key}
+                                        onClick={() => setStabilityAnalysisTab(tab.key)}
+                                        style={{
+                                            padding: '0.6rem 1.25rem', border: 'none', cursor: 'pointer', fontSize: '0.8rem', fontWeight: '600',
+                                            background: stabilityAnalysisTab === tab.key ? 'white' : 'transparent',
+                                            color: stabilityAnalysisTab === tab.key ? (tab.key === 'found' ? '#065f46' : '#047857') : '#64748b',
+                                            borderBottom: stabilityAnalysisTab === tab.key ? `2px solid ${tab.key === 'found' ? '#059669' : '#10b981'}` : '2px solid transparent',
+                                            marginBottom: '-2px', display: 'flex', alignItems: 'center', gap: '6px',
+                                        }}
+                                    >
+                                        {tab.icon} {tab.label}
+                                    </button>
+                                ))}
+                            </div>
+
+                            {/* Content */}
+                            <div style={{ flex: 1, overflow: 'auto' }}>
+                                {stabilityAnalysisTab === 'missing' && (
+                                    <>
+                                        {/* Summary chips */}
+                                        <div style={{ display: 'flex', gap: '8px', padding: '10px 12px', background: '#fffbeb', borderBottom: '1px solid #fde68a' }}>
+                                            <span style={{ padding: '3px 10px', borderRadius: '10px', background: '#fee2e2', color: '#991b1b', fontSize: '0.7rem', fontWeight: '700' }}>❌ Acc missing: {missingAcc}</span>
+                                            <span style={{ padding: '3px 10px', borderRadius: '10px', background: '#fee2e2', color: '#991b1b', fontSize: '0.7rem', fontWeight: '700' }}>❌ LT missing: {missingLT}</span>
+                                            <span style={{ padding: '3px 10px', borderRadius: '10px', background: '#f3f4f6', color: '#374151', fontSize: '0.7rem', fontWeight: '700' }}>— Not linked: {notLinked}</span>
+                                        </div>
+                                        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                                            <thead>
+                                                <tr>
+                                                    <th style={thStyle}>#</th>
+                                                    <th style={thStyle}>MFC Number</th>
+                                                    <th style={thStyle}>Product Code</th>
+                                                    <th style={thStyle}>Product Name</th>
+                                                    <th style={{ ...thStyle, textAlign: 'center' }}>Acc Format</th>
+                                                    <th style={{ ...thStyle, textAlign: 'center' }}>LT Format</th>
+                                                    <th style={thStyle}>Status</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {missingList.map((r, i) => (
+                                                    <tr key={i} style={{ background: i % 2 === 0 ? 'white' : '#fafafa' }}>
+                                                        <td style={{ ...tdStyle, color: '#94a3b8', width: '36px' }}>{i + 1}</td>
+                                                        <td style={{ ...tdStyle, fontFamily: 'monospace', fontWeight: '700', color: '#7c3aed', whiteSpace: 'nowrap' }}>{r.mfc}</td>
+                                                        <td style={{ ...tdStyle, fontFamily: 'monospace', color: '#0891b2', whiteSpace: 'nowrap' }}>{r.productCode}</td>
+                                                        <td style={{ ...tdStyle, color: '#374151', maxWidth: '220px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.productName}>{r.productName}</td>
+                                                        <td style={{ ...tdStyle, textAlign: 'center' }}>
+                                                            <span style={{ padding: '2px 8px', borderRadius: '8px', fontSize: '0.7rem', fontWeight: '700', background: r.hasAcc ? '#d1fae5' : (r.linked ? '#fee2e2' : '#f3f4f6'), color: r.hasAcc ? '#065f46' : (r.linked ? '#991b1b' : '#9ca3af') }}>
+                                                                {r.hasAcc ? '✅' : (r.linked ? '❌' : '—')}
+                                                            </span>
+                                                        </td>
+                                                        <td style={{ ...tdStyle, textAlign: 'center' }}>
+                                                            <span style={{ padding: '2px 8px', borderRadius: '8px', fontSize: '0.7rem', fontWeight: '700', background: r.hasLT ? '#dbeafe' : (r.linked ? '#fee2e2' : '#f3f4f6'), color: r.hasLT ? '#1e40af' : (r.linked ? '#991b1b' : '#9ca3af') }}>
+                                                                {r.hasLT ? '✅' : (r.linked ? '❌' : '—')}
+                                                            </span>
+                                                        </td>
+                                                        <td style={tdStyle}>
+                                                            {!r.linked
+                                                                ? <span style={{ fontSize: '0.7rem', color: '#6b7280', fontStyle: 'italic' }}>No ONLY STABILITY docs found</span>
+                                                                : !r.hasAcc && !r.hasLT
+                                                                    ? <span style={{ fontSize: '0.7rem', color: '#dc2626', fontWeight: '600' }}>Both missing</span>
+                                                                    : !r.hasAcc
+                                                                        ? <span style={{ fontSize: '0.7rem', color: '#d97706', fontWeight: '600' }}>Acc missing</span>
+                                                                        : <span style={{ fontSize: '0.7rem', color: '#2563eb', fontWeight: '600' }}>LT missing</span>
+                                                            }
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                        {missingList.length === 0 && (
+                                            <div style={{ padding: '3rem', textAlign: 'center', color: '#059669', fontSize: '1rem', fontWeight: '600' }}>
+                                                ✅ All MFCs have both Accelerated and Long-Term formats linked!
+                                            </div>
+                                        )}
+                                    </>
+                                )}
+
+                                {stabilityAnalysisTab === 'found' && (
+                                    <>
+                                        <div style={{ padding: '10px 12px', background: '#f0fdf4', borderBottom: '1px solid #a7f3d0', fontSize: '0.75rem', color: '#065f46', fontWeight: '600' }}>
+                                            ✅ {foundList.length} formula{foundList.length !== 1 ? 's' : ''} fully linked — both Accelerated and Long-Term formats available.
+                                        </div>
+                                        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                                            <thead>
+                                                <tr>
+                                                    <th style={thStyle}>#</th>
+                                                    <th style={thStyle}>MFC Number</th>
+                                                    <th style={thStyle}>MFR No. (in Doc)</th>
+                                                    <th style={thStyle}>Product Code</th>
+                                                    <th style={thStyle}>Product Name</th>
+                                                    <th style={{ ...thStyle, textAlign: 'center' }}>Acc Format</th>
+                                                    <th style={{ ...thStyle, textAlign: 'center' }}>LT Format</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {foundList.map((r, i) => (
+                                                    <tr key={i} style={{ background: i % 2 === 0 ? 'white' : '#f9fffe' }}>
+                                                        <td style={{ ...tdStyle, color: '#94a3b8', width: '36px' }}>{i + 1}</td>
+                                                        <td style={{ ...tdStyle, fontFamily: 'monospace', fontWeight: '700', color: '#7c3aed', whiteSpace: 'nowrap' }}>{r.mfc}</td>
+                                                        <td style={{ ...tdStyle, fontFamily: 'monospace', color: '#047857', whiteSpace: 'nowrap' }}>{r.mfrNo || '—'}</td>
+                                                        <td style={{ ...tdStyle, fontFamily: 'monospace', color: '#0891b2', whiteSpace: 'nowrap' }}>{r.productCode}</td>
+                                                        <td style={{ ...tdStyle, color: '#374151', maxWidth: '220px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.productName}>{r.productName}</td>
+                                                        <td style={{ ...tdStyle, textAlign: 'center' }}>
+                                                            <span style={{ padding: '2px 8px', borderRadius: '8px', fontSize: '0.7rem', fontWeight: '700', background: '#d1fae5', color: '#065f46' }}>✅</span>
+                                                        </td>
+                                                        <td style={{ ...tdStyle, textAlign: 'center' }}>
+                                                            <span style={{ padding: '2px 8px', borderRadius: '8px', fontSize: '0.7rem', fontWeight: '700', background: '#dbeafe', color: '#1e40af' }}>✅</span>
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                        {foundList.length === 0 && (
+                                            <div style={{ padding: '3rem', textAlign: 'center', color: '#64748b', fontSize: '1rem' }}>
+                                                No formulas are fully linked yet.
+                                            </div>
+                                        )}
+                                    </>
+                                )}
+
+                                {stabilityAnalysisTab === 'orphaned' && (
+                                    <>
+                                        <div style={{ padding: '10px 12px', background: '#fff7ed', borderBottom: '1px solid #fed7aa', fontSize: '0.75rem', color: '#92400e' }}>
+                                            📄 These MFR numbers were found inside ONLY STABILITY documents but their product codes do not match any formula in the database.
+                                        </div>
+                                        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                                            <thead>
+                                                <tr>
+                                                    <th style={thStyle}>#</th>
+                                                    <th style={thStyle}>MFR No. (in Doc)</th>
+                                                    <th style={thStyle}>Product Codes in Doc</th>
+                                                    <th style={{ ...thStyle, textAlign: 'center' }}>Acc</th>
+                                                    <th style={{ ...thStyle, textAlign: 'center' }}>LT</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {orphanedDocs.map((r, i) => (
+                                                    <tr key={i} style={{ background: i % 2 === 0 ? 'white' : '#fafafa' }}>
+                                                        <td style={{ ...tdStyle, color: '#94a3b8', width: '36px' }}>{i + 1}</td>
+                                                        <td style={{ ...tdStyle, fontFamily: 'monospace', fontWeight: '700', color: '#047857' }}>{r.mfrNo}</td>
+                                                        <td style={{ ...tdStyle, fontFamily: 'monospace', color: '#64748b' }}>{r.productCodes.join(', ')}</td>
+                                                        <td style={{ ...tdStyle, textAlign: 'center' }}>
+                                                            <span style={{ padding: '2px 8px', borderRadius: '8px', fontSize: '0.7rem', fontWeight: '700', background: r.hasAcc ? '#d1fae5' : '#fee2e2', color: r.hasAcc ? '#065f46' : '#991b1b' }}>
+                                                                {r.hasAcc ? '✅' : '❌'}
+                                                            </span>
+                                                        </td>
+                                                        <td style={{ ...tdStyle, textAlign: 'center' }}>
+                                                            <span style={{ padding: '2px 8px', borderRadius: '8px', fontSize: '0.7rem', fontWeight: '700', background: r.hasLT ? '#dbeafe' : '#fee2e2', color: r.hasLT ? '#1e40af' : '#991b1b' }}>
+                                                                {r.hasLT ? '✅' : '❌'}
+                                                            </span>
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                        {orphanedDocs.length === 0 && (
+                                            <div style={{ padding: '3rem', textAlign: 'center', color: '#059669', fontSize: '1rem', fontWeight: '600' }}>
+                                                ✅ All ONLY STABILITY documents are linked to a formula in the database!
+                                            </div>
+                                        )}
+                                    </>
+                                )}
+                            </div>
+
+                            {/* Footer */}
+                            <div style={{ padding: '0.5rem 1rem', background: '#f8fafc', borderTop: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <span style={{ fontSize: '0.7rem', color: '#64748b' }}>
+                                    {Object.keys(stabilityData.byMfrKey).length} ONLY STABILITY · {formulas.length} formulas in DB · ✅ {foundList.length} fully linked · ⚠️ {missingList.length} issues · 📄 {orphanedDocs.length} unmatched
+                                </span>
+                                <div style={{ display: 'flex', gap: '8px' }}>
+                                    <button
+                                        onClick={exportToExcel}
+                                        style={{ padding: '0.3rem 0.9rem', borderRadius: '6px', border: '1px solid #16a34a', background: 'linear-gradient(135deg, #16a34a, #15803d)', color: 'white', cursor: 'pointer', fontSize: '0.75rem', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '5px' }}
+                                    >
+                                        📥 Export to Excel
+                                    </button>
+                                    <button onClick={() => setShowStabilityAnalysis(false)} style={{ padding: '0.3rem 0.9rem', borderRadius: '6px', border: '1px solid #e2e8f0', background: 'white', color: '#374151', cursor: 'pointer', fontSize: '0.75rem', fontWeight: '500' }}>Close</button>
                                 </div>
                             </div>
                         </div>
