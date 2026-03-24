@@ -28,6 +28,7 @@ export interface InwardRegisterRecord {
     // Metadata
     sourceFile: string;
     uploadedAt: Date;
+    manufacturedBy?: string;
     contentHash?: string;
     parsingStatus?: 'success' | 'partial' | 'failed';
     parsingWarnings?: string[];

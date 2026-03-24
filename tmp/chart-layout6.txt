@@ -1,0 +1,6 @@
+START: 924276
+TEXT: Process Capability parameters  | DRAW: false | rId: none
+TEXT: Process Performance parameters (Long-Term Statistics) | DRAW: false | rId: none
+TEXT: Limit for Process Capability &amp; Performance parameters (Cp, Cpk, and Pp, Ppk) | DRAW: false | rId: none
+TEXT: Process is not capable  | DRAW: false | rId: none
+TEXT: Process is capable | DRAW: false | rId: none

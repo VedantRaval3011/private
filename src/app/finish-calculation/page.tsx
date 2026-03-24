@@ -5,10 +5,15 @@ import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import katex from 'katex';
 import 'katex/dist/katex.min.css';
+import {
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
+  ResponsiveContainer, ReferenceLine,
+} from 'recharts';
 
 // ─── Types ───
 interface FinishInProcessColumn {
   key: string;
+  type: string;
   name: string;
   limit: string;
   isQuantifiable: boolean;
@@ -139,6 +144,33 @@ function calculateProcessCapability(data: number[], limitStr: string): ProcessCa
   return { average, max, min, lsl, usl, sigmaEstimated: sigmaEst, sigmaSample, cpku, cpkl, cpk, cp, ppku, ppkl, ppk, pp, isCapable };
 }
 
+// ─── Result key helper ───
+// Results in finishInProcessData are stored as row.results[col.key + '|||result']
+function resultKey(colKey: string) { return `${colKey}|||result`; }
+
+/**
+ * Smart numeric extractor for pharmaceutical result strings.
+ * When a result like "101.4% (5.07 gm)" is compared against gram-based limits (4.55–5.45),
+ * we want 5.07, not 101.4. Strategy: if a number in the string falls within the
+ * extended limit range [lsl-3×range, usl+3×range], prefer it over the first number.
+ */
+function parseResultValue(result: string, lsl: number | null, usl: number | null): number | null {
+  if (!result) return null;
+  const nums = (result.match(/[\d]+\.?[\d]*/g) || []).map(Number).filter(n => !isNaN(n) && n !== 0);
+  if (nums.length === 0) return null;
+  if (lsl !== null && usl !== null && nums.length > 1) {
+    const width = usl - lsl;
+    const lo = lsl - 3 * width;
+    const hi = usl + 3 * width;
+    const mid = (lsl + usl) / 2;
+    const inRange = nums.filter(n => n >= lo && n <= hi);
+    if (inRange.length > 0) {
+      return inRange.reduce((best, n) => Math.abs(n - mid) < Math.abs(best - mid) ? n : best);
+    }
+  }
+  return nums[0];
+}
+
 // ─── LaTeX renderer ───
 function Latex({ math, display = false }: { math: string; display?: boolean }) {
   const html = useMemo(() => {
@@ -181,6 +213,7 @@ function FinishCalculationContent() {
   
   const [finishData, setFinishData] = useState<FinishInProcessRow[]>([]);
   const [finishColumns, setFinishColumns] = useState<FinishInProcessColumn[]>([]);
+  const [allFinishColumns, setAllFinishColumns] = useState<FinishInProcessColumn[]>([]);
   const [productName, setProductName] = useState('');
   const [totalBatches, setTotalBatches] = useState('');
   const [batchSize, setBatchSize] = useState('');
@@ -209,11 +242,12 @@ function FinishCalculationContent() {
         const data = await res.json();
         if (data.error) throw new Error(data.error);
         
-        setFinishData(data.finishInProcessData || []);
-        // Only keep quantifiable columns for calculation
+        const rows: FinishInProcessRow[] = data.finishInProcessData || [];
         const allCols: FinishInProcessColumn[] = data.finishInProcessColumns || [];
+        setFinishData(rows);
+        setAllFinishColumns(allCols);
+        // Only keep quantifiable columns for CPK calculation
         setFinishColumns(allCols.filter(c => c.isQuantifiable && c.limit && c.limit !== 'N/A' && c.limit !== '-'));
-        
         setProductName(data.productName || '');
         setTotalBatches(data.totalBatches || '0');
         setBatchSize(data.batchSize || 'N/A');
@@ -228,7 +262,10 @@ function FinishCalculationContent() {
   // Compute process capability for each column
   const columnStats = useMemo(() => {
     return finishColumns.map(col => {
-      const vals = finishData.map(r => parseFloat(r.results[col.key])).filter(n => !isNaN(n));
+      const { lsl, usl } = parseLimits(col.limit || '');
+      const vals = finishData
+        .map(r => parseResultValue(r.results[resultKey(col.key)] || '', lsl, usl))
+        .filter((n): n is number => n !== null && !isNaN(n));
       return { col, stats: calculateProcessCapability(vals, col.limit || ''), vals };
     });
   }, [finishData, finishColumns]);
@@ -319,20 +356,120 @@ function FinishCalculationContent() {
             <p>{error}</p>
             <Link href="/formula-data" style={{ color: '#10b981', fontWeight: 600 }}>← Back to Formula Data</Link>
           </div>
-        ) : finishColumns.length === 0 ? (
+        ) : allFinishColumns.length === 0 ? (
           <div style={{
             background: 'white', border: '1px solid #e5e7eb', borderRadius: '16px',
             padding: '4rem 2rem', textAlign: 'center', color: '#6b7280',
             boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)'
           }}>
             <span style={{ fontSize: '3rem', display: 'block', marginBottom: '1rem' }}>🤷</span>
-            <h3 style={{ margin: '0 0 0.5rem', fontSize: '1.25rem', color: '#374151' }}>No Quantifiable Parameters Found</h3>
-            <p>We couldn't find any quantifiable Finish COA parameters (with valid numbered limits) to calculate CPK for.</p>
+            <h3 style={{ margin: '0 0 0.5rem', fontSize: '1.25rem', color: '#374151' }}>No Finish COA Data Found</h3>
+            <p>No Finish stage COA data was found for this product and year.</p>
           </div>
         ) : (
           <>
-            {/* In-Process Data Table */}
-            <SectionCard title="Section 5.3.2 — Finished Product Analysis Results" icon="🧪" gradient="linear-gradient(135deg, #059669 0%, #047857 100%)">
+            {/* Per-Batch COA Table */}
+            <SectionCard title="Section 5.3.2 — Finished Product Analysis" icon="📋" gradient="linear-gradient(135deg, #0369a1 0%, #0284c7 100%)">
+              {finishData.length === 0 ? (
+                <p style={{ color: '#6b7280', textAlign: 'center', padding: '2rem' }}>No finished product data available.</p>
+              ) : (
+                finishData.map(row => {
+                  const descCols  = allFinishColumns.filter(c => c.type === 'critical' && c.name.toUpperCase().includes('DESCRIPTION'));
+                  const idCols    = allFinishColumns.filter(c => c.type === 'identification');
+                  const critCols  = allFinishColumns.filter(c => (c.type === 'critical' || c.type === 'ph') && !c.name.toUpperCase().includes('DESCRIPTION'));
+                  const relCols   = allFinishColumns.filter(c => c.type === 'related_substance');
+                  const assayCols = allFinishColumns.filter(c => c.type === 'assay');
+
+                  const thStyle: React.CSSProperties = {
+                    padding: '0.75rem 1rem', textAlign: 'left', fontWeight: 700, color: 'white',
+                    fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em',
+                    background: 'linear-gradient(135deg, #0369a1 0%, #0284c7 100%)',
+                  };
+                  const tdBase: React.CSSProperties = {
+                    padding: '0.65rem 1rem', borderBottom: '1px solid #e0f2fe', fontSize: '0.85rem', verticalAlign: 'top',
+                  };
+                  const sectionHeaderTd: React.CSSProperties = {
+                    ...tdBase, fontWeight: 800, color: '#075985', background: '#e0f2fe',
+                    textTransform: 'uppercase', letterSpacing: '0.04em',
+                  };
+
+                  let srCounter = 0;
+                  const tableRows: React.ReactNode[] = [];
+
+                  const addRows = (cols: FinishInProcessColumn[], sectionLabel?: string) => {
+                    if (cols.length === 0) return;
+                    if (sectionLabel) {
+                      srCounter++;
+                      tableRows.push(
+                        <tr key={`hdr-${sectionLabel}`}>
+                          <td style={{ ...tdBase, textAlign: 'center', fontWeight: 700, color: '#075985', width: '50px' }}>{srCounter}</td>
+                          <td colSpan={3} style={sectionHeaderTd}>{sectionLabel}</td>
+                        </tr>
+                      );
+                      cols.forEach((col, idx) => {
+                        tableRows.push(
+                          <tr key={col.key} style={{ background: idx % 2 === 0 ? 'white' : '#f0f9ff' }}>
+                            <td style={{ ...tdBase, textAlign: 'center', color: '#64748b', fontSize: '0.78rem' }}>{idx + 1}</td>
+                            <td style={{ ...tdBase, paddingLeft: '2rem', fontStyle: 'italic' }}>{col.name}</td>
+                            <td style={{ ...tdBase, fontWeight: 600, whiteSpace: 'pre-line' }}>{row.results[resultKey(col.key)] || '-'}</td>
+                            <td style={{ ...tdBase, color: '#374151', whiteSpace: 'pre-line' }}>{col.limit || '-'}</td>
+                          </tr>
+                        );
+                      });
+                    } else {
+                      cols.forEach(col => {
+                        srCounter++;
+                        tableRows.push(
+                          <tr key={col.key} style={{ background: srCounter % 2 === 0 ? '#f0f9ff' : 'white' }}>
+                            <td style={{ ...tdBase, textAlign: 'center', fontWeight: 700, color: '#075985', width: '50px' }}>{srCounter}</td>
+                            <td style={{ ...tdBase, fontWeight: 600, textTransform: 'uppercase' }}>{col.name}</td>
+                            <td style={{ ...tdBase, fontWeight: 600, whiteSpace: 'pre-line' }}>{row.results[resultKey(col.key)] || '-'}</td>
+                            <td style={{ ...tdBase, color: '#374151', whiteSpace: 'pre-line' }}>{col.limit || '-'}</td>
+                          </tr>
+                        );
+                      });
+                    }
+                  };
+
+                  addRows(descCols);
+                  addRows(idCols, idCols.length > 0 ? 'IDENTIFICATION' : undefined);
+                  addRows(critCols);
+                  addRows(relCols, relCols.length > 0 ? 'RELATED SUBSTANCES' : undefined);
+                  addRows(assayCols, assayCols.length > 0 ? 'ASSAY' : undefined);
+
+                  return (
+                    <div key={row.batchNumber + row.arNumber} style={{ marginBottom: '2rem' }}>
+                      {/* Batch header */}
+                      <div style={{
+                        display: 'flex', gap: '1.5rem', alignItems: 'center',
+                        padding: '0.6rem 1rem', marginBottom: '0.5rem',
+                        background: '#f0f9ff', borderRadius: '8px', border: '1px solid #bae6fd',
+                      }}>
+                        <span style={{ fontWeight: 700, color: '#0369a1' }}>Batch: {row.batchNumber}</span>
+                        <span style={{ color: '#64748b', fontSize: '0.85rem' }}>AR: {row.arNumber}</span>
+                        <span style={{ color: '#64748b', fontSize: '0.85rem' }}>Batch Size: {row.batchSize || 'N/A'}</span>
+                      </div>
+                      <div style={{ overflowX: 'auto', borderRadius: '10px', border: '2px solid #0284c7', boxShadow: '0 4px 12px rgba(0,0,0,0.06)' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: '"Times New Roman", Times, serif' }}>
+                          <thead>
+                            <tr>
+                              <th style={{ ...thStyle, width: '50px', textAlign: 'center' }}>Sr.</th>
+                              <th style={thStyle}>Test</th>
+                              <th style={thStyle}>Result</th>
+                              <th style={thStyle}>Specification</th>
+                            </tr>
+                          </thead>
+                          <tbody>{tableRows}</tbody>
+                        </table>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </SectionCard>
+
+            {/* In-Process Data Table (All Batches Pivot) */}
+            <SectionCard title="Section 5.3.2 — Finished Product Analysis Results (All Batches)" icon="🧪" gradient="linear-gradient(135deg, #059669 0%, #047857 100%)">
               {finishData.length === 0 ? (
                 <p style={{ color: '#6b7280', textAlign: 'center', padding: '2rem' }}>No finished product data available.</p>
               ) : (
@@ -385,7 +522,7 @@ function FinishCalculationContent() {
                           
                           {finishColumns.map((col, ci) => (
                             <td key={ci} style={{ padding: '0.75rem 1rem', borderBottom: '1px solid rgba(16,185,129,0.15)', fontWeight: 600, textAlign: 'center' }}>
-                              {row.results[col.key] || '-'}
+                              {row.results[resultKey(col.key)] || '-'}
                             </td>
                           ))}
                         </tr>
@@ -521,6 +658,32 @@ function FinishCalculationContent() {
                 </button>
               </div>
             </SectionCard>
+
+            {/* Trend Analysis Charts */}
+            {columnStats.some(c => c.stats !== null && c.vals.length >= 1) && (
+              <SectionCard title="Trend Analysis at Finished Stage" icon="📈" gradient="linear-gradient(135deg, #0e7490 0%, #0891b2 100%)">
+                {columnStats
+                  .filter(c => c.stats !== null && c.vals.length >= 1)
+                  .map(({ col, stats, vals }) => {
+                    const batchNumbers = finishData.map(r => r.batchNumber);
+                    const valuesByBatch = finishData.map(r => {
+                      return parseResultValue(r.results[resultKey(col.key)] || '', stats!.lsl, stats!.usl);
+                    });
+                    return (
+                      <TrendAnalysisChart
+                        key={col.key}
+                        colName={col.name}
+                        batchNumbers={batchNumbers}
+                        values={valuesByBatch}
+                        lsl={stats!.lsl}
+                        usl={stats!.usl}
+                        average={stats!.average}
+                        sigmaEst={stats!.sigmaEstimated}
+                      />
+                    );
+                  })}
+              </SectionCard>
+            )}
           </>
         )}
       </div>
@@ -539,6 +702,143 @@ function FinishCalculationContent() {
           columnStats={columnStats}
         />
       )}
+    </div>
+  );
+}
+
+// ─── Trend Analysis Chart ───
+
+function TrendAnalysisChart({
+  colName, batchNumbers, values, lsl, usl, average, sigmaEst,
+}: {
+  colName: string;
+  batchNumbers: string[];
+  values: (number | null)[];
+  lsl: number | null;
+  usl: number | null;
+  average: number;
+  sigmaEst: number;
+}) {
+  const ucl = parseFloat((average + 3 * sigmaEst).toFixed(3));
+  const lcl = parseFloat((average - 3 * sigmaEst).toFixed(3));
+
+  const data = batchNumbers.map((batch, i) => ({
+    batch,
+    value: values[i],
+    nlt: lsl,
+    nmt: usl,
+    ucl,
+    lcl,
+  }));
+
+  // Compute Y axis domain with comfortable padding
+  const allVals = [
+    ...values.filter((v): v is number => v !== null),
+    ...(lsl !== null ? [lsl] : []),
+    ...(usl !== null ? [usl] : []),
+    ucl, lcl,
+  ];
+  const minVal = Math.min(...allVals);
+  const maxVal = Math.max(...allVals);
+  const pad = (maxVal - minVal) * 0.1 || 0.5;
+  const yMin = parseFloat((minVal - pad).toFixed(2));
+  const yMax = parseFloat((maxVal + pad).toFixed(2));
+
+  const uclLabel = `UCL (NMT ${ucl})`;
+  const lclLabel = `LCL (NLT ${lcl})`;
+  const nltLabel = lsl !== null ? `NLT ${lsl}` : 'NLT';
+  const nmtLabel = usl !== null ? `NMT ${usl}` : 'NMT';
+
+  return (
+    <div style={{ background: 'white', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '1.5rem', marginBottom: '1.5rem' }}>
+      <h4 style={{ margin: '0 0 1.25rem', fontSize: '0.95rem', fontWeight: 700, color: '#1e293b', textAlign: 'center' }}>
+        Trend Analysis of {colName} at Finished Stage
+      </h4>
+      <ResponsiveContainer width="100%" height={320}>
+        <LineChart data={data} margin={{ top: 10, right: 30, left: 10, bottom: 20 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+          <XAxis
+            dataKey="batch"
+            tick={{ fontSize: 11, fill: '#374151' }}
+            label={{ value: 'BATCH NO.', position: 'insideBottom', offset: -10, fontSize: 11, fill: '#374151', fontWeight: 600 }}
+          />
+          <YAxis
+            domain={[yMin, yMax]}
+            tick={{ fontSize: 11, fill: '#374151' }}
+            label={{ value: colName, angle: -90, position: 'insideLeft', offset: 10, fontSize: 11, fill: '#374151', fontWeight: 600 }}
+            width={60}
+          />
+          <Tooltip
+            contentStyle={{ borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '0.82rem' }}
+          />
+          <Legend
+            wrapperStyle={{ fontSize: '0.8rem', paddingTop: '12px' }}
+            iconType="plainline"
+          />
+
+          {/* Actual values */}
+          <Line
+            type="linear"
+            dataKey="value"
+            name={colName}
+            stroke="#2563eb"
+            strokeWidth={2}
+            dot={{ r: 5, fill: '#2563eb', stroke: 'white', strokeWidth: 2 }}
+            activeDot={{ r: 7 }}
+            connectNulls
+          />
+
+          {/* NLT – specification lower limit */}
+          {lsl !== null && (
+            <Line
+              type="linear"
+              dataKey="nlt"
+              name={nltLabel}
+              stroke="#f97316"
+              strokeWidth={2}
+              dot={false}
+              activeDot={false}
+            />
+          )}
+
+          {/* NMT – specification upper limit */}
+          {usl !== null && (
+            <Line
+              type="linear"
+              dataKey="nmt"
+              name={nmtLabel}
+              stroke="#9ca3af"
+              strokeWidth={2}
+              dot={false}
+              activeDot={false}
+            />
+          )}
+
+          {/* UCL – average + 3σ */}
+          <Line
+            type="linear"
+            dataKey="ucl"
+            name={uclLabel}
+            stroke="#ca8a04"
+            strokeWidth={1.5}
+            strokeDasharray="6 3"
+            dot={false}
+            activeDot={false}
+          />
+
+          {/* LCL – average – 3σ */}
+          <Line
+            type="linear"
+            dataKey="lcl"
+            name={lclLabel}
+            stroke="#0ea5e9"
+            strokeWidth={1.5}
+            strokeDasharray="6 3"
+            dot={false}
+            activeDot={false}
+          />
+        </LineChart>
+      </ResponsiveContainer>
     </div>
   );
 }

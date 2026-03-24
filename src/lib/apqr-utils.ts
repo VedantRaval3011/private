@@ -121,6 +121,7 @@ interface RawMaterialRow {
   actualQtyPerMl: string;
   qtyRequiredPerBatch: string;
   isCalculated: boolean;
+  isPotencyEnabled?: boolean;
 }
 
 interface PackingMaterialRow {
@@ -618,7 +619,8 @@ export async function getApqrData(productCode: string, year: number) {
         overagePercent: overageDisplay,
         actualQtyPerMl: actualDisplay,
         qtyRequiredPerBatch: scaledQtyDisplay,
-        isCalculated
+        isCalculated,
+        isPotencyEnabled: (mat as any).potencyCorrection === 'Y'
       });
     }
   }
@@ -762,6 +764,15 @@ export async function getApqrData(productCode: string, year: number) {
     comp_spec: c.form || ''
   })) : [];
 
+  // MFC number from the formula master (used to filter requisition records)
+  const mfcNo = formula.masterFormulaDetails?.masterCardNo || '';
+
+  // Fetch all requisition docs that contain batches with this MFC number
+  // Shared by Section 3.1 (RM), Section 3.2 (PPM) and Section 3.3 (Secondary)
+  const requisitionDocs = await Requisition.find({
+    'batches.mfcNo': mfcNo
+  }).lean();
+
   // --- Material Vendor Details Logic (Section 3.1 - RM Materials) ---
   const materialVendorDetails: MaterialVendorDetail[] = [];
   // Try to find ASEPTIC MIXING first, then fallback to MIXING
@@ -775,21 +786,47 @@ export async function getApqrData(productCode: string, year: number) {
     for (const mat of asepticMixingProcess.materials) {
       if (!mat.materialCode) continue;
 
-      // Get RMCOA data for this material code
-      const rmcoas = await RMCOA.find({ materialCode: mat.materialCode }).lean();
+      // 1. Collect all requisition material items for this materialCode + mfcNo + year
+      const matchingItems: Array<{ arNo: string; vendorCode: string; batchNumber: string }> = [];
 
-      // Filter RMCOAs by year
-      const yearRmcoas = rmcoas.filter((r: any) => {
-        const d = parseBatchDate(r.testDate);
-        return d && d.getFullYear() === yearNum;
-      });
+      for (const doc of requisitionDocs) {
+        for (const batch of (doc.batches || [])) {
+          // Must match MFC
+          if (batch.mfcNo !== mfcNo) continue;
 
-      if (yearRmcoas.length > 0) {
-        // Collect all AR numbers for this material
-        const arNumbers = yearRmcoas.map((rmcoa: any) => rmcoa.arNo || '').filter(ar => ar);
+          // Filter by year using batch mfgDate
+          const batchDate = parseBatchDate(batch.mfgDate);
+          if (!batchDate || batchDate.getFullYear() !== yearNum) continue;
 
-        // Get vendor from first RMCOA (prioritize supplier over manufacturer)
-        const vendor = yearRmcoas[0].supplier || yearRmcoas[0].manufacturer || '';
+          for (const item of (batch.materials || [])) {
+            if (item.materialCode === mat.materialCode && item.arNo) {
+              matchingItems.push({
+                arNo: item.arNo,
+                vendorCode: item.vendorCode || '',
+                batchNumber: batch.batchNumber
+              });
+            }
+          }
+        }
+      }
+
+      // Collect unique AR numbers
+      const arNumbers = [...new Set(matchingItems.map(i => i.arNo).filter(ar => ar))];
+
+      if (arNumbers.length > 0) {
+        // Get vendor from InwardRegister first, then fallback to RMCOA
+        let vendor = '';
+        const inwardRecord = await InwardRegister.findOne({ arNumber: arNumbers[0] }).lean();
+        if (inwardRecord) {
+            vendor = (inwardRecord as any)?.manufacturedBy || (inwardRecord as any)?.vendorName || '';
+        }
+        
+        if (!vendor) {
+           const rmcoas = await RMCOA.find({ arNo: arNumbers[0] }).lean();
+           if (rmcoas && rmcoas.length > 0) {
+              vendor = (rmcoas[0] as any)?.manufacturer || (rmcoas[0] as any)?.supplier || '';
+           }
+        }
 
         // Create ONE row per material with all AR numbers
         materialVendorDetails.push({
@@ -801,7 +838,7 @@ export async function getApqrData(productCode: string, year: number) {
         });
         srNo++;
       } else {
-        // Skip if no data for the year, as per requirements
+        // Skip if no AR numbers found for the year in requisitions
       }
     }
   }
@@ -815,16 +852,7 @@ export async function getApqrData(productCode: string, year: number) {
   const asepticFillingProcess = formula.processes?.find((p: ProcessData) => p.processName === 'ASEPTIC FILLING');
 
   // MFC number from the formula master (used to filter requisition records)
-  const mfcNo = formula.masterFormulaDetails?.masterCardNo || '';
   console.log(`\n📦 PPM Section 3.2 — MFC: ${mfcNo}`);
-
-  // Fetch all requisition docs that contain batches with this MFC number
-  // We query at the document level and filter in-memory for the nested batch/material data
-  // Shared by both Section 3.2 (PPM) and Section 3.3 (Secondary)
-  const requisitionDocs = await Requisition.find({
-    'batches.mfcNo': mfcNo
-  }).lean();
-  console.log(`  Requisition docs with MFC ${mfcNo}: ${requisitionDocs.length}`);
 
   if (asepticFillingProcess) {
     // Collect all materials from ASEPTIC FILLING process (direct materials)
@@ -897,10 +925,11 @@ export async function getApqrData(productCode: string, year: number) {
       // (Inward Register has the full vendor name; requisition only has vendor code)
       let vendor = '';
       if (arNumbers.length > 0) {
+        // Get manufacturer or vendor name from Inward Register
         const inwardRecord = await InwardRegister.findOne({
           arNumber: arNumbers[0]
         }).lean();
-        vendor = (inwardRecord as any)?.vendorName || '';
+        vendor = (inwardRecord as any)?.manufacturedBy || (inwardRecord as any)?.vendorName || '';
       }
 
       console.log(`  PPM Material ${mat.materialCode}: ${matchingItems.length} requisition items, ${arNumbers.length} unique AR numbers, vendor: ${vendor}`);
@@ -995,11 +1024,11 @@ export async function getApqrData(productCode: string, year: number) {
       let isRejected = false;
 
       if (arNumbers.length > 0) {
-        // Get Vendor
+        // Get Manufacturer/Vendor
         const inwardRecord = await InwardRegister.findOne({
           arNumber: arNumbers[0]
         }).lean();
-        vendor = (inwardRecord as any)?.vendorName || '';
+        vendor = (inwardRecord as any)?.manufacturedBy || (inwardRecord as any)?.vendorName || '';
 
         // Check Rejection for Artwork
         // User Rule: "IF rejectionExists(materialCode, arNumber) -> REJECTED, ELSE APPROVED"
@@ -1170,7 +1199,7 @@ export async function getApqrData(productCode: string, year: number) {
       }
     }
 
-    // Build rows in same order as arEntries (order from Section 5.1.1)
+    // Build rows sorted by AR number ascending
     const rows512: RMTestRow512[] = [];
     for (const arEntry of mat.arEntries) {
       const rmcoa = rmcoaByAr512.get((arEntry.arNumber || '').toUpperCase().trim());
@@ -1185,6 +1214,7 @@ export async function getApqrData(productCode: string, year: number) {
       }
       rows512.push({ arNumber: arEntry.arNumber, description: desc, ph, lod, assay });
     }
+    rows512.sort((a, b) => (a.arNumber || '').localeCompare(b.arNumber || '', undefined, { numeric: true, sensitivity: 'base' }));
 
     activeRMTestDetails.push({
       materialCode: mat.materialCode,
@@ -1236,8 +1266,23 @@ export async function getApqrData(productCode: string, year: number) {
     for (const mat of ppmMats521) {
       if (!mat.materialCode) continue;
 
-      // Step 2: Get AR numbers from REQUISITION filtered by MFC + materialCode + year
-      // This ensures we only get ARs relevant to THIS specific MFC product
+      // Step 2a: Query InwardRegister for this PM materialCode in review year
+      // received = unique AR numbers from InwardRegister (mirrors Section 5.1.1 RM approach)
+      const pmInwardRecords = await InwardRegister.find({
+        materialCode: mat.materialCode
+      }).lean();
+      const yearPmInward = pmInwardRecords.filter((rec: any) => {
+        const d = parseBatchDate(rec.inwardDate);
+        return d && d.getFullYear() === yearNum;
+      });
+      const inwardArNumbers = [...new Set(
+        yearPmInward
+          .map((rec: any) => (rec.arNumber || '').trim())
+          .filter((ar: string) => ar && ar !== 'N/A')
+      )] as string[];
+      const received = inwardArNumbers.length;
+
+      // Step 2b: Build AR→batch map from REQUISITION (MFC-filtered) for the AR entries column
       const arToBatchMap521 = new Map<string, Set<string>>();
       const mfcFilteredArNumbers = new Set<string>();
 
@@ -1261,20 +1306,14 @@ export async function getApqrData(productCode: string, year: number) {
 
       const uniqueArNumbers = [...mfcFilteredArNumbers] as string[];
 
-      // Received = count of MFC-filtered AR numbers (consignments used by this MFC)
-      const received = uniqueArNumbers.length;
-
-      // Step 3: Query MaterialRejection — count rejected ARs (only from MFC-filtered set)
+      // Step 3: Query MaterialRejection — count rejected ARs in review year
       const rejectionRecords = await MaterialRejection.find({
         materialCode: mat.materialCode
       }).lean();
 
       const yearRejections = rejectionRecords.filter((rec: any) => {
         const d = parseBatchDate(rec.arDate);
-        if (!d || d.getFullYear() !== yearNum) return false;
-        // Only count rejections for ARs that belong to this MFC
-        const rejArNo = (rec.arNumber || '').trim();
-        return mfcFilteredArNumbers.has(rejArNo);
+        return d && d.getFullYear() === yearNum;
       });
       const rejectedArNumbers = [...new Set(
         yearRejections.map((rec: any) => (rec.arNumber || '').trim()).filter((ar: string) => ar)
@@ -1290,9 +1329,11 @@ export async function getApqrData(productCode: string, year: number) {
           arNumber: ar,
           batchNumbers: arToBatchMap521.has(ar)
             ? Array.from(arToBatchMap521.get(ar)!).filter(bn => finalBatchNumbersSet.has(bn))
+                .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }))
             : []
         }))
-        .filter(entry => entry.batchNumbers.length > 0);
+        .filter(entry => entry.batchNumbers.length > 0)
+        .sort((a, b) => a.arNumber.localeCompare(b.arNumber, undefined, { numeric: true, sensitivity: 'base' }));
 
       // Step 6: Generate dynamic remark
       const rejectedText = rejected > 0
@@ -1311,8 +1352,12 @@ export async function getApqrData(productCode: string, year: number) {
         remark
       });
 
-      console.log(`  ${mat.materialName}: Received=${received}, Rejected=${rejected}, Released=${released}, ARs=${uniqueArNumbers.length}`);
+      console.log(`  ${mat.materialName}: InwardARs=${inwardArNumbers.length}(received), ReqARs=${uniqueArNumbers.length}, Rejected=${rejected}, Released=${released}`);
     }
+    // Sort by received consignment count ascending (42 before 58 before 91 etc.)
+    primaryPackingMaterialDetails.sort((a, b) => a.received - b.received);
+    // Re-assign srNo after sort
+    primaryPackingMaterialDetails.forEach((m, i) => { m.srNo = i + 1; });
     console.log(`✅ Primary Packing Material Details (Section 5.2.1): ${primaryPackingMaterialDetails.length} materials`);
   } else {
     console.warn('⚠️ No ASEPTIC FILLING process found for Section 5.2.1');
@@ -1515,7 +1560,7 @@ export async function getApqrData(productCode: string, year: number) {
           if (cleanedLimit.includes('\n')) cleanedLimit = cleanedLimit.split('\n')[0].trim();
           if (category === 'ph') cleanedLimit = cleanedLimit.replace(/^Between\s*/i, '').trim();
 
-          const colKey = `${category}|||${name}|||${cleanedLimit}`;
+          const colKey = `${category}|||${name}`; // Removed limit from colKey to group by test
 
           if (!finishColumnsMap.has(colKey)) {
             finishColumnsMap.set(colKey, { key: colKey, type: category, name, limit: cleanedLimit, isQuantifiable: false });
@@ -1532,7 +1577,10 @@ export async function getApqrData(productCode: string, year: number) {
             colDef.isQuantifiable = true;
           }
 
-          batchResults[colKey] = finalResult;
+          // Notice we don't need `${colKey}|||limit` but I'll leave it in the objects
+          // just in case it is queried elsewhere. What goes in the Result cell is `-result`.
+          batchResults[`${colKey}|||limit`] = limit || '--';
+          batchResults[`${colKey}|||result`] = finalResult;
         };
 
         // 1. Critical Parameters
@@ -2025,7 +2073,7 @@ function replaceTextInXml(xml: string, find: string, replace: string): string {
  * @param newText The new text content.
  * @param isRawXml If true, `newText` is treated as raw XML (e.g. contains <w:br/>), otherwise it's wrapped in a <w:t>.
  */
-function replaceCellText(rowXml: string, cellIndex: number, newText: string, isRawXml: boolean = false): string {
+function replaceCellText(rowXml: string, cellIndex: number, newText: string, isRawXml: boolean = false, vMergeVal?: 'restart' | 'continue'): string {
   // Regex to match <w:tc>...</w:tc> blocks
   // Note: This is a simple regex and might be brittle with nested tags, but standard Word XML tables are usually flat structure-wise for cells.
   const cellRegex = /<w:tc>[\s\S]*?<\/w:tc>/g;
@@ -2050,7 +2098,17 @@ function replaceCellText(rowXml: string, cellIndex: number, newText: string, isR
       // Properties usually come first: <w:tc><w:tcPr>...</w:tcPr><w:p>...</w:p></w:tc>
       // Or just <w:tc><w:p>...</w:p></w:tc>
       const tcPrMatch = cellContent.match(/<w:tcPr>[\s\S]*?<\/w:tcPr>/);
-      const tcPr = tcPrMatch ? tcPrMatch[0] : '';
+      let tcPr = tcPrMatch ? tcPrMatch[0] : '<w:tcPr></w:tcPr>';
+      
+      if (vMergeVal) {
+        // Remove any existing vMerge
+        tcPr = tcPr.replace(/<w:vMerge[^>]*\/>/g, '');
+        // Insert new vMerge before </w:tcPr>
+        if (tcPr.includes('</w:tcPr>')) {
+          const vMergeTag = vMergeVal === 'restart' ? '<w:vMerge w:val="restart"/>' : '<w:vMerge/>';
+          tcPr = tcPr.replace('</w:tcPr>', `${vMergeTag}</w:tcPr>`);
+        }
+      }
 
       // Construct new cell content
       // We wrap the text in a standard paragraph structure
@@ -2932,44 +2990,48 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
 
           console.log(`Secondary Pkg table: replacing template rows with ${data.secondaryPackagingDetails.length} data rows`);
 
-          // Generate new Rows
-          let newRowsXml = '';
+          // Group items by their 2-character material code prefix (e.g. 2C, 21, 2L, 25)
+          const groupedItems = new Map<string, any[]>();
           for (const item of data.secondaryPackagingDetails) {
-            let rowXml = templateRow;
-            rowXml = replaceCellText(rowXml, 0, item.srNo.toString());
-            rowXml = replaceCellText(rowXml, 1, xmlEscape(item.materialCode));
-            rowXml = replaceCellText(rowXml, 2, xmlEscape(item.materialName));
-            // Vendor (merged with AR? No, check table structure)
-            // Table format: Sr | Mat Code | Name | Vendor | Artwork
-            // (AR Numbers are NOT in the table columns list provided by user for 3.3)
-            // "Name of Approved Vendor Column Source: Inward Register"
-            // "Artwork Approved Column"
-            // Wait, user provided table mapping:
-            // Sr. No, Material Code, Name of Material, Name of Approved Vendor, Artwork Approved
-            // BUT in 3.2 logic we had AR numbers. User said "We show too many AR numbers" for 3.2.
-            // For 3.3, user lists: "Sr. No, Material Code, Name of Material, Name of Approved Vendor, Artwork Approved"
-            // AR Number is mentioned in "Fetch AR Number" step but NOT in "Final Table Mapping Summary".
-            // AND the screenshot shows 5 columns: Sr, Code, Name, Vendor, Artwork Approved.
-            // So NO AR Number column directly in the table? 
-            // But 3.2 had AR Number column. 
-            // Wait, looking at screen shot for Section 3.3 title:
-            // Columns are: Sr. No., Material Code, Name of Material, Name of Approved vendor, Artwork Approved
-            // Indeed, AR Number is NOT a visible column in the screenshot.
-            // But typically AR Number is needed to trace the vendor. 
-            // I will populate Vendor derived from AR.
+            const prefix = (item.materialCode || '').substring(0, 2).toUpperCase();
+            if (!groupedItems.has(prefix)) groupedItems.set(prefix, []);
+            groupedItems.get(prefix)!.push(item);
+          }
 
-            // Column 3 is Vendor? 
-            // Index 0: Sr No
-            // Index 1: Material Code
-            // Index 2: Name of Material
-            // Index 3: Name of Approved Vendor
-            // Index 4: Artwork Approved
+          let newRowsXml = '';
+          let srNo = 1;
 
-            rowXml = replaceCellText(rowXml, 3, xmlEscape(item.vendor));
-            rowXml = replaceCellText(rowXml, 4, xmlEscape(item.artworkStatus));
+          for (const [prefix, group] of groupedItems.entries()) {
+            let prevVendor = null;
 
-            // Clean up potentially red placeholder text in columns
-            newRowsXml += rowXml;
+            for (let i = 0; i < group.length; i++) {
+              const item = group[i];
+              let rowXml = templateRow;
+
+              // Cell 0: Sr. No (Merge entire group)
+              const srNoMerge = i === 0 ? 'restart' : 'continue';
+              const srNoText = i === 0 ? srNo.toString() : '';
+              rowXml = replaceCellText(rowXml, 0, srNoText, false, srNoMerge);
+
+              // Cell 1: Material Code (No merge)
+              rowXml = replaceCellText(rowXml, 1, xmlEscape(item.materialCode));
+
+              // Cell 2: Material Name (No merge)
+              rowXml = replaceCellText(rowXml, 2, xmlEscape(item.materialName));
+
+              // Cell 3: Vendor (Merge consecutive identical vendors)
+              const vendorMerge = (i === 0 || item.vendor !== prevVendor) ? 'restart' : 'continue';
+              const vendorText = vendorMerge === 'continue' ? '' : xmlEscape(item.vendor);
+              rowXml = replaceCellText(rowXml, 3, vendorText, false, vendorMerge);
+
+              prevVendor = item.vendor;
+
+              // Cell 4: Artwork (No merge)
+              rowXml = replaceCellText(rowXml, 4, xmlEscape(item.artworkStatus));
+
+              newRowsXml += rowXml;
+            }
+            srNo++;
           }
 
           docXml = docXml.substring(0, templateRowStart) + newRowsXml + docXml.substring(lastRowEnd);
@@ -3055,7 +3117,7 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
             rowXml = replaceCellText(rowXml, 4, xmlEscape(row.theoQtyPerMl || 'Q.S'));
             rowXml = replaceCellText(rowXml, 5, xmlEscape(row.overagePercent || '-'));
             rowXml = replaceCellText(rowXml, 6, xmlEscape(row.actualQtyPerMl || 'Q.S'));
-            const batchQtyDisplay = row.isCalculated ? `*${row.qtyRequiredPerBatch}` : row.qtyRequiredPerBatch;
+            const batchQtyDisplay = row.isPotencyEnabled ? `*${row.qtyRequiredPerBatch}` : row.qtyRequiredPerBatch;
             rowXml = replaceCellText(rowXml, 7, xmlEscape(batchQtyDisplay));
             newDataRowsXmlRM += rowXml;
           }
@@ -4224,6 +4286,109 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
   }
 
 
+  // ── 11b-ii. Trend Analysis Charts for Section 5.3.1 – Bulk Stage ──
+  if (data.bulkInProcessData && data.bulkInProcessData.length > 0) {
+    const bulkHdr531 = data.bulkInProcessHeader || {};
+    const bulkAssayCols531: { compound: string; limit: string }[] = bulkHdr531.assayColumns || [];
+    const batchNums531: string[] = data.bulkInProcessData.map((r: any) => r.batchNumber as string);
+    const n531 = batchNums531.length;
+
+    const parseLimit531 = (limitStr: string): { nlt?: number; nmt?: number } => {
+      const s = (limitStr || '').toUpperCase().replace(/%/g, '').trim();
+      const rangeM = s.match(/(\d+\.?\d*)\s+TO\s+(\d+\.?\d*)/);
+      if (rangeM) return { nlt: parseFloat(rangeM[1]), nmt: parseFloat(rangeM[2]) };
+      const nmtM = s.match(/NMT\s+(\d+\.?\d*)/);
+      if (nmtM) {
+        const nltM = s.match(/NLT\s+(\d+\.?\d*)/);
+        return nltM ? { nlt: parseFloat(nltM[1]), nmt: parseFloat(nmtM[1]) } : { nmt: parseFloat(nmtM[1]) };
+      }
+      const nltM = s.match(/NLT\s+(\d+\.?\d*)/);
+      if (nltM) return { nlt: parseFloat(nltM[1]) };
+      return {};
+    };
+
+    const buildStrCache531 = (vals: string[]) => {
+      const pts = vals.map((v, i) => `<c:pt idx="${i}"><c:v>${xmlEscape(v)}</c:v></c:pt>`).join('');
+      return `<c:strCache><c:ptCount val="${vals.length}"/>${pts}</c:strCache>`;
+    };
+    const buildNumCache531 = (vals: number[]) => {
+      const pts = vals.map((v, i) => `<c:pt idx="${i}"><c:v>${v}</c:v></c:pt>`).join('');
+      return `<c:numCache><c:formatCode>General</c:formatCode><c:ptCount val="${vals.length}"/>${pts}</c:numCache>`;
+    };
+    const buildSerName531 = (name: string) =>
+      `<c:strCache><c:ptCount val="1"/><c:pt idx="0"><c:v>${xmlEscape(name)}</c:v></c:pt></c:strCache>`;
+
+    const updateChart531 = (chartXml: string, series: { name: string; values: number[] }[]): string => {
+      let idx = 0;
+      return chartXml.replace(/<c:ser>([\s\S]*?)<\/c:ser>/g, (match, content) => {
+        if (idx >= series.length) return match;
+        const sd = series[idx++];
+        let updated = content;
+        updated = updated.replace(
+          /(<c:tx>[\s\S]*?<c:strRef>[\s\S]*?)<c:strCache>[\s\S]*?<\/c:strCache>([\s\S]*?<\/c:strRef>[\s\S]*?<\/c:tx>)/,
+          `$1${buildSerName531(sd.name)}$2`
+        );
+        updated = updated.replace(
+          /(<c:cat>[\s\S]*?<c:strRef>[\s\S]*?)<c:strCache>[\s\S]*?<\/c:strCache>([\s\S]*?<\/c:strRef>[\s\S]*?<\/c:cat>)/,
+          `$1${buildStrCache531(batchNums531)}$2`
+        );
+        updated = updated.replace(
+          /(<c:val>[\s\S]*?<c:numRef>[\s\S]*?)<c:numCache>[\s\S]*?<\/c:numCache>([\s\S]*?<\/c:numRef>[\s\S]*?<\/c:val>)/,
+          `$1${buildNumCache531(sd.values)}$2`
+        );
+        return `<c:ser>${updated}</c:ser>`;
+      });
+    };
+
+    const limitLine531 = (val: number | undefined, n: number): number[] => Array(n).fill(val ?? 0);
+    const parseNum531 = (s: string): number => { const n = parseFloat(s.replace(/[^0-9.-]/g, '')); return isNaN(n) ? NaN : n; };
+
+    // ── chart4.xml → Trend Analysis of pH at Bulk Stage (5 series) ──
+    const phVals531 = data.bulkInProcessData.map((r: any) => parseNum531(r.ph));
+    const phLims531 = parseLimit531(bulkHdr531.phLimit || '');
+    const phStats531 = calculateProcessCapability(phVals531.filter((v: number) => !isNaN(v)), bulkHdr531.phLimit || '');
+    const phUcl531 = phStats531 ? phStats531.average + 3 * phStats531.sigmaEstimated : undefined;
+    const phLcl531 = phStats531 ? phStats531.average - 3 * phStats531.sigmaEstimated : undefined;
+
+    const chart4Xml = await zip.file('word/charts/chart4.xml')!.async('string');
+    const phSeries531: { name: string; values: number[] }[] = [
+      { name: 'pH', values: phVals531.map((v: number) => isNaN(v) ? 0 : v) },
+      ...(phLims531.nlt !== undefined ? [{ name: `NLT ${phLims531.nlt}`, values: limitLine531(phLims531.nlt, n531) }] : []),
+      ...(phLims531.nmt !== undefined ? [{ name: `NMT ${phLims531.nmt}`, values: limitLine531(phLims531.nmt, n531) }] : []),
+      ...(phUcl531 !== undefined ? [{ name: `UCL (NMT ${phUcl531.toFixed(2)})`, values: limitLine531(phUcl531, n531) }] : []),
+      ...(phLcl531 !== undefined ? [{ name: `LCL (NLT ${phLcl531.toFixed(2)})`, values: limitLine531(phLcl531, n531) }] : []),
+    ];
+    zip.file('word/charts/chart4.xml', updateChart531(chart4Xml, phSeries531));
+    console.log(`  ✅ Section 5.3.1 chart4 (pH Bulk) updated: ${n531} batches, UCL=${phUcl531?.toFixed(2)}, LCL=${phLcl531?.toFixed(2)}`);
+
+    // ── chart5.xml → Trend Analysis of % Assay at Bulk Stage (5 series per assay compound) ──
+    // Template has one chart (chart5) — we populate it with the first quantifiable assay compound.
+    if (bulkAssayCols531.length > 0) {
+      const assayCol531 = bulkAssayCols531[0];
+      const assayVals531 = data.bulkInProcessData.map((r: any) => {
+        const val = r.assays?.[0]?.value ?? r.assay ?? '';
+        return parseNum531(val);
+      });
+      const assayLims531 = parseLimit531(assayCol531.limit || '');
+      const assayStats531 = calculateProcessCapability(assayVals531.filter((v: number) => !isNaN(v)), assayCol531.limit || '');
+      const assayUcl531 = assayStats531 ? assayStats531.average + 3 * assayStats531.sigmaEstimated : undefined;
+      const assayLcl531 = assayStats531 ? assayStats531.average - 3 * assayStats531.sigmaEstimated : undefined;
+
+      const chart5Xml = await zip.file('word/charts/chart5.xml')!.async('string');
+      const assaySeries531: { name: string; values: number[] }[] = [
+        { name: `ASSAY OF ${assayCol531.compound}`, values: assayVals531.map((v: number) => isNaN(v) ? 0 : v) },
+        ...(assayLims531.nlt !== undefined ? [{ name: `NLT ${assayLims531.nlt}%`, values: limitLine531(assayLims531.nlt, n531) }] : []),
+        ...(assayLims531.nmt !== undefined ? [{ name: `NMT ${assayLims531.nmt}%`, values: limitLine531(assayLims531.nmt, n531) }] : []),
+        ...(assayUcl531 !== undefined ? [{ name: `UCL (NMT ${assayUcl531.toFixed(2)})`, values: limitLine531(assayUcl531, n531) }] : []),
+        ...(assayLcl531 !== undefined ? [{ name: `LCL (NLT ${assayLcl531.toFixed(2)})`, values: limitLine531(assayLcl531, n531) }] : []),
+      ];
+      zip.file('word/charts/chart5.xml', updateChart531(chart5Xml, assaySeries531));
+      console.log(`  ✅ Section 5.3.1 chart5 (${assayCol531.compound} Assay Bulk) updated: ${n531} batches, UCL=${assayUcl531?.toFixed(2)}, LCL=${assayLcl531?.toFixed(2)}`);
+    }
+
+    console.log(`✅ Section 5.3.1 Trend Analysis charts updated (${n531} batches, ${bulkAssayCols531.length} assay col(s))`);
+  }
+
   // ── 11c. Dynamic Section 5.3.2 – In-Process Analysis Results at Finish Stage ──
   // Always runs — replaces the template table whether or not FINISH COA data exists.
   // This ensures switching products clears the previous product's stale values.
@@ -4232,14 +4397,21 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
     console.log(`\n📋 Section 5.3.2 Finish In-Process: ${finishRows.length} rows`);
 
     // Find the 5.3.2 table by its anchor text
-    const finishTableAnchors = ['Finished Product Analysis', 'Finished Product'];
+    const finishTableAnchors = ['5.3.2', 'Finished Product Analysis', 'Finished Product'];
     let finishTblStart = -1;
     let finishTblEnd = -1;
-    const searchStartPos532 = Math.floor(docXml.length * 0.4);
+    // Allow searching from earlier in the document to avoid missing 5.3.2
+    const searchStartPos532 = Math.floor(docXml.length * 0.1);
     console.log(`  5.3.2 DEBUG: docXml.length=${docXml.length}, searchStartPos=${searchStartPos532}`);
 
+    // Try finding "5.3.2" and checking if it's followed by a table
     for (const anchor of finishTableAnchors) {
-      const anchorIdx = docXml.indexOf(anchor, searchStartPos532);
+      let anchorIdx = docXml.indexOf(anchor, searchStartPos532);
+      // If we find TOC occurrences, skip them by finding the last occurrence if it's early
+      if (anchorIdx !== -1 && anchor === '5.3.2') {
+        anchorIdx = docXml.lastIndexOf(anchor);
+      }
+      
       console.log(`  5.3.2 DEBUG: anchor="${anchor}" idx=${anchorIdx}`);
       if (anchorIdx === -1) continue;
       const nextTblIdx = docXml.indexOf('<w:tbl>', anchorIdx);
@@ -4287,6 +4459,7 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
         const remarkTblStart532 = docXml.lastIndexOf('<w:tbl>', nextSectionHeading);
         const remarkTblEnd532 = docXml.indexOf('</w:tbl>', remarkTblStart532);
         if (remarkTblStart532 !== -1 && remarkTblEnd532 !== -1 && remarkTblStart532 >= finishTblStart) {
+          // Temporarily set section content end to remark
           sectionContentEnd = remarkTblEnd532 + 8;
 
           const origRemark = docXml.substring(remarkTblStart532, sectionContentEnd);
@@ -4294,6 +4467,24 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
           remarkTblGrid532 = origRemark.match(/<w:tblGrid>[\s\S]*?<\/w:tblGrid>/)?.[0] || remarkTblGrid532;
           const remarkOrigRows = [...origRemark.matchAll(/<w:tr\b[\s\S]*?<\/w:tr>/g)];
           signatureRow532 = remarkOrigRows.length > 1 ? remarkOrigRows[remarkOrigRows.length - 1][0] : '';
+          
+          // Now extend sectionContentEnd to capture the two redundant CPK tables AFTER the heading
+          let currentIdx = nextSectionHeading;
+          let tablesFound = 0;
+          for (let i = 0; i < 2; i++) {
+            const tStart = docXml.indexOf('<w:tbl>', currentIdx);
+            if (tStart !== -1 && (tStart - currentIdx) < 8000) {
+              const tEnd = docXml.indexOf('</w:tbl>', tStart);
+              if (tEnd !== -1) {
+                currentIdx = tEnd + 8;
+                tablesFound++;
+              }
+            }
+          }
+          if (tablesFound === 2) {
+             console.log(`  ✅ Found 2 CPK template tables after heading, removing them. Extended bound: ${currentIdx}`);
+             sectionContentEnd = currentIdx;
+          }
         }
       } else {
         // Fallback to checking for 5.3.3 if Process Capability is missing
@@ -4343,7 +4534,7 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
         if (opts?.vMerge === 'restart') tcPr = '<w:vMerge w:val="restart"/>' + tcPr;
         else if (opts?.vMerge === 'continue') tcPr = '<w:vMerge/>' + tcPr;
         if (opts?.gridSpan) tcPr += `<w:gridSpan w:val="${opts.gridSpan}"/>`;
-        const rPr = '<w:rPr><w:b/><w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr>';
+        const rPr = '<w:rPr><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>';
         const pPr = '<w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/>' + rPr + '</w:pPr>';
         return '<w:tc><w:tcPr>' + tcPr + '</w:tcPr>'
           + '<w:p>' + pPr
@@ -4359,8 +4550,8 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
 
         return '<w:tc><w:tcPr>' + tcPr + '</w:tcPr>'
           + '<w:p><w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/>'
-          + '<w:rPr><w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr></w:pPr>'
-          + '<w:r><w:rPr><w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr>'
+          + '<w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:pPr>'
+          + '<w:r><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>'
           + `<w:t xml:space="preserve">${xmlEscape(text)}</w:t>`
           + '</w:r></w:p></w:tc>';
       };
@@ -4453,8 +4644,9 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
 
             rowsXml += dCell(row.arNumber || '');
             for (const c of cols) {
-              const colKey = `${c.type}|||${c.name}|||${c.limit}`;
-              rowsXml += dCell(row.results[colKey] || '--');
+              const colKey = c.key;
+              // If we were using `row.results[`${colKey}|||result`]`, we'll restore to use it here:
+              rowsXml += dCell(row.results[`${colKey}|||result`] || '--');
             }
             rowsXml += '</w:tr>';
           }
@@ -4501,35 +4693,36 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
 
       // ── FP Process Capability & Performance Parameters Table (3rd table in 5.3.2) ──
       // Mirrors the bulk CPK table logic but uses finishInProcessData and quantifiable FP columns.
-      {
-        const fpQuantCols = (data.finishInProcessColumns || []).filter((c: any) => c.isQuantifiable);
-        fpQuantCols.sort(sortCols);
+      const fpQuantCols = (data.finishInProcessColumns || []).filter((c: any) => c.isQuantifiable);
+      fpQuantCols.sort(sortCols);
 
-        if (fpQuantCols.length > 0) {
+      // fpColStats is declared at this outer scope so the chart loop (below) can access it
+      const fpColStats: Map<string, ProcessCapabilityResults | null> = new Map();
+
+      if (fpQuantCols.length > 0) {
           newXmlContent += pSeparator;
 
           // ── Data extraction: gather all numeric values per column ──
           // For FP, each batch can have multiple AR rows — all individual numeric values are used
           // for Uniformity-style parameters. For per-batch parameters (pH, Osmolality, Assay),
           // each unique batch value is used once.
-          const fpColStats: Map<string, ProcessCapabilityResults | null> = new Map();
 
           for (const col of fpQuantCols) {
-            const colKey = `${col.type}|||${col.name}|||${col.limit}`;
             const rawValues: number[] = [];
             for (const row of (data.finishInProcessData || [])) {
-              const cell = row.results[colKey];
+              // Now we need to look for the result value specifically
+              const cell = row.results[`${col.key}|||result`];
               if (cell && cell !== '--' && cell !== '') {
                 const num = parseFloat(cell);
                 if (!isNaN(num)) rawValues.push(num);
               }
             }
-            if (rawValues.length >= 2) {
-              fpColStats.set(colKey, calculateProcessCapability(rawValues, col.limit));
-            } else {
-              fpColStats.set(colKey, null);
+              if (rawValues.length >= 2) {
+                fpColStats.set(col.key, calculateProcessCapability(rawValues, col.limit));
+              } else {
+                fpColStats.set(col.key, null);
+              }
             }
-          }
 
           // ── Layout helpers ──
           // Total data cols: vMerge(811) + label(1661) + N FP quant cols
@@ -4584,9 +4777,9 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
 
           // Helper: get formatted values for each FP quantile column
           const fp_fmt5All = (getter: (s: ProcessCapabilityResults | null) => number | undefined) =>
-            fpQuantCols.map(c => fp_fmt5(getter(fpColStats.get(`${c.type}|||${c.name}|||${c.limit}`) ?? null)));
+            fpQuantCols.map(c => fp_fmt5(getter(fpColStats.get(c.key) ?? null)));
           const fp_fmt2All = (getter: (s: ProcessCapabilityResults | null) => number | undefined) =>
-            fpQuantCols.map(c => fp_fmt2(getter(fpColStats.get(`${c.type}|||${c.name}|||${c.limit}`) ?? null)));
+            fpQuantCols.map(c => fp_fmt2(getter(fpColStats.get(c.key) ?? null)));
 
           // Build column display names for header row
           const fp_colHeaders = fpQuantCols.map((c: any) => {
@@ -4643,15 +4836,15 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
 
           // Derived intermediates
           const fp_uslLsl = fpQuantCols.map((c: any) => {
-            const s = fpColStats.get(`${c.type}|||${c.name}|||${c.limit}`);
+            const s = fpColStats.get(c.key);
             return s ? s.usl - s.lsl : NaN;
           });
           const fp_uslAvg = fpQuantCols.map((c: any) => {
-            const s = fpColStats.get(`${c.type}|||${c.name}|||${c.limit}`);
+            const s = fpColStats.get(c.key);
             return s ? s.usl - s.average : NaN;
           });
           const fp_avgLsl = fpQuantCols.map((c: any) => {
-            const s = fpColStats.get(`${c.type}|||${c.name}|||${c.limit}`);
+            const s = fpColStats.get(c.key);
             return s ? s.average - s.lsl : NaN;
           });
 
@@ -4676,13 +4869,13 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
               + `<w:r><w:rPr><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/><w:rFonts w:ascii="Symbol" w:hAnsi="Symbol" w:cs="Symbol"/></w:rPr>`
               + `<w:t>s</w:t></w:r>`
               + `<w:r><w:rPr><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr><w:t xml:space="preserve">)</w:t></w:r></w:p></w:tc>`;
-            for (const [, s] of [...fpQuantCols.map((c: any) => fpColStats.get(`${c.type}|||${c.name}|||${c.limit}`))].entries()) stRow += fp_valCell(fp_fmt5(s?.sigmaEstimated));
+            for (const [, s] of [...fpQuantCols.map((c: any) => fpColStats.get(c.key))].entries()) stRow += fp_valCell(fp_fmt5(s?.sigmaEstimated));
             stRow += `</w:tr>`;
             fpCpkRows += stRow;
           }
 
-          fpCpkRows += fp_buildBlockRow('3\u03c3 = (3 X \u03c3)', fpQuantCols.map((c: any) => fp_fmt2((fpColStats.get(`${c.type}|||${c.name}|||${c.limit}`)?.sigmaEstimated ?? NaN) * 3)));
-          fpCpkRows += fp_buildBlockRow('6\u03c3 = (6 X \u03c3)', fpQuantCols.map((c: any) => fp_fmt2((fpColStats.get(`${c.type}|||${c.name}|||${c.limit}`)?.sigmaEstimated ?? NaN) * 6)));
+          fpCpkRows += fp_buildBlockRow('3\u03c3 = (3 X \u03c3)', fpQuantCols.map((c: any) => fp_fmt2((fpColStats.get(c.key)?.sigmaEstimated ?? NaN) * 3)));
+          fpCpkRows += fp_buildBlockRow('6\u03c3 = (6 X \u03c3)', fpQuantCols.map((c: any) => fp_fmt2((fpColStats.get(c.key)?.sigmaEstimated ?? NaN) * 6)));
           fpCpkRows += fp_buildBlockRow('Cpku = (USL \u2013 Average) / 3\u03c3', fp_fmt2All(s => s?.cpku));
           fpCpkRows += fp_buildBlockRow('Cpkl = (Average \u2013 LSL) / 3\u03c3', fp_fmt2All(s => s?.cpkl));
           fpCpkRows += fp_buildBlockRow('Cpk Value = Min (Cpkl & Cpku)', fp_fmt2All(s => s?.cpk), true);
@@ -4696,15 +4889,15 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
               + `<w:tc><w:tcPr><w:vAlign w:val="center"/></w:tcPr>`
               + fp_boldP('Std Deviation (S)') + `</w:tc>`;
             for (const c of fpQuantCols) {
-              const s = fpColStats.get(`${c.type}|||${c.name}|||${c.limit}`);
+              const s = fpColStats.get(c.key);
               ltRow += fp_valCell(fp_fmt5(s?.sigmaSample));
             }
             ltRow += `</w:tr>`;
             fpCpkRows += ltRow;
           }
 
-          fpCpkRows += fp_buildBlockRow('3S = (3 X Std deviation)', fpQuantCols.map((c: any) => fp_fmt2((fpColStats.get(`${c.type}|||${c.name}|||${c.limit}`)?.sigmaSample ?? NaN) * 3)));
-          fpCpkRows += fp_buildBlockRow('6S = (6 X Std deviation)', fpQuantCols.map((c: any) => fp_fmt2((fpColStats.get(`${c.type}|||${c.name}|||${c.limit}`)?.sigmaSample ?? NaN) * 6)));
+          fpCpkRows += fp_buildBlockRow('3S = (3 X Std deviation)', fpQuantCols.map((c: any) => fp_fmt2((fpColStats.get(c.key)?.sigmaSample ?? NaN) * 3)));
+          fpCpkRows += fp_buildBlockRow('6S = (6 X Std deviation)', fpQuantCols.map((c: any) => fp_fmt2((fpColStats.get(c.key)?.sigmaSample ?? NaN) * 6)));
           fpCpkRows += fp_buildBlockRow('Ppku = (USL \u2013 Average) / 3S', fp_fmt2All(s => s?.ppku));
           fpCpkRows += fp_buildBlockRow('Ppkl = (Average \u2013 LSL) / 3S', fp_fmt2All(s => s?.ppkl));
           fpCpkRows += fp_buildBlockRow('Ppk Value = Min(Ppkl & Ppku)', fp_fmt2All(s => s?.ppk));
@@ -4773,13 +4966,229 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
             newXmlContent += limitTable;
           }
 
+          // ── UCL & LCL Table ──
+          newXmlContent += pSeparator;
+          {
+            // Title paragraph
+            newXmlContent += `<w:p><w:pPr><w:spacing w:before="240"/><w:jc w:val="left"/></w:pPr><w:r><w:rPr><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/><w:u w:val="single"/></w:rPr><w:t xml:space="preserve">Upper Control Limits (UCL) &amp; Lower Control Limits (LCL): -</w:t></w:r></w:p>`;
+            
+            const uclHCell = (text: string, shade = '') => {
+              return `<w:tc><w:tcPr>${shade}<w:vAlign w:val="center"/></w:tcPr>`
+                + `<w:p><w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/>`
+                + `<w:rPr><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:pPr>`
+                + `<w:r><w:rPr><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>`
+                + `<w:t xml:space="preserve">${xmlEscape(text)}</w:t></w:r></w:p></w:tc>`;
+            };
+            const uclDCell = (text: string, bold = false) => {
+              const bTag = bold ? '<w:b/>' : '';
+              return `<w:tc><w:tcPr><w:vAlign w:val="center"/></w:tcPr>`
+                + `<w:p><w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/>`
+                + `<w:rPr>${bTag}<w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:pPr>`
+                + `<w:r><w:rPr>${bTag}<w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>`
+                + `<w:t xml:space="preserve">${xmlEscape(text)}</w:t></w:r></w:p></w:tc>`;
+            };
+
+            const uclTotalCols = 1 + fpQuantCols.length;
+            let uclGrid = `<w:tblGrid><w:gridCol w:w="2000"/>`;
+            for (let i = 0; i < fpQuantCols.length; i++) uclGrid += `<w:gridCol w:w="1200"/>`;
+            uclGrid += `</w:tblGrid>`;
+
+            let uclRows = '';
+            const shadeStr = '<w:shd w:val="clear" w:color="auto" w:fill="D9D9D9"/>';
+
+            // Row 1: Headers
+            uclRows += `<w:tr><w:trPr><w:trHeight w:val="432"/><w:jc w:val="center"/></w:trPr>`;
+            uclRows += uclHCell('', shadeStr);
+            for (const c of fpQuantCols) {
+              let hdr = c.name;
+              if (c.type === 'ph') hdr = 'pH';
+              else if (c.type === 'assay') hdr = `Assay (%)\n${c.name}`;
+              else if (c.type === 'critical' && (c.name || '').toUpperCase().includes('UNIFORMITY')) {
+                hdr = `Uniformity of Volume\n(ml)`; 
+              }
+              else if (c.type === 'critical' && (c.name || '').toUpperCase().includes('OSMOLALITY')) {
+                hdr = `Osmolality\n(mOsmol/kg)`;
+              }
+              
+              const lines = hdr.split('\n');
+              let cellContent = '';
+              for (const line of lines) {
+                cellContent += `<w:p><w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/>`
+                             + `<w:rPr><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:pPr>`
+                             + `<w:r><w:rPr><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>`
+                             + `<w:t xml:space="preserve">${xmlEscape(line)}</w:t></w:r></w:p>`;
+              }
+              uclRows += `<w:tc><w:tcPr>${shadeStr}<w:vAlign w:val="center"/></w:tcPr>${cellContent}</w:tc>`;
+            }
+            uclRows += `</w:tr>`;
+
+            // Row 2: Specification Limit
+            uclRows += `<w:tr><w:trPr><w:trHeight w:val="350"/><w:jc w:val="center"/></w:trPr>`;
+            uclRows += uclHCell('Specification Limit', shadeStr);
+            for (const c of fpQuantCols) {
+              let lim = (c.limit || '').trim();
+              if (lim) {
+                 if (!lim.startsWith('(')) lim = `(${lim})`;
+              } else {
+                 lim = '(--)';
+              }
+              uclRows += uclHCell(lim, shadeStr);
+            }
+            uclRows += `</w:tr>`;
+
+            const uclFmt = (num: number | undefined) => num !== undefined && !isNaN(num) ? num.toFixed(2) : 'N/A';
+
+            // Row 3: Average
+            uclRows += `<w:tr><w:trPr><w:trHeight w:val="350"/><w:jc w:val="center"/></w:trPr>`;
+            uclRows += uclDCell('Average');
+            for (const c of fpQuantCols) {
+              const s = fpColStats.get(c.key);
+              uclRows += uclDCell(uclFmt(s?.average));
+            }
+            uclRows += `</w:tr>`;
+
+            // Row 4: Std. Dev.
+            uclRows += `<w:tr><w:trPr><w:trHeight w:val="350"/><w:jc w:val="center"/></w:trPr>`;
+            uclRows += uclDCell('Std. Dev.');
+            for (const c of fpQuantCols) {
+              const s = fpColStats.get(c.key);
+              uclRows += uclDCell(uclFmt(s?.sigmaSample));
+            }
+            uclRows += `</w:tr>`;
+
+            // Row 5: Upper Control Limit (UCL)
+            uclRows += `<w:tr><w:trPr><w:trHeight w:val="350"/><w:jc w:val="center"/></w:trPr>`;
+            uclRows += uclDCell('Upper Control Limit (UCL)', true);
+            for (const c of fpQuantCols) {
+              const s = fpColStats.get(c.key);
+              const ucl = s ? s.average + (3 * s.sigmaSample) : undefined;
+              uclRows += uclDCell(uclFmt(ucl), true);
+            }
+            uclRows += `</w:tr>`;
+
+            // Row 6: Lower Control Limit (LCL)
+            uclRows += `<w:tr><w:trPr><w:trHeight w:val="350"/><w:jc w:val="center"/></w:trPr>`;
+            uclRows += uclDCell('Lower Control Limit (LCL)', true);
+            for (const c of fpQuantCols) {
+              const s = fpColStats.get(c.key);
+              const lcl = s ? s.average - (3 * s.sigmaSample) : undefined;
+              uclRows += uclDCell(uclFmt(lcl), true);
+            }
+            uclRows += `</w:tr>`;
+
+            const uclTableXml = `<w:tbl>${origTblPr532}${uclGrid}${uclRows}</w:tbl>`;
+            newXmlContent += uclTableXml;
+          }
+
           console.log(`  ✅ Section 5.3.2 FP CPK table added (${fpQuantCols.length} quantifiable columns)`);
         }
-      }
 
       // Replace everything between the start of the first table and the end of the remark table
       docXml = docXml.substring(0, sectionContentStart) + newXmlContent + docXml.substring(sectionContentEnd);
       console.log(`  ✅ Section 5.3.2 tables replaced. NonQuantCols: ${nonQuantCols.length}, QuantCols: ${quantCols.length}`);
+
+      // ── 11b. Dynamic Finished Stage Trend Charts ──
+      // rId-based paragraph lookup (DOCX fragments text in w:t so direct string search fails).
+
+      const batchNumsFP = data.finishInProcessData.map((r: any) => r.batchNo || '');
+
+      const buildStrCacheFP = (vals: string[]) => {
+        const pts = vals.map((v, i) => `<c:pt idx="${i}"><c:v>${xmlEscape(v)}</c:v></c:pt>`).join('');
+        return `<c:strCache><c:ptCount val="${vals.length}"/>${pts}</c:strCache>`;
+      };
+      const buildNumCacheFP = (vals: number[]) => {
+        const pts = vals.map((v, i) => `<c:pt idx="${i}"><c:v>${v}</c:v></c:pt>`).join('');
+        return `<c:numCache><c:formatCode>General</c:formatCode><c:ptCount val="${vals.length}"/>${pts}</c:numCache>`;
+      };
+      const buildSerNameFP = (name: string) => `<c:strCache><c:ptCount val="1"/><c:pt idx="0"><c:v>${xmlEscape(name)}</c:v></c:pt></c:strCache>`;
+      const limitLineFP = (val: number | undefined, n: number): number[] => Array(n).fill(val ?? 0);
+      const parseNumFP = (s: string): number => { const num = parseFloat(s.replace(/[^0-9.-]/g, '')); return isNaN(num) ? NaN : num; };
+      const parseLimitFP = (s: string): { nlt?: number; nmt?: number } => {
+        if (!s || typeof s !== 'string') return {};
+        const nmtM = s.match(/NMT\s+(\d+\.?\d*)/);
+        if (nmtM) {
+          const nltM = s.match(/NLT\s+(\d+\.?\d*)/);
+          return nltM ? { nlt: parseFloat(nltM[1]), nmt: parseFloat(nmtM[1]) } : { nmt: parseFloat(nmtM[1]) };
+        }
+        const nltM = s.match(/NLT\s+(\d+\.?\d*)/);
+        if (nltM) return { nlt: parseFloat(nltM[1]) };
+        return {};
+      };
+
+      const updateChartFP = (chartXml: string, series: { name: string; values: number[] }[]): string => {
+        let idx = 0;
+        return chartXml.replace(/<c:ser>([\s\S]*?)<\/c:ser>/g, (match, content) => {
+          if (idx >= series.length) return '';
+          const sd = series[idx++];
+          let updated = content;
+          updated = updated.replace(
+            /(<c:tx>[\s\S]*?<c:strRef>[\s\S]*?)<c:strCache>[\s\S]*?<\/c:strCache>([\s\S]*?<\/c:strRef>[\s\S]*?<\/c:tx>)/,
+            `$1${buildSerNameFP(sd.name)}$2`
+          );
+          updated = updated.replace(
+            /(<c:cat>[\s\S]*?<c:strRef>[\s\S]*?)<c:strCache>[\s\S]*?<\/c:strCache>([\s\S]*?<\/c:strRef>[\s\S]*?<\/c:cat>)/,
+            `$1${buildStrCacheFP(batchNumsFP)}$2`
+          );
+          updated = updated.replace(
+            /(<c:val>[\s\S]*?<c:numRef>[\s\S]*?)<c:numCache>[\s\S]*?<\/c:numCache>([\s\S]*?<\/c:numRef>[\s\S]*?<\/c:val>)/,
+            `$1${buildNumCacheFP(sd.values)}$2`
+          );
+          return `<c:ser>${updated}</c:ser>`;
+        });
+      };
+
+      // Parse rels to get rId for each chart6..10, then find/update/delete paragraphs
+      const relsXml = await zip.file('word/_rels/document.xml.rels')?.async('string') ?? '';
+
+      // Process in REVERSE order so deletions at higher indices don't shift lower-index offsets
+      for (let i = 4; i >= 0; i--) {
+        const chartNum = 6 + i;
+        const relRx = new RegExp(`Id="([^"]+)"[^>]*Target="charts/chart${chartNum}\\.xml"`);
+        const relM = relsXml.match(relRx);
+        if (!relM) { console.warn(`  ⚠️ No rId for chart${chartNum}.xml in rels`); continue; }
+        const rId = relM[1];
+        const rIdRef = `"${rId}"`;
+        const rIdIdx = docXml.indexOf(rIdRef);
+        if (rIdIdx === -1) { console.warn(`  ⚠️ rId ${rId} not in document.xml`); continue; }
+
+        // Drawing paragraph: walk back to find <w:p
+        const drawPStart = docXml.lastIndexOf('<w:p ', rIdIdx);
+        const drawPEnd = docXml.indexOf('</w:p>', rIdIdx) + 6;
+        // Heading paragraph: immediately preceding <w:p>...</w:p>
+        const prevPEnd = docXml.lastIndexOf('</w:p>', drawPStart - 1) + 6;
+        const prevPStart = docXml.lastIndexOf('<w:p ', prevPEnd - 1);
+
+        if (i < fpQuantCols.length) {
+          // Active slot: rewrite heading + update chart XML
+          const col = fpQuantCols[i];
+          const newHdr = `Trend Analysis of ${col.name} at Finished Stage:`;
+          const safeHdrXml = `<w:p><w:pPr><w:pStyle w:val="Heading4"/><w:jc w:val="left"/></w:pPr><w:r><w:rPr><w:b/><w:i/></w:rPr><w:t xml:space="preserve">${xmlEscape(newHdr)}</w:t></w:r></w:p>`;
+          docXml = docXml.substring(0, prevPStart) + safeHdrXml + docXml.substring(prevPEnd);
+
+          const cXmlRaw = await zip.file(`word/charts/chart${chartNum}.xml`)?.async('string');
+          if (cXmlRaw) {
+            const stat = fpColStats.get(col.key);
+            const chartVals = data.finishInProcessData.map((r: any) => parseNumFP(r.results[`${col.key}|||result`] || ''));
+            const clims = parseLimitFP(col.limit || '');
+            const chartUcl = stat ? stat.average + 3 * stat.sigmaSample : undefined;
+            const chartLcl = stat ? stat.average - 3 * stat.sigmaSample : undefined;
+            const nPoints = chartVals.length;
+            const cSeries: { name: string; values: number[] }[] = [
+              { name: col.name, values: chartVals.map((v: number) => isNaN(v) ? 0 : v) },
+            ];
+            if (clims.nlt !== undefined) cSeries.push({ name: `NLT ${clims.nlt}`, values: limitLineFP(clims.nlt, nPoints) });
+            if (clims.nmt !== undefined) cSeries.push({ name: `NMT ${clims.nmt}`, values: limitLineFP(clims.nmt, nPoints) });
+            if (chartUcl !== undefined) cSeries.push({ name: `UCL (NMT ${chartUcl.toFixed(2)})`, values: limitLineFP(chartUcl, nPoints) });
+            if (chartLcl !== undefined) cSeries.push({ name: `LCL (NLT ${chartLcl.toFixed(2)})`, values: limitLineFP(chartLcl, nPoints) });
+            zip.file(`word/charts/chart${chartNum}.xml`, updateChartFP(cXmlRaw, cSeries));
+            console.log(`  ✅ chart${chartNum}.xml updated for "${col.name}" (${nPoints} pts, UCL=${chartUcl?.toFixed(2)}, LCL=${chartLcl?.toFixed(2)})`);
+          }
+        } else {
+          // Inactive slot: delete heading + drawing paragraphs
+          docXml = docXml.substring(0, prevPStart) + docXml.substring(drawPEnd);
+          console.log(`  🗑️ Removed inactive chart slot chart${chartNum} (paramIdx=${i} >= ${fpQuantCols.length})`);
+        }
+      }
 
     } else {
       console.warn('Section 5.3.2: Could not find finish stage table in template — table not populated');

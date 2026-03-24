@@ -31,6 +31,7 @@ export default function InwardRegisterPage() {
         { key: 'inwardDate', label: 'Inward Date' },
         { key: 'vendorName', label: 'Vendor Name' },
         { key: 'materialName', label: 'Material Name' },
+        { key: 'manufacturedBy', label: 'Manufactured By' },
         { key: 'materialCode', label: 'Material Code' },
         { key: 'batchNumber', label: 'Batch No' },
         { key: 'arNumber', label: 'AR Number' },
@@ -362,6 +363,7 @@ export default function InwardRegisterPage() {
                                             <td style={{ padding: '0.75rem 1rem' }}>{item.inwardDate || '-'}</td>
                                             <td style={{ padding: '0.75rem 1rem', fontWeight: '500' }}>{item.vendorName}</td>
                                             <td style={{ padding: '0.75rem 1rem' }}>{item.materialName}</td>
+                                            <td style={{ padding: '0.75rem 1rem', fontStyle: 'italic', fontSize: '0.85rem' }}>{item.manufacturedBy || '-'}</td>
                                             <td style={{ padding: '0.75rem 1rem', fontFamily: 'monospace', fontSize: '0.85rem', color: 'var(--primary-700)' }}>{item.materialCode || '-'}</td>
                                             <td style={{ padding: '0.75rem 1rem' }}>{item.batchNumber || '-'}</td>
                                             <td style={{ padding: '0.75rem 1rem', color: item.arNumber ? 'var(--foreground)' : 'var(--muted-foreground)' }}>

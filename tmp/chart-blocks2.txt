@@ -1,0 +1,20 @@
+
+--- Header: Trend Analysis of pH at Finished Stage: ---
+Head Paragraph [1027661 - 1028462]
+Drawing Paragraph (+3) [1028930 - 1029903], rId: rId14
+
+--- Header: Trend Analysis of Uniformity of Filled Volume – 5ml at Finished Stage:  ---
+Head Paragraph [1039801 - 1041740]
+Drawing Paragraph (+2) [1042098 - 1043156], rId: rId15
+
+--- Header: Trend Analysis of Uniformity of Filled Volume – 10ml at Finished Stage:  ---
+Head Paragraph [1052711 - 1054214]
+Drawing Paragraph (+2) [1054572 - 1055629], rId: rId16
+
+--- Header: Trend Analysis of Osmolality at Finished Stage: ---
+Head Paragraph [1064312 - 1064954]
+Drawing Paragraph (+3) [1065422 - 1066400], rId: rId17
+
+--- Header: Trend Analysis of % Assay of Sodium Hyaluronate at Finished Stage:  ---
+Head Paragraph [1075173 - 1077357]
+Drawing Paragraph (+2) [1077715 - 1078793], rId: rId18

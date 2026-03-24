@@ -1,0 +1,13 @@
+Found 12 charts:
+word/charts/chart3.xml -> Title: A.R.No.
+word/charts/chart9.xml -> Title: No title
+word/charts/chart7.xml -> Title: No title
+word/charts/chart11.xml -> Title: No title
+word/charts/chart10.xml -> Title: No title
+word/charts/chart8.xml -> Title: No title
+word/charts/chart1.xml -> Title: A.R.No.
+word/charts/chart5.xml -> Title: No title
+word/charts/chart4.xml -> Title: No title
+word/charts/chart6.xml -> Title: No title
+word/charts/chart12.xml -> Title: No title
+word/charts/chart2.xml -> Title: A.R.No.

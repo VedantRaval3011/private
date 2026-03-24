@@ -48,7 +48,7 @@ export async function parseRmCoaXml(xmlContent: string, fileName: string): Promi
              testNumber: getStr(g1.MATTRNNO || g1.mattrnno),
              status: getStr(g1.STATUS || g1.status),
              
-             manufacturer: getStr(g1.MAKENM || g1.makenm || g1.MAKE || g1.make),
+             manufacturer: getStr(g1.MFGNAME || g1.mfgname || g1.MAKENM || g1.makenm || g1.MAKE || g1.make),
              supplier: getStr(g1.SUPPLIER || g1.supplier),
              quantity: getStr(g1.RECEIVEDQTY || g1.receivedqty),
              uom: getStr(g1.CUOM1 || g1.cuom1),

@@ -1,0 +1,11 @@
+Found Sid in header block.
+Item block starts at index: 1278
+Item block ends at index: 3008
+Tag <MATMAKE> found at index: 315
+Tag <MAKE> found at index: 1022
+Tag <ACNAME> found at index: 273
+Tag <MATINWDTLID> found at index: 2021
+Let's see what is inside G_MATINWDTLID:
+Item block content size: 1730
+Is MATMAKE in item block? false
+Is MAKE in item block? true
