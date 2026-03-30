@@ -533,27 +533,17 @@ export default function Home() {
             {/* Navigation */}
             <nav style={{
               display: 'flex',
-              gap: '0.5rem',
+              alignItems: 'center',
+              flexWrap: 'wrap',
+              gap: '0.35rem',
               background: 'rgba(255, 255, 255, 0.1)',
               padding: '0.375rem',
               borderRadius: 'var(--radius-lg)',
               backdropFilter: 'blur(10px)',
+              maxWidth: '100%',
             }}>
               {(() => {
                 const navItems: NavItem[] = [
-                  {
-                    kind: 'link',
-                    href: '/',
-                    label: 'Upload',
-                    requiresPermission: false,
-                    icon: (
-                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                        <polyline points="17 8 12 3 7 8" />
-                        <line x1="12" y1="3" x2="12" y2="15" />
-                      </svg>
-                    ),
-                  },
                   {
                     kind: 'link',
                     href: '/batch-data',
@@ -706,7 +696,7 @@ export default function Home() {
                 };
 
                 const linkStyleBase: React.CSSProperties = {
-                  padding: '0.625rem 1.25rem',
+                  padding: '0.4rem 0.7rem',
                   background: 'transparent',
                   color: 'white',
                   border: 'none',
@@ -717,6 +707,9 @@ export default function Home() {
                   display: 'flex',
                   alignItems: 'center',
                   gap: '0.5rem',
+                  whiteSpace: 'nowrap',
+                  fontSize: '0.75rem',
+                  lineHeight: 1.1,
                 };
 
                 return (
@@ -759,18 +752,21 @@ export default function Home() {
                       History
                     </button>
 
-                    {navItems.filter(canShow).map((item) => (
-                      <Link
-                        key={item.href}
-                        href={item.href}
-                        style={item.href === '/rejected-data'
-                          ? { ...linkStyleBase, background: 'rgba(220, 38, 38, 0.25)', border: '1px solid rgba(220,38,38,0.4)' }
-                          : linkStyleBase}
-                      >
-                        {item.icon}
-                        {item.label}
-                      </Link>
-                    ))}
+                    {navItems.filter(canShow).map((item) => {
+                      if (item.kind !== 'link') return null;
+                      return (
+                        <Link
+                          key={item.href}
+                          href={item.href}
+                          style={item.href === '/rejected-data'
+                            ? { ...linkStyleBase, background: 'rgba(220, 38, 38, 0.25)', border: '1px solid rgba(220,38,38,0.4)' }
+                            : linkStyleBase}
+                        >
+                          {item.icon}
+                          {item.label}
+                        </Link>
+                      );
+                    })}
 
                     {['admin', 'super-admin'].includes(currentUser?.role ?? '') && (
                       <Link
@@ -792,25 +788,27 @@ export default function Home() {
                       </Link>
                     )}
 
-                    <button
-                      type="button"
-                      onClick={() => logout()}
-                      style={{
-                        ...linkStyleBase,
-                        background: 'rgba(239, 68, 68, 0.25)',
-                        border: '1px solid rgba(239, 68, 68, 0.4)',
-                        cursor: 'pointer',
-                        fontWeight: '600',
-                      }}
-                      title="Log out"
-                    >
-                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
-                        <polyline points="16 17 21 12 16 7" />
-                        <line x1="21" y1="12" x2="9" y2="12" />
-                      </svg>
-                      Logout
-                    </button>
+                    <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center' }}>
+                      <button
+                        type="button"
+                        onClick={() => logout()}
+                        style={{
+                          ...linkStyleBase,
+                          background: 'rgba(239, 68, 68, 0.25)',
+                          border: '1px solid rgba(239, 68, 68, 0.4)',
+                          cursor: 'pointer',
+                          fontWeight: '600',
+                        }}
+                        title="Log out"
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                          <polyline points="16 17 21 12 16 7" />
+                          <line x1="21" y1="12" x2="9" y2="12" />
+                        </svg>
+                        Logout
+                      </button>
+                    </div>
                   </>
                 );
               })()}
