@@ -1,5 +1,5 @@
 import { parseStringPromise } from 'xml2js';
-import { IYieldItem } from '@/models/Yield';
+import { IYieldItem, IPackingDetail } from '@/models/Yield';
 
 /**
  * Parse a YIELDSTATEMENT XML file
@@ -109,7 +109,7 @@ export async function parseYieldXml(xmlContent: string): Promise<{
         }
 
         // Extract all packing items from LIST_G_PRODQTY
-        const packingDetails: { packing: string; qty: string; total: number }[] = [];
+        const packingDetails: IPackingDetail[] = [];
         let totalProducedQty = 0;
 
         const listGProdQty = item?.LIST_G_PRODQTY?.[0];

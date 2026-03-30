@@ -1,0 +1,87 @@
+﻿[dotenv@17.2.3] injecting env (1) from .env.local -- tip: ΓÜÖ∩╕Å  override existing env vars with { override: true }
+[dotenv@17.2.3] injecting env (0) from .env -- tip: ≡ƒöä add secrets lifecycle management: https://dotenvx.com/ops
+Connected to DB
+InwardRegisters for 1CALC09: [
+  {
+    ar: 'IWAIORM2300331.1',
+    mfg: 'LOBA CHEMIE PVT LTD',
+    vendor: 'SHRI VISHNU ENTERPRISE'
+  },
+  {
+    ar: 'IWAIORM2300331',
+    mfg: 'LOBA CHEMIE PVT LTD',
+    vendor: 'SHRI VISHNU ENTERPRISE'
+  },
+  {
+    ar: 'IWAIORM2300386.1',
+    mfg: 'AVANTOR PERFOR. MATE. (I) LTD',
+    vendor: 'MEHI DISTRIBUTORS'
+  },
+  {
+    ar: 'IW2IORM2100364.7',
+    mfg: 'AVANTOR PERFOR. MATE. (I) LTD',
+    vendor: 'GHANSHYAM TRADING CO.'
+  },
+  {
+    ar: 'IWAIORM2300331.3',
+    mfg: 'LOBA CHEMIE PVT LTD',
+    vendor: 'SHRI VISHNU ENTERPRISE'
+  },
+  {
+    ar: 'IWAIORM2500194',
+    mfg: 'AVANTOR PERFOR. MATE. (I) LTD',
+    vendor: 'RAKESH CHEMICALS (CHHATRAL)'
+  },
+  {
+    ar: 'IWAIORM2500360',
+    mfg: 'AVANTOR PERFOR. MATE. (I) LTD',
+    vendor: 'RAKESH CHEMICALS (CHHATRAL)'
+  },
+  {
+    ar: 'IWAIORM2500529',
+    mfg: 'KRONOX LAB SCIENCES PVT LTD',
+    vendor: 'KRONOX LAB SCIENCES PVT LTD'
+  },
+  {
+    ar: 'IWAIORM2500528',
+    mfg: 'KRONOX LAB SCIENCES PVT LTD',
+    vendor: 'KRONOX LAB SCIENCES PVT LTD'
+  },
+  {
+    ar: 'IWAIORM2500530',
+    mfg: 'KRONOX LAB SCIENCES PVT LTD',
+    vendor: 'KRONOX LAB SCIENCES PVT LTD'
+  }
+]
+RMCOAs for 1CALC09: [
+  {
+    ar: 'IW2IORM2100364.7',
+    mfg: 'INDIANA OPHTHALMICS LLP',
+    sup: 'GHANSHYAM TRADING CO.'
+  },
+  {
+    ar: 'IWAIORM2300386.1',
+    mfg: 'INDIANA OPHTHALMICS LLP',
+    sup: 'MEHI DISTRIBUTORS'
+  },
+  {
+    ar: 'IWAIORM2500194',
+    mfg: 'INDIANA OPHTHALMICS LLP',
+    sup: 'RAKESH CHEMICALS (CHHATRAL)'
+  },
+  {
+    ar: 'IWAIORM2100538.3',
+    mfg: 'INDIANA OPHTHALMICS LLP',
+    sup: 'INTAS PHARMACEUTICAL LTD.(LL)'
+  },
+  {
+    ar: 'IW2IORM2100364.8',
+    mfg: 'INDIANA OPHTHALMICS LLP',
+    sup: 'GHANSHYAM TRADING CO.'
+  },
+  {
+    ar: 'IWAIORM2300331',
+    mfg: 'INDIANA OPHTHALMICS LLP',
+    sup: 'SHRI VISHNU ENTERPRISE'
+  }
+]

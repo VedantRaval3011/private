@@ -35,6 +35,7 @@ const MasterFormulaDetailsSchema = new Schema({
 const BatchInfoSchema = new Schema({
   batchSize: { type: String, default: 'N/A' },
   labelClaim: { type: String, default: 'N/A' },
+  labelClaims: { type: [String], default: [] },
   marketedBy: { type: String },
   volume: { type: String },
 }, { _id: false });

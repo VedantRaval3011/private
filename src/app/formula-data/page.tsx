@@ -1541,6 +1541,26 @@ export default function FormulaDataPage() {
     const [mfcBatchData, setMfcBatchData] = useState<Record<string, BatchListItem[]>>({});
     const [mfcBatchDataLoading, setMfcBatchDataLoading] = useState<Set<string>>(new Set());
 
+    // Consignment Details per MFC (RM)
+    const [mfcConsignmentVisible, setMfcConsignmentVisible] = useState<Set<string>>(new Set());
+    const [mfcConsignmentData, setMfcConsignmentData] = useState<Record<string, any>>({});
+    const [mfcConsignmentLoading, setMfcConsignmentLoading] = useState<Set<string>>(new Set());
+
+    // PM Consignment Details per MFC
+    const [mfcPmConsignmentVisible, setMfcPmConsignmentVisible] = useState<Set<string>>(new Set());
+    const [mfcPmConsignmentData, setMfcPmConsignmentData] = useState<Record<string, any>>({});
+    const [mfcPmConsignmentLoading, setMfcPmConsignmentLoading] = useState<Set<string>>(new Set());
+    const [mfcPmYear, setMfcPmYear] = useState<Record<string, string>>({}); // formulaId → year string
+    // key = `${formulaId}__${materialCode}__${type}` where type = 'received' | 'rejected'
+    const [pmBreakdownVisible, setPmBreakdownVisible] = useState<Set<string>>(new Set());
+    // Ignore Renova make AR numbers (default ON per formula)
+    const [ignoreRenova, setIgnoreRenova] = useState<Record<string, boolean>>({});
+    const togglePmBreakdown = (key: string) => setPmBreakdownVisible(prev => {
+        const n = new Set(prev);
+        n.has(key) ? n.delete(key) : n.add(key);
+        return n;
+    });
+
     const toggleMfcBatchData = async (formulaId: string, formula: FormulaRecord) => {
         const isCurrentlyVisible = mfcBatchDataVisible.has(formulaId);
 
@@ -1599,6 +1619,70 @@ export default function FormulaDataPage() {
 
     const isMfcBatchDataLoading = (formulaId: string) => {
         return mfcBatchDataLoading.has(formulaId);
+    };
+
+    const toggleMfcConsignmentData = async (formulaId: string) => {
+        const isVisible = mfcConsignmentVisible.has(formulaId);
+        if (isVisible) {
+            setMfcConsignmentVisible(prev => { const n = new Set(prev); n.delete(formulaId); return n; });
+            return;
+        }
+        setMfcConsignmentVisible(prev => new Set(prev).add(formulaId));
+        if (!mfcConsignmentData[formulaId]) {
+            setMfcConsignmentLoading(prev => new Set(prev).add(formulaId));
+            try {
+                const res = await fetch('/api/formula/consignment-details', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ formulaId }),
+                });
+                const data = await res.json();
+                if (data.success) {
+                    setMfcConsignmentData(prev => ({ ...prev, [formulaId]: data }));
+                } else {
+                    setMfcConsignmentData(prev => ({ ...prev, [formulaId]: { error: data.error || 'Failed to load' } }));
+                }
+            } catch (err: any) {
+                setMfcConsignmentData(prev => ({ ...prev, [formulaId]: { error: err.message || 'Network error' } }));
+            } finally {
+                setMfcConsignmentLoading(prev => { const n = new Set(prev); n.delete(formulaId); return n; });
+            }
+        }
+    };
+
+    const fetchMfcPmConsignmentData = async (formulaId: string, year?: string) => {
+        setMfcPmConsignmentLoading(prev => new Set(prev).add(formulaId));
+        try {
+            const body: any = { formulaId };
+            if (year) body.year = parseInt(year);
+            const res = await fetch('/api/formula/pm-consignment-details', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            });
+            const data = await res.json();
+            if (data.success) {
+                setMfcPmConsignmentData(prev => ({ ...prev, [formulaId]: data }));
+            } else {
+                setMfcPmConsignmentData(prev => ({ ...prev, [formulaId]: { error: data.error || 'Failed to load' } }));
+            }
+        } catch (err: any) {
+            setMfcPmConsignmentData(prev => ({ ...prev, [formulaId]: { error: err.message || 'Network error' } }));
+        } finally {
+            setMfcPmConsignmentLoading(prev => { const n = new Set(prev); n.delete(formulaId); return n; });
+        }
+    };
+
+    const toggleMfcPmConsignmentData = async (formulaId: string) => {
+        const isVisible = mfcPmConsignmentVisible.has(formulaId);
+        if (isVisible) {
+            setMfcPmConsignmentVisible(prev => { const n = new Set(prev); n.delete(formulaId); return n; });
+            return;
+        }
+        setMfcPmConsignmentVisible(prev => new Set(prev).add(formulaId));
+        if (!mfcPmConsignmentData[formulaId]) {
+            await fetchMfcPmConsignmentData(formulaId, mfcPmYear[formulaId]);
+        }
     };
 
     // APQR Handler Functions
@@ -12693,6 +12777,498 @@ export default function FormulaDataPage() {
                                                             })()}
                                                         </div>
                                                     </Section>
+
+                                                    {/* Consignment Details Button + Panel */}
+                                                    {(() => {
+                                                        const fid = String(formula._id);
+                                                        const isVisible = mfcConsignmentVisible.has(fid);
+                                                        const isLoading = mfcConsignmentLoading.has(fid);
+                                                        const cData = mfcConsignmentData[fid];
+                                                        return (
+                                                            <div style={{ margin: '0.5rem 0 0.25rem' }}>
+                                                                <button
+                                                                    onClick={() => toggleMfcConsignmentData(fid)}
+                                                                    style={{
+                                                                        display: 'inline-flex',
+                                                                        alignItems: 'center',
+                                                                        gap: '0.5rem',
+                                                                        padding: '0.45rem 1rem',
+                                                                        background: isVisible ? '#1e40af' : 'linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%)',
+                                                                        color: '#fff',
+                                                                        border: 'none',
+                                                                        borderRadius: '6px',
+                                                                        fontSize: '0.82rem',
+                                                                        fontWeight: 600,
+                                                                        cursor: 'pointer',
+                                                                        letterSpacing: '0.01em',
+                                                                        boxShadow: '0 1px 4px rgba(37,99,235,0.18)',
+                                                                        transition: 'background 0.15s',
+                                                                    }}
+                                                                    disabled={isLoading}
+                                                                >
+                                                                    {isLoading ? (
+                                                                        <>
+                                                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ animation: 'spin 1s linear infinite' }}>
+                                                                                <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+                                                                            </svg>
+                                                                            Loading…
+                                                                        </>
+                                                                    ) : isVisible ? (
+                                                                        <>
+                                                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M18 15l-6-6-6 6" /></svg>
+                                                                            Hide Consignment Details
+                                                                            {cData && !cData.error && (
+                                                                                <span style={{ background: 'rgba(255,255,255,0.25)', borderRadius: '10px', padding: '0 6px', fontSize: '0.78em' }}>
+                                                                                    {cData.totalConsignments}
+                                                                                </span>
+                                                                            )}
+                                                                        </>
+                                                                    ) : (
+                                                                        <>
+                                                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M20 7H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2z" /><circle cx="12" cy="12" r="2" /></svg>
+                                                                            View Consignment Details
+                                                                        </>
+                                                                    )}
+                                                                </button>
+
+                                                                {isVisible && cData && (
+                                                                    <div style={{
+                                                                        marginTop: '0.75rem',
+                                                                        border: '1px solid #bfdbfe',
+                                                                        borderRadius: '8px',
+                                                                        background: '#f0f6ff',
+                                                                        overflow: 'hidden',
+                                                                    }}>
+                                                                        {/* Header */}
+                                                                        <div style={{
+                                                                            background: 'linear-gradient(135deg, #1e40af 0%, #1d4ed8 100%)',
+                                                                            color: '#fff',
+                                                                            padding: '0.6rem 1rem',
+                                                                            display: 'flex',
+                                                                            justifyContent: 'space-between',
+                                                                            alignItems: 'center',
+                                                                        }}>
+                                                                            <span style={{ fontWeight: 700, fontSize: '0.88rem', letterSpacing: '0.01em' }}>
+                                                                                Consignment Details — {cData.mfcNo || formula.masterFormulaDetails.masterCardNo}
+                                                                            </span>
+                                                                            {!cData.error && (
+                                                                                <span style={{
+                                                                                    background: 'rgba(255,255,255,0.2)',
+                                                                                    borderRadius: '12px',
+                                                                                    padding: '0.15rem 0.7rem',
+                                                                                    fontSize: '0.82rem',
+                                                                                    fontWeight: 600,
+                                                                                }}>
+                                                                                    {cData.totalConsignments} total consignment{cData.totalConsignments !== 1 ? 's' : ''}
+                                                                                </span>
+                                                                            )}
+                                                                        </div>
+
+                                                                        {cData.error ? (
+                                                                            <div style={{ padding: '1rem', color: '#b91c1c', fontSize: '0.85rem' }}>
+                                                                                Error: {cData.error}
+                                                                            </div>
+                                                                        ) : cData.materials && cData.materials.length === 0 ? (
+                                                                            <div style={{ padding: '1rem', color: '#6b7280', fontSize: '0.85rem' }}>
+                                                                                No consignment records found for this MFC.
+                                                                            </div>
+                                                                        ) : (
+                                                                            <div style={{ padding: '0.75rem' }}>
+                                                                                {(cData.materials || []).map((mat: any, mi: number) => (
+                                                                                    <div key={mat.materialCode} style={{
+                                                                                        marginBottom: mi < cData.materials.length - 1 ? '1rem' : 0,
+                                                                                        background: '#fff',
+                                                                                        border: '1px solid #dbeafe',
+                                                                                        borderRadius: '6px',
+                                                                                        overflow: 'hidden',
+                                                                                    }}>
+                                                                                        {/* Material header */}
+                                                                                        <div style={{
+                                                                                            background: '#eff6ff',
+                                                                                            padding: '0.45rem 0.75rem',
+                                                                                            display: 'flex',
+                                                                                            alignItems: 'center',
+                                                                                            gap: '0.5rem',
+                                                                                            borderBottom: '1px solid #dbeafe',
+                                                                                        }}>
+                                                                                            <span style={{ fontWeight: 700, fontSize: '0.85rem', color: '#1e3a8a' }}>
+                                                                                                {mat.materialName}
+                                                                                            </span>
+                                                                                            <span style={{ color: '#6b7280', fontSize: '0.78rem' }}>({mat.materialCode})</span>
+                                                                                            <span style={{
+                                                                                                marginLeft: 'auto',
+                                                                                                background: '#1d4ed8',
+                                                                                                color: '#fff',
+                                                                                                borderRadius: '10px',
+                                                                                                padding: '0.1rem 0.55rem',
+                                                                                                fontSize: '0.78rem',
+                                                                                                fontWeight: 600,
+                                                                                            }}>
+                                                                                                {mat.consignmentCount} consignment{mat.consignmentCount !== 1 ? 's' : ''}
+                                                                                            </span>
+                                                                                            <span style={{ background: '#e0e7ff', color: '#3730a3', borderRadius: '6px', padding: '0.1rem 0.4rem', fontSize: '0.72rem' }}>
+                                                                                                {mat.processName}
+                                                                                            </span>
+                                                                                        </div>
+
+                                                                                        {/* AR table */}
+                                                                                        <div style={{ overflowX: 'auto' }}>
+                                                                                            <table style={{ width: '100%', fontSize: '0.78rem', borderCollapse: 'collapse' }}>
+                                                                                                <thead>
+                                                                                                    <tr style={{ background: '#f8faff' }}>
+                                                                                                        {['#', 'AR Number', 'Inward No', 'Inward Date', 'Vendor / Mfr', 'Rcvd Qty', 'Acc Qty', 'Rej Qty', 'Unit', 'Batches Used'].map(h => (
+                                                                                                            <th key={h} style={{
+                                                                                                                padding: '0.35rem 0.6rem',
+                                                                                                                textAlign: 'left',
+                                                                                                                fontWeight: 600,
+                                                                                                                color: '#374151',
+                                                                                                                borderBottom: '1px solid #e5e7eb',
+                                                                                                                whiteSpace: 'nowrap',
+                                                                                                            }}>{h}</th>
+                                                                                                        ))}
+                                                                                                    </tr>
+                                                                                                </thead>
+                                                                                                <tbody>
+                                                                                                    {mat.arDetails.map((ar: any, ai: number) => (
+                                                                                                        <tr key={ar.arNumber} style={{ background: ai % 2 === 0 ? '#fff' : '#f8faff' }}>
+                                                                                                            <td style={{ padding: '0.3rem 0.6rem', color: '#9ca3af', borderBottom: '1px solid #f3f4f6' }}>{ai + 1}</td>
+                                                                                                            <td style={{ padding: '0.3rem 0.6rem', fontWeight: 600, color: '#1e40af', borderBottom: '1px solid #f3f4f6', whiteSpace: 'nowrap' }}>{ar.arNumber}</td>
+                                                                                                            <td style={{ padding: '0.3rem 0.6rem', color: '#374151', borderBottom: '1px solid #f3f4f6', whiteSpace: 'nowrap' }}>{ar.inwardNumber || '—'}</td>
+                                                                                                            <td style={{ padding: '0.3rem 0.6rem', color: '#374151', borderBottom: '1px solid #f3f4f6', whiteSpace: 'nowrap' }}>{ar.inwardDate || '—'}</td>
+                                                                                                            <td style={{ padding: '0.3rem 0.6rem', color: '#374151', borderBottom: '1px solid #f3f4f6', maxWidth: '160px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={ar.manufacturedBy || ar.vendorName}>
+                                                                                                                {ar.manufacturedBy || ar.vendorName || '—'}
+                                                                                                            </td>
+                                                                                                            <td style={{ padding: '0.3rem 0.6rem', color: '#374151', borderBottom: '1px solid #f3f4f6', textAlign: 'right' }}>{ar.receivedQuantity != null ? ar.receivedQuantity : '—'}</td>
+                                                                                                            <td style={{ padding: '0.3rem 0.6rem', color: '#059669', borderBottom: '1px solid #f3f4f6', textAlign: 'right' }}>{ar.acceptedQuantity != null ? ar.acceptedQuantity : '—'}</td>
+                                                                                                            <td style={{ padding: '0.3rem 0.6rem', color: ar.rejectedQuantity ? '#dc2626' : '#9ca3af', borderBottom: '1px solid #f3f4f6', textAlign: 'right' }}>{ar.rejectedQuantity != null ? ar.rejectedQuantity : '—'}</td>
+                                                                                                            <td style={{ padding: '0.3rem 0.6rem', color: '#6b7280', borderBottom: '1px solid #f3f4f6' }}>{ar.unit || '—'}</td>
+                                                                                                            <td style={{ padding: '0.3rem 0.6rem', borderBottom: '1px solid #f3f4f6' }}>
+                                                                                                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '3px' }}>
+                                                                                                                    {ar.batchNumbers && ar.batchNumbers.length > 0
+                                                                                                                        ? ar.batchNumbers.map((bn: string) => (
+                                                                                                                            <span key={bn} style={{
+                                                                                                                                background: '#dbeafe',
+                                                                                                                                color: '#1e40af',
+                                                                                                                                borderRadius: '4px',
+                                                                                                                                padding: '0 4px',
+                                                                                                                                fontSize: '0.72rem',
+                                                                                                                                whiteSpace: 'nowrap',
+                                                                                                                            }}>{bn}</span>
+                                                                                                                        ))
+                                                                                                                        : <span style={{ color: '#9ca3af' }}>—</span>
+                                                                                                                    }
+                                                                                                                </div>
+                                                                                                            </td>
+                                                                                                        </tr>
+                                                                                                    ))}
+                                                                                                </tbody>
+                                                                                            </table>
+                                                                                        </div>
+                                                                                    </div>
+                                                                                ))}
+                                                                            </div>
+                                                                        )}
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        );
+                                                    })()}
+
+                                                    {/* PM Consignment Details Button + Panel */}
+                                                    {(() => {
+                                                        const fid = String(formula._id);
+                                                        const isVisible = mfcPmConsignmentVisible.has(fid);
+                                                        const isLoading = mfcPmConsignmentLoading.has(fid);
+                                                        const pmData = mfcPmConsignmentData[fid];
+                                                        const isIgnoringRenova = ignoreRenova[fid] !== false; // default true
+                                                        return (
+                                                            <div style={{ margin: '0.5rem 0 0.25rem' }}>
+                                                                <button
+                                                                    onClick={() => toggleMfcPmConsignmentData(fid)}
+                                                                    style={{
+                                                                        display: 'inline-flex',
+                                                                        alignItems: 'center',
+                                                                        gap: '0.4rem',
+                                                                        padding: '0.45rem 1rem',
+                                                                        background: isVisible
+                                                                            ? 'linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%)'
+                                                                            : 'linear-gradient(135deg, #6d28d9 0%, #7c3aed 100%)',
+                                                                        color: '#fff',
+                                                                        border: 'none',
+                                                                        borderRadius: '6px',
+                                                                        cursor: 'pointer',
+                                                                        fontSize: '0.82rem',
+                                                                        fontWeight: 600,
+                                                                        boxShadow: '0 1px 4px rgba(109,40,217,0.25)',
+                                                                        transition: 'opacity 0.15s',
+                                                                        opacity: isLoading ? 0.7 : 1,
+                                                                    }}
+                                                                    disabled={isLoading}
+                                                                >
+                                                                    {isLoading ? (
+                                                                        <>
+                                                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ animation: 'spin 1s linear infinite' }}><path d="M21 12a9 9 0 1 1-6.219-8.56" /></svg>
+                                                                            Loading PM Consignments…
+                                                                        </>
+                                                                    ) : isVisible ? (
+                                                                        <>
+                                                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M18 15l-6-6-6 6" /></svg>
+                                                                            Hide PM Consignment Details
+                                                                            {pmData && !pmData.error && (
+                                                                                <span style={{ background: 'rgba(255,255,255,0.25)', borderRadius: '10px', padding: '0 6px', fontSize: '0.78em' }}>
+                                                                                    {pmData.materials?.length ?? 0}
+                                                                                </span>
+                                                                            )}
+                                                                        </>
+                                                                    ) : (
+                                                                        <>
+                                                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><rect x="2" y="3" width="20" height="14" rx="2" /><path d="M8 21h8M12 17v4" /></svg>
+                                                                            View PM Consignment Details
+                                                                        </>
+                                                                    )}
+                                                                </button>
+
+                                                                {isVisible && pmData && (
+                                                                    <div style={{
+                                                                        marginTop: '0.5rem',
+                                                                        border: '1px solid #ddd6fe',
+                                                                        borderRadius: '8px',
+                                                                        overflow: 'hidden',
+                                                                        background: '#faf5ff',
+                                                                    }}>
+                                                                        {/* Header */}
+                                                                        <div style={{
+                                                                            background: 'linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%)',
+                                                                            color: '#fff',
+                                                                            padding: '0.6rem 0.85rem',
+                                                                            display: 'flex',
+                                                                            alignItems: 'center',
+                                                                            gap: '0.75rem',
+                                                                            flexWrap: 'wrap',
+                                                                        }}>
+                                                                            <span style={{ fontWeight: 700, fontSize: '0.88rem', letterSpacing: '0.01em' }}>
+                                                                                PM Consignment Details — {pmData.mfcNo || formula.masterFormulaDetails.masterCardNo}
+                                                                            </span>
+                                                                            {!pmData.error && (
+                                                                                <span style={{
+                                                                                    background: 'rgba(255,255,255,0.2)',
+                                                                                    borderRadius: '12px',
+                                                                                    padding: '0.15rem 0.7rem',
+                                                                                    fontSize: '0.82rem',
+                                                                                    fontWeight: 600,
+                                                                                }}>
+                                                                                    {pmData.materials?.length ?? 0} material{(pmData.materials?.length ?? 0) !== 1 ? 's' : ''}
+                                                                                </span>
+                                                                            )}
+                                                                            {/* Year filter + Renova toggle */}
+                                                                            <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
+                                                                                {/* Renova ignore toggle */}
+                                                                                <button
+                                                                                    onClick={() => setIgnoreRenova(prev => ({ ...prev, [fid]: !isIgnoringRenova }))}
+                                                                                    title={isIgnoringRenova ? 'Renova AR numbers are being excluded from totals. Click to include them.' : 'Renova AR numbers are included. Click to exclude them.'}
+                                                                                    style={{
+                                                                                        display: 'inline-flex',
+                                                                                        alignItems: 'center',
+                                                                                        gap: '0.3rem',
+                                                                                        padding: '0.2rem 0.6rem',
+                                                                                        background: isIgnoringRenova ? 'rgba(239,68,68,0.85)' : 'rgba(255,255,255,0.15)',
+                                                                                        color: '#fff',
+                                                                                        border: '1px solid rgba(255,255,255,0.4)',
+                                                                                        borderRadius: '6px',
+                                                                                        fontSize: '0.78rem',
+                                                                                        fontWeight: 600,
+                                                                                        cursor: 'pointer',
+                                                                                        whiteSpace: 'nowrap',
+                                                                                    }}
+                                                                                >
+                                                                                    <span style={{ fontSize: '0.7rem', opacity: 0.9 }}>{isIgnoringRenova ? '✕' : '✓'}</span>
+                                                                                    Ignore Renova
+                                                                                </button>
+                                                                                <label style={{ fontSize: '0.78rem', fontWeight: 600, opacity: 0.85 }}>Filter by Year:</label>
+                                                                                <select
+                                                                                    value={mfcPmYear[fid] || ''}
+                                                                                    disabled={isLoading}
+                                                                                    onChange={async e => {
+                                                                                        const yr = e.target.value;
+                                                                                        setMfcPmYear(prev => ({ ...prev, [fid]: yr }));
+                                                                                        setPmBreakdownVisible(new Set()); // close any open breakdowns
+                                                                                        await fetchMfcPmConsignmentData(fid, yr || undefined);
+                                                                                    }}
+                                                                                    style={{
+                                                                                        background: 'rgba(255,255,255,0.15)',
+                                                                                        color: '#fff',
+                                                                                        border: '1px solid rgba(255,255,255,0.4)',
+                                                                                        borderRadius: '6px',
+                                                                                        padding: '0.2rem 0.5rem',
+                                                                                        fontSize: '0.82rem',
+                                                                                        fontWeight: 600,
+                                                                                        cursor: 'pointer',
+                                                                                    }}
+                                                                                >
+                                                                                    <option value="" style={{ background: '#6d28d9' }}>All Years</option>
+                                                                                    {Array.from({ length: new Date().getFullYear() - 2022 }, (_, i) => new Date().getFullYear() - i).map(y => (
+                                                                                        <option key={y} value={String(y)} style={{ background: '#6d28d9' }}>{y}</option>
+                                                                                    ))}
+                                                                                </select>
+                                                                            </div>
+                                                                        </div>
+
+                                                                        {pmData.error ? (
+                                                                            <div style={{ padding: '1rem', color: '#b91c1c', fontSize: '0.85rem' }}>
+                                                                                Error: {pmData.error}
+                                                                            </div>
+                                                                        ) : pmData.materials && pmData.materials.length === 0 ? (
+                                                                            <div style={{ padding: '1rem', color: '#6b7280', fontSize: '0.85rem' }}>
+                                                                                No PM consignment records found for this MFC.
+                                                                            </div>
+                                                                        ) : (
+                                                                            <div style={{ padding: '0.75rem' }}>
+                                                                                {(pmData.materials || []).map((mat: any, mi: number) => (
+                                                                                    <div key={mat.materialCode} style={{
+                                                                                        marginBottom: mi < pmData.materials.length - 1 ? '1rem' : 0,
+                                                                                        background: '#fff',
+                                                                                        border: '1px solid #ddd6fe',
+                                                                                        borderRadius: '6px',
+                                                                                        overflow: 'hidden',
+                                                                                    }}>
+                                                                                        {/* Material header */}
+                                                                                        {(() => {
+                                                                                            const fid = String(formula._id);
+                                                                                            const rKey = `${fid}__${mat.materialCode}__received`;
+                                                                                            const jKey = `${fid}__${mat.materialCode}__rejected`;
+                                                                                            const rOpen = pmBreakdownVisible.has(rKey);
+                                                                                            const jOpen = pmBreakdownVisible.has(jKey);
+                                                                                            const makeByAr: Record<string, string> = mat.makeByAr || {};
+                                                                                            const isRenova = (ar: string) => /renova/i.test(makeByAr[ar] || '');
+                                                                                            // Filtered AR arrays (Renova excluded when toggle is ON)
+                                                                                            const receivedArs: string[] = mat.receivedArNumbers || [];
+                                                                                            const rejectedArs: string[] = mat.rejectedArNumbers || [];
+                                                                                            const effReceivedArs = isIgnoringRenova ? receivedArs.filter(ar => !isRenova(ar)) : receivedArs;
+                                                                                            const effRejectedArs = isIgnoringRenova ? rejectedArs.filter(ar => !isRenova(ar)) : rejectedArs;
+                                                                                            const renovaReceivedArs = receivedArs.filter(ar => isRenova(ar));
+                                                                                            const effReceivedCount = effReceivedArs.length;
+                                                                                            const effRejectedCount = effRejectedArs.length;
+                                                                                            const effReleasedCount = effReceivedCount - effRejectedCount;
+                                                                                            return (<>
+                                                                                        <div style={{
+                                                                                            background: '#f5f3ff',
+                                                                                            padding: '0.45rem 0.75rem',
+                                                                                            display: 'flex',
+                                                                                            alignItems: 'center',
+                                                                                            gap: '0.5rem',
+                                                                                            borderBottom: '1px solid #ddd6fe',
+                                                                                            flexWrap: 'wrap',
+                                                                                        }}>
+                                                                                            <span style={{ fontWeight: 700, fontSize: '0.85rem', color: '#4c1d95' }}>{mat.materialName}</span>
+                                                                                            <span style={{ color: '#6b7280', fontSize: '0.78rem' }}>({mat.materialCode})</span>
+                                                                                            {isIgnoringRenova && renovaReceivedArs.length > 0 && (
+                                                                                                <span style={{ background: '#fef3c7', color: '#92400e', borderRadius: '6px', padding: '0.1rem 0.45rem', fontSize: '0.72rem', fontWeight: 600 }}>
+                                                                                                    {renovaReceivedArs.length} Renova ignored
+                                                                                                </span>
+                                                                                            )}
+                                                                                            <span style={{ marginLeft: 'auto', display: 'flex', gap: '0.4rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                                                                                                <button onClick={() => togglePmBreakdown(rKey)} title="Click to see all received AR numbers" style={{ background: rOpen ? '#059669' : '#d1fae5', color: rOpen ? '#fff' : '#065f46', borderRadius: '8px', padding: '0.15rem 0.55rem', fontSize: '0.75rem', fontWeight: 600, border: 'none', cursor: 'pointer' }}>
+                                                                                                    Received: {effReceivedCount} {rOpen ? '▲' : '▼'}
+                                                                                                </button>
+                                                                                                <span style={{ background: '#dbeafe', color: '#1e40af', borderRadius: '8px', padding: '0.15rem 0.55rem', fontSize: '0.75rem', fontWeight: 600 }}>
+                                                                                                    Released: {effReleasedCount}
+                                                                                                </span>
+                                                                                                {effRejectedCount > 0 ? (
+                                                                                                    <button onClick={() => togglePmBreakdown(jKey)} title="Click to see rejected AR numbers" style={{ background: jOpen ? '#b91c1c' : '#fee2e2', color: jOpen ? '#fff' : '#b91c1c', borderRadius: '8px', padding: '0.15rem 0.55rem', fontSize: '0.75rem', fontWeight: 600, border: 'none', cursor: 'pointer' }}>
+                                                                                                        Rejected: {effRejectedCount} {jOpen ? '▲' : '▼'}
+                                                                                                    </button>
+                                                                                                ) : (
+                                                                                                    <span style={{ background: '#f3f4f6', color: '#6b7280', borderRadius: '8px', padding: '0.15rem 0.55rem', fontSize: '0.75rem', fontWeight: 600 }}>Rejected: NIL</span>
+                                                                                                )}
+                                                                                            </span>
+                                                                                        </div>
+
+                                                                                        {/* Breakdown panels */}
+                                                                                        {rOpen && receivedArs.length > 0 && (
+                                                                                            <div style={{ background: '#ecfdf5', borderBottom: '1px solid #a7f3d0', padding: '0.5rem 0.75rem' }}>
+                                                                                                <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#065f46', marginBottom: '0.35rem' }}>
+                                                                                                    All {receivedArs.length} AR numbers in Inward Register for this material{isIgnoringRenova && renovaReceivedArs.length > 0 ? ` (${renovaReceivedArs.length} Renova shown separately)` : ''}:
+                                                                                                </div>
+                                                                                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                                                                                                    {receivedArs.map((ar: string) => {
+                                                                                                        const isRen = isRenova(ar);
+                                                                                                        const ignored = isIgnoringRenova && isRen;
+                                                                                                        const make = makeByAr[ar];
+                                                                                                        return (
+                                                                                                            <span key={ar} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.2rem', background: ignored ? '#f3f4f6' : '#d1fae5', borderRadius: '4px', padding: '0.1rem 0.4rem', fontSize: '0.72rem', whiteSpace: 'nowrap', opacity: ignored ? 0.65 : 1 }}>
+                                                                                                                <span style={{ fontWeight: 600, color: ignored ? '#9ca3af' : '#065f46', textDecoration: ignored ? 'line-through' : 'none' }}>{ar}</span>
+                                                                                                                {make && <span style={{ fontWeight: 400, color: ignored ? '#9ca3af' : '#047857', fontSize: '0.68rem' }}>{make}</span>}
+                                                                                                            </span>
+                                                                                                        );
+                                                                                                    })}
+                                                                                                </div>
+                                                                                            </div>
+                                                                                        )}
+                                                                                        {jOpen && rejectedArs.length > 0 && (
+                                                                                            <div style={{ background: '#fef2f2', borderBottom: '1px solid #fecaca', padding: '0.5rem 0.75rem' }}>
+                                                                                                <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#b91c1c', marginBottom: '0.35rem' }}>
+                                                                                                    {rejectedArs.length} rejected AR number(s) from Material Rejection records:
+                                                                                                </div>
+                                                                                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                                                                                                    {rejectedArs.map((ar: string) => {
+                                                                                                        const ignored = isIgnoringRenova && isRenova(ar);
+                                                                                                        return (
+                                                                                                            <span key={ar} style={{ background: ignored ? '#f3f4f6' : '#fee2e2', color: ignored ? '#9ca3af' : '#b91c1c', borderRadius: '4px', padding: '0.1rem 0.4rem', fontSize: '0.72rem', fontWeight: 600, whiteSpace: 'nowrap', textDecoration: ignored ? 'line-through' : 'none', opacity: ignored ? 0.65 : 1 }}>
+                                                                                                                {ar}
+                                                                                                            </span>
+                                                                                                        );
+                                                                                                    })}
+                                                                                                </div>
+                                                                                            </div>
+                                                                                        )}
+
+                                                                                        {/* AR Details table — AR numbers used in batches */}
+                                                                                        <div style={{ overflowX: 'auto' }}>
+                                                                                            <table style={{ width: '100%', fontSize: '0.78rem', borderCollapse: 'collapse' }}>
+                                                                                                <thead>
+                                                                                                    <tr style={{ background: '#f5f3ff' }}>
+                                                                                                        {['SR.NO.', 'A.R. Number', 'Used for Batch Number'].map(h => (
+                                                                                                            <th key={h} style={{ padding: '0.35rem 0.6rem', textAlign: 'left', fontWeight: 600, color: '#4c1d95', borderBottom: '1px solid #ddd6fe', whiteSpace: 'nowrap' }}>{h}</th>
+                                                                                                        ))}
+                                                                                                    </tr>
+                                                                                                </thead>
+                                                                                                <tbody>
+                                                                                                    {mat.arDetails.map((ar: any, ai: number) => {
+                                                                                                        const ignored = isIgnoringRenova && isRenova(ar.arNumber);
+                                                                                                        return (
+                                                                                                        <tr key={ar.arNumber} style={{ background: ignored ? '#fafafa' : ai % 2 === 0 ? '#fff' : '#faf5ff', opacity: ignored ? 0.55 : 1 }}>
+                                                                                                            <td style={{ padding: '0.3rem 0.6rem', color: '#9ca3af', borderBottom: '1px solid #f3f4f6', width: '3rem' }}>{ai + 1}</td>
+                                                                                                            <td style={{ padding: '0.3rem 0.6rem', fontWeight: 600, color: ignored ? '#9ca3af' : '#5b21b6', borderBottom: '1px solid #f3f4f6', whiteSpace: 'nowrap', textDecoration: ignored ? 'line-through' : 'none' }}>
+                                                                                                                {ar.arNumber}
+                                                                                                                {ignored && <span style={{ marginLeft: '0.3rem', fontSize: '0.68rem', fontWeight: 400, color: '#d97706', textDecoration: 'none' }}>(Renova)</span>}
+                                                                                                            </td>
+                                                                                                            <td style={{ padding: '0.3rem 0.6rem', borderBottom: '1px solid #f3f4f6' }}>
+                                                                                                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '3px' }}>
+                                                                                                                    {ar.batchNumbers && ar.batchNumbers.length > 0
+                                                                                                                        ? ar.batchNumbers.map((bn: string) => (
+                                                                                                                            <span key={bn} style={{ background: ignored ? '#f3f4f6' : '#ede9fe', color: ignored ? '#9ca3af' : '#5b21b6', borderRadius: '4px', padding: '0 4px', fontSize: '0.72rem', whiteSpace: 'nowrap' }}>{bn}</span>
+                                                                                                                        ))
+                                                                                                                        : <span style={{ color: '#9ca3af' }}>—</span>
+                                                                                                                    }
+                                                                                                                </div>
+                                                                                                            </td>
+                                                                                                        </tr>
+                                                                                                        );
+                                                                                                    })}
+                                                                                                </tbody>
+                                                                                            </table>
+                                                                                        </div>
+                                                                                        </>);
+                                                                                        })()}
+                                                                                    </div>
+                                                                                ))}
+                                                                            </div>
+                                                                        )}
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        );
+                                                    })()}
 
                                                     {/* Batch Information */}
                                                     <Section

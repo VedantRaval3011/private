@@ -29,6 +29,7 @@ export interface InwardRegisterRecord {
     sourceFile: string;
     uploadedAt: Date;
     manufacturedBy?: string;
+    make?: string;
     contentHash?: string;
     parsingStatus?: 'success' | 'partial' | 'failed';
     parsingWarnings?: string[];

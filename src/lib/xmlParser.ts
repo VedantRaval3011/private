@@ -325,11 +325,26 @@ function extractMasterFormulaDetails(data: unknown): MasterFormulaDetails {
 
 function extractBatchInfo(data: unknown): BatchInfo {
   const g1 = data as Record<string, unknown>;
-  
+
+  const claim1 = findValueCaseInsensitive(g1, ['LABELCLAIM', 'LABEL_CLAIM', 'LBLCLAIM1'], 'N/A');
+
+  // Collect additional label claims (LBLCLAIM2, LBLCLAIM3, …) dynamically
+  const labelClaims: string[] = [];
+  if (claim1 && claim1 !== 'N/A') labelClaims.push(claim1);
+  for (let i = 2; i <= 10; i++) {
+    const claimN = findValueCaseInsensitive(g1, [`LBLCLAIM${i}`, `LABELCLAIM${i}`, `LABEL_CLAIM${i}`], '');
+    if (claimN && claimN.trim() && claimN !== 'N/A') {
+      labelClaims.push(claimN);
+    } else {
+      break; // Stop at first missing index
+    }
+  }
+
   return {
-    batchSize: findValueCaseInsensitive(g1, ['BATCHSIZE1', 'BATCH_SIZE', 'BATCHSIZE', 'STD_BATCH_SIZE'], 'N/A') + 
+    batchSize: findValueCaseInsensitive(g1, ['BATCHSIZE1', 'BATCH_SIZE', 'BATCHSIZE', 'STD_BATCH_SIZE'], 'N/A') +
                ' ' + findValueCaseInsensitive(g1, ['BATCHUOM1', 'BATCH_UOM', 'BATCHUOM'], ''),
-    labelClaim: findValueCaseInsensitive(g1, ['LABELCLAIM', 'LABEL_CLAIM', 'LBLCLAIM1'], 'N/A'),
+    labelClaim: claim1,
+    labelClaims,
     marketedBy: findValueCaseInsensitive(g1, ['MKTBY', 'MARKETED_BY', 'MARKETEDBY'], undefined as unknown as string),
     volume: findValueCaseInsensitive(g1, ['PACK1', 'VOLUME', 'VOL'], undefined as unknown as string),
   };

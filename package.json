@@ -9,9 +9,13 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/jsonwebtoken": "^9.0.10",
+    "bcryptjs": "^3.0.3",
     "docx": "^9.5.2",
     "fast-xml-parser": "^5.3.3",
     "framer-motion": "^12.23.26",
+    "jsonwebtoken": "^9.0.3",
     "jszip": "^3.10.1",
     "katex": "^0.16.33",
     "lucide-react": "^0.562.0",
@@ -34,11 +38,13 @@
     "@types/react-katex": "^3.0.4",
     "@types/uuid": "^11.0.0",
     "@types/xml2js": "^0.4.14",
+    "autoprefixer": "^10.4.27",
     "babel-plugin-react-compiler": "1.0.0",
     "dotenv": "^17.2.3",
     "eslint": "^9",
     "eslint-config-next": "16.0.10",
-    "tailwindcss": "^4",
+    "postcss": "^8.5.8",
+    "tailwindcss": "^4.2.2",
     "typescript": "^5"
   }
 }

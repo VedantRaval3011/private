@@ -166,16 +166,16 @@ interface RMTestRow512 {
   arNumber: string;
   description: string;
   ph: string;
-  lod: string;
-  assay: string;
+  water: string;
+  assays: Record<string, string>; // keyed by spec name e.g. { "IP": "99.68", "USP": "99.60" }
 }
 
 interface RMTestMaterial512 {
   materialCode: string;
   materialName: string;
   phLimit: string;
-  lodLimit: string;
-  assayLimit: string;
+  waterLimit: string;
+  assaySpecs: { specName: string; limit: string }[]; // dynamic: [{ specName:"IP", limit:"..." }, ...]
   rows: RMTestRow512[];
 }
 
@@ -204,27 +204,80 @@ interface FinishInProcessRow {
   results: Record<string, string>;
 }
 
-// Known pharmacopoeial spec tokens (longer first to avoid partial matches)
 const KNOWN_SPECS = [
-  'IP/USP/NF', 'IP/BP/NF', 'IP/BP/IH', 'IP/USP', 'BP/NF', 'USP/NF',
-  'IP/NF', 'IP/BP', 'IP', 'BP', 'USP', 'NF', 'IH', 'EP', 'JP'
+  'IP/BP/USP/NF', 'IP/USP/NF', 'IP/BP/USP', 'IP/BP/NF', 'IP/BP/IH',
+  'IP/USP', 'BP/NF', 'USP/NF', 'IP/NF', 'IP/BP',
+  'IP', 'BP', 'USP', 'NF', 'IH', 'EP', 'JP'
 ];
+// Run-together spec strings found in some DB records (no slashes/spaces)
+const RUN_TOGETHER_SPECS: Record<string, string> = {
+  'IBPBPUSPNF': 'IP/BP/USP/NF',
+  'IPBPUSPNF': 'IP/BP/USP/NF',
+  'IPUSPNF': 'IP/USP/NF',
+  'IPBPUSP': 'IP/BP/USP',
+  'IPBPNF': 'IP/BP/NF',
+  'IPBPIH': 'IP/BP/IH',
+  'IPUSP': 'IP/USP',
+  'BPNF': 'BP/NF',
+  'USPNF': 'USP/NF',
+  'IPNF': 'IP/NF',
+  'IPBP': 'IP/BP',
+};
 
 /**
  * Splits a material name that may contain a trailing spec token.
- * e.g. "NAPHAZOLINE HYDROCHLORIDE USP" -> { name: "NAPHAZOLINE HYDROCHLORIDE", spec: "USP" }
+ * Handles three patterns:
+ *   1. Spec at end:           "SODIUM CHLORIDE IP/USP"
+ *   2. Spec + qualifier:      "CARBOXY METHYL CELLULOSE IP/BP/USP (STERILE)"
+ *   3. Run-together spec:     "SODIUM CHLORIDE IBPBPUSPNF"
+ * Also strips trailing punctuation (periods, commas) before matching.
  */
 function splitMaterialNameAndSpec(fullName: string): { name: string; spec: string } {
   const trimmed = fullName.trim();
-  const upper = trimmed.toUpperCase();
+  // Strip trailing punctuation before matching (e.g. "GLYCERIN IP/NF.")
+  const cleaned = trimmed.replace(/[.,;]+$/, '').trim();
+  const upper = cleaned.toUpperCase();
+
+  // Pattern 1: spec at the very end — "SODIUM CHLORIDE IP/USP"
   for (const spec of KNOWN_SPECS) {
     if (upper.endsWith(' ' + spec)) {
       return {
-        name: trimmed.slice(0, trimmed.length - spec.length - 1).trim(),
+        name: cleaned.slice(0, cleaned.length - spec.length - 1).trim(),
         spec
       };
     }
   }
+
+  // Pattern 2: spec followed by optional parenthetical qualifier
+  // e.g. "CARBOXY METHYL CELLULOSE SODIUM IP/BP/USP (STERILE)"
+  // e.g. "CARBOXY METHYL CELLULOSE SODIUM(STERILE) IP/BP/USP"
+  for (const spec of KNOWN_SPECS) {
+    const escapedSpec = spec.replace(/\//g, '\\/');
+    const pattern = new RegExp(`^(.+?)\\s+${escapedSpec}\\s*(\\([^)]*\\))?\\s*$`);
+    const m = upper.match(pattern);
+    if (m) {
+      const namePart = cleaned.slice(0, m[1].length).trim();
+      const afterSpec = cleaned.slice(m[1].length + 1 + spec.length).trim();
+      const qualifier = /^\([^)]*\)$/.test(afterSpec) ? afterSpec : '';
+      return {
+        name: qualifier ? `${namePart} ${qualifier}` : namePart,
+        spec
+      };
+    }
+  }
+
+  // Pattern 3: run-together spec as last word — "SODIUM CHLORIDE IBPBPUSPNF"
+  const words = upper.split(/\s+/);
+  const lastWord = words[words.length - 1];
+  if (lastWord && RUN_TOGETHER_SPECS[lastWord]) {
+    const spec = RUN_TOGETHER_SPECS[lastWord];
+    const originalWords = cleaned.split(/\s+/);
+    return {
+      name: originalWords.slice(0, -1).join(' ').trim(),
+      spec
+    };
+  }
+
   return { name: trimmed, spec: '' };
 }
 
@@ -445,82 +498,88 @@ export async function getApqrData(productCode: string, year: number) {
         const key = batch.batchNumber;
 
         if (uniqueBatches.has(key)) {
-          // Batch already exists - Aggregate Batch Size
+          // ── Batch already exists: aggregate batch size ──
+          // Volume units (LTR, ML, KG…) take priority over count units (BOT, NOS, PCS…).
+          // If any record has a volume unit, only volume records are summed and
+          // count-unit records are discarded — a 30 LTR bulk batch that fills
+          // into 140 bottles is still a 30 LTR batch for APQR purposes.
           const existing = uniqueBatches.get(key);
 
-          // Helper to parse "140 BOT" -> { qty: 140, unit: "BOT" }
-          const parseQtyAndUnit = (s: string) => {
-            const cleanStr = (s || '').toUpperCase();
-            const match = cleanStr.match(/([\d.]+)\s*([A-Z]+)?/);
-            if (match) {
-              return {
-                qty: parseFloat(match[1]) || 0,
-                unit: (match[2] || '').trim()
-              };
-            }
+          const VOLUME_UNITS = new Set(['LTR', 'L', 'ML', 'KG', 'G', 'GM', 'GMS']);
+
+          const parseQtyUnit = (s: string): { qty: number; unit: string } => {
+            const clean = (s || '').toUpperCase().trim();
+            const m = clean.match(/^([\d.]+)\s*([A-Z]*)$/);
+            if (m) return { qty: parseFloat(m[1]) || 0, unit: m[2].trim() };
             return { qty: 0, unit: '' };
           };
 
-          // Current existing sizes could already be aggregated like "140 BOT, 20 LTR"
-          // We need to parse all existing parts and add the new one
-          const existingParts = (existing.batchSize || '').split(',').map((p: string) => p.trim()).filter(Boolean);
-          const newPart = parseQtyAndUnit(`${batch.batchSize || ''} ${batch.unit || ''}`.trim());
+          // Collect all (qty, unit) pairs from existing + new record
+          const existingParts = (existing.batchSize || '')
+            .split(',')
+            .map((p: string) => p.trim())
+            .filter(Boolean);
+          const newPartStr = `${batch.batchSize || ''} ${batch.unit || ''}`.trim();
 
-          const aggregated = new Map<string, number>();
+          const allParts: Array<{ qty: number; unit: string }> = [
+            ...existingParts.map(parseQtyUnit),
+            parseQtyUnit(newPartStr),
+          ].filter(p => p.qty > 0);
 
-          // Add existing parts to map
-          for (const partStr of existingParts) {
-            const parsed = parseQtyAndUnit(partStr);
-            if (parsed.qty > 0) {
-              const u = parsed.unit || 'UNITS';
-              aggregated.set(u, (aggregated.get(u) || 0) + parsed.qty);
+          const hasVolume = allParts.some(p => VOLUME_UNITS.has(p.unit));
+
+          if (hasVolume) {
+            // Sum only volume-unit parts; discard count-unit parts (BOT, NOS, etc.)
+            const volumeParts = allParts.filter(p => VOLUME_UNITS.has(p.unit));
+            const byUnit = new Map<string, number>();
+            for (const p of volumeParts) {
+              byUnit.set(p.unit, (byUnit.get(p.unit) || 0) + p.qty);
             }
+            const combined = Array.from(byUnit.entries()).map(([u, q]) => {
+              const fq = Number.isInteger(q) ? q.toString() : q.toFixed(2).replace(/\.?0+$/, '');
+              return `${fq} ${u}`;
+            });
+            existing.batchSize = combined.join(', ');
+          } else {
+            // No volume unit — aggregate by unit as-is (e.g. all BOT)
+            const byUnit = new Map<string, number>();
+            for (const p of allParts) {
+              const u = p.unit || 'UNITS';
+              byUnit.set(u, (byUnit.get(u) || 0) + p.qty);
+            }
+            const combined = Array.from(byUnit.entries()).map(([u, q]) => {
+              const fq = Number.isInteger(q) ? q.toString() : q.toFixed(2).replace(/\.?0+$/, '');
+              return u === 'UNITS' ? fq : `${fq} ${u}`;
+            });
+            existing.batchSize = combined.join(', ');
           }
 
-          // Add new part to map
-          if (newPart.qty > 0) {
-            const u = newPart.unit || 'UNITS';
-            aggregated.set(u, (aggregated.get(u) || 0) + newPart.qty);
-          }
+          // Dates and other details are kept from the first record found
+          // (split batches share the same mfgDate)
 
-          // Format back to string
-          const combinedParts = Array.from(aggregated.entries()).map(([u, q]) => {
-            // If it's a whole number don't show decimals, else show up to 2
-            const formattedQ = Number.isInteger(q) ? q.toString() : q.toFixed(2).replace(/\.?0+$/, '');
-            return u === 'UNITS' ? formattedQ : `${formattedQ} ${u}`;
-          });
-
-          existing.batchSize = combinedParts.join(', ');
-
-          // We keep the existing dates/details from the first record found
-          // (Assuming splits share dates, or first entry is representative)
         } else {
-          // Normalize the initial batch size to match the combined format
-          const parseQtyAndUnit = (s: string) => {
-            const cleanStr = (s || '').toUpperCase();
-            const match = cleanStr.match(/([\d.]+)\s*([A-Z]+)?/);
-            if (match) {
-              return {
-                qty: parseFloat(match[1]) || 0,
-                unit: (match[2] || '').trim()
-              };
-            }
-            return { qty: 0, unit: '' };
-          };
-          const initialParsed = parseQtyAndUnit(`${batch.batchSize || ''} ${batch.unit || ''}`.trim());
-          let initialFormattedSize = `${batch.batchSize || ''} ${batch.unit || ''}`.trim();
-          if (initialParsed.qty > 0) {
-            const formattedQ = Number.isInteger(initialParsed.qty) ? initialParsed.qty.toString() : initialParsed.qty.toFixed(2).replace(/\.?0+$/, '');
-            initialFormattedSize = initialParsed.unit ? `${formattedQ} ${initialParsed.unit}` : formattedQ;
-          }
+          // ── New batch: format initial size cleanly ──
+          const batchSizeRaw = (batch.batchSize || '').toString().trim();
+          const batchUnitRaw = (batch.unit || '').toString().trim().toUpperCase();
+          const batchSizeNum = parseFloat(batchSizeRaw);
+          const formattedBatchNum = !isNaN(batchSizeNum)
+            ? (Number.isInteger(batchSizeNum)
+              ? batchSizeNum.toString()
+              : batchSizeNum.toFixed(2).replace(/\.?0+$/, ''))
+            : batchSizeRaw;
+          const initialFormattedSize = batchUnitRaw
+            ? `${formattedBatchNum} ${batchUnitRaw}`
+            : formattedBatchNum;
 
           uniqueBatches.set(key, {
             ...batch,
             batchSize: initialFormattedSize,
             parsedMfgDate: mfgDate,
-            dateSource, // Track which field was used
+            dateSource,
             formattedMfgDate: formatMonthYear(mfgDate),
-            formattedExpDate: batch.expiryDate ? formatMonthYear(parseBatchDate(batch.expiryDate) || new Date()) : 'N/A'
+            formattedExpDate: batch.expiryDate
+              ? formatMonthYear(parseBatchDate(batch.expiryDate) || new Date())
+              : 'N/A'
           });
         }
       }
@@ -748,15 +807,32 @@ export async function getApqrData(productCode: string, year: number) {
 
   const totalBatchesCount = finalBatches.length;
 
+  // Volume units are meaningful for batch size display; count units (BOT/NOS) are not.
+  // If a batch only has a count unit, fall back to the formula's batch size (LTR).
+  const VOLUME_UNITS_DISPLAY = new Set(['LTR', 'L', 'ML', 'KG', 'G', 'GM', 'GMS']);
+  const COUNT_UNITS_DISPLAY = new Set(['BOT', 'NOS', 'PCS', 'UNIT', 'UNITS', 'NO', 'EA']);
+
+  const normalizeBatchSizeDisplay = (rawSize: string): string => {
+    if (!rawSize || rawSize === 'N/A') return rawSize;
+    // Parse unit from size string e.g. "4820 BOT" → unit="BOT"
+    const m = rawSize.toUpperCase().trim().match(/^([\d.,]+)\s*([A-Z]*)$/);
+    if (!m) return rawSize;
+    const unit = m[2].trim();
+    // If it's a count unit and we have a formula batch size, use formula batch size instead
+    if (COUNT_UNITS_DISPLAY.has(unit) && formulaBatchSizeNumeric > 0) {
+      return `${formulaBatchSizeNumeric} LTR`;
+    }
+    return rawSize;
+  };
+
   // Prepare batch table data
   const batchTable = finalBatches.map(b => ({
     b_month: FULL_MONTHS[b.parsedMfgDate.getMonth()],
     b_num: b.batchNumber || 'N/A',
-    b_size: b.batchSize || 'N/A',
+    b_size: normalizeBatchSizeDisplay(b.batchSize || 'N/A'),
     b_mfg: b.formattedMfgDate,
     b_exp: b.formattedExpDate,
   }));
-
   // Prepare composition data
   const compositionData = formula.composition ? formula.composition.map((c: CompositionItem) => ({
     comp_name: c.activeIngredientName || '',
@@ -816,16 +892,23 @@ export async function getApqrData(productCode: string, year: number) {
       if (arNumbers.length > 0) {
         // Get vendor from InwardRegister first, then fallback to RMCOA
         let vendor = '';
-        const inwardRecord = await InwardRegister.findOne({ arNumber: arNumbers[0] }).lean();
+        // Restrict to the review period's AR numbers; skip entries that predate manufacturedBy tracking;
+        // sort ascending by arNumber so the earliest valid consignment is used.
+        const inwardRecord = await InwardRegister.findOne({
+          arNumber: { $in: arNumbers },
+          manufacturedBy: { $exists: true, $nin: ['', null] }
+        }).sort({ arNumber: 1 }).lean();
         if (inwardRecord) {
-            vendor = (inwardRecord as any)?.manufacturedBy || (inwardRecord as any)?.vendorName || '';
+          vendor = (inwardRecord as any)?.manufacturedBy || (inwardRecord as any)?.vendorName || '';
         }
-        
+
         if (!vendor) {
-           const rmcoas = await RMCOA.find({ arNo: arNumbers[0] }).lean();
-           if (rmcoas && rmcoas.length > 0) {
-              vendor = (rmcoas[0] as any)?.manufacturer || (rmcoas[0] as any)?.supplier || '';
-           }
+          // Fallback: check RMCOA for any of the AR numbers
+          const rmcoas = await RMCOA.find({ arNo: { $in: arNumbers } }).lean();
+          if (rmcoas && rmcoas.length > 0) {
+            // supplier is the actual vendor; manufacturer is usually the testing lab
+            vendor = (rmcoas[0] as any)?.supplier || (rmcoas[0] as any)?.manufacturer || '';
+          }
         }
 
         // Create ONE row per material with all AR numbers
@@ -921,14 +1004,14 @@ export async function getApqrData(productCode: string, year: number) {
       // Collect unique AR numbers
       const arNumbers = [...new Set(matchingItems.map(i => i.arNo).filter(ar => ar))];
 
-      // Get vendor name from Inward Register using the first AR number found
-      // (Inward Register has the full vendor name; requisition only has vendor code)
+      // Get vendor name from Inward Register — restrict to review period's AR numbers,
+      // skip old entries lacking manufacturedBy, pick earliest valid consignment.
       let vendor = '';
       if (arNumbers.length > 0) {
-        // Get manufacturer or vendor name from Inward Register
         const inwardRecord = await InwardRegister.findOne({
-          arNumber: arNumbers[0]
-        }).lean();
+          arNumber: { $in: arNumbers },
+          manufacturedBy: { $exists: true, $nin: ['', null] }
+        }).sort({ arNumber: 1 }).lean();
         vendor = (inwardRecord as any)?.manufacturedBy || (inwardRecord as any)?.vendorName || '';
       }
 
@@ -1024,10 +1107,12 @@ export async function getApqrData(productCode: string, year: number) {
       let isRejected = false;
 
       if (arNumbers.length > 0) {
-        // Get Manufacturer/Vendor
+        // Get Manufacturer/Vendor — restrict to review period's AR numbers,
+        // skip old entries lacking manufacturedBy, pick earliest valid consignment.
         const inwardRecord = await InwardRegister.findOne({
-          arNumber: arNumbers[0]
-        }).lean();
+          arNumber: { $in: arNumbers },
+          manufacturedBy: { $exists: true, $nin: ['', null] }
+        }).sort({ arNumber: 1 }).lean();
         vendor = (inwardRecord as any)?.manufacturedBy || (inwardRecord as any)?.vendorName || '';
 
         // Check Rejection for Artwork
@@ -1062,6 +1147,21 @@ export async function getApqrData(productCode: string, year: number) {
         artworkStatus: isRejected ? 'REJECTED' : 'APPROVED'
       });
     }
+
+    // Sort by vendor so identical vendors are consecutive → enables clean cell merging.
+    // Items with no vendor go to the end. Within the same vendor, preserve original order.
+    secondaryPackagingDetails.sort((a, b) => {
+      const va = (a.vendor || '').trim();
+      const vb = (b.vendor || '').trim();
+      if (va === '' && vb === '') return 0;   // both empty → keep relative order
+      if (va === '') return 1;                 // empty vendors go last
+      if (vb === '') return -1;
+      return va.localeCompare(vb);             // alphabetical within vendors
+    });
+
+    // Re-assign sequential srNo after sort
+    secondaryPackagingDetails.forEach((item, idx) => { item.srNo = idx + 1; });
+
     console.log(`✅ Secondary/Tertiary Details: ${secondaryPackagingDetails.length} rows`);
   } else {
     console.warn('⚠️ No PACKING process found in Formula Master for Section 3.3');
@@ -1082,45 +1182,8 @@ export async function getApqrData(productCode: string, year: number) {
     for (const mat of activeMaterials) {
       if (!mat.materialCode) continue;
 
-      // Step 2: Query Inward Register for this material in review year
-      const inwardRecords = await InwardRegister.find({
-        materialCode: mat.materialCode
-      }).lean();
-
-      // Filter by inward date in review year
-      const yearInwardRecords = inwardRecords.filter((rec: any) => {
-        const d = parseBatchDate(rec.inwardDate);
-        return d && d.getFullYear() === yearNum;
-      });
-
-      // Count unique AR numbers (received)
-      const uniqueArNumbers = [...new Set(
-        yearInwardRecords
-          .map((rec: any) => (rec.arNumber || '').trim())
-          .filter((ar: string) => ar && ar !== 'N/A')
-      )] as string[];
-      const received = uniqueArNumbers.length;
-
-      // Step 3: Query MaterialRejection for this material in review year
-      const rejectionRecords = await MaterialRejection.find({
-        materialCode: mat.materialCode
-      }).lean();
-
-      // Filter by arDate in review year
-      const yearRejections = rejectionRecords.filter((rec: any) => {
-        const d = parseBatchDate(rec.arDate);
-        return d && d.getFullYear() === yearNum;
-      });
-      const rejectedArNumbers = [...new Set(
-        yearRejections.map((rec: any) => (rec.arNumber || '').trim()).filter((ar: string) => ar)
-      )] as string[];
-      const rejected = rejectedArNumbers.length;
-
-      // Step 4: Released = Received - Rejected
-      const released = received - rejected;
-
-      // Step 5: Map AR numbers to batch numbers via requisition data
-      // Build a map: arNumber -> batchNumber[] from requisition docs
+      // Step 2: Build AR→batch map from requisition docs (MFC + review year filtered)
+      // received = unique AR numbers actually used in this formula's batches in the review year
       const arToBatchMap = new Map<string, Set<string>>();
       for (const doc of requisitionDocs) {
         for (const batch of (doc.batches || [])) {
@@ -1136,8 +1199,28 @@ export async function getApqrData(productCode: string, year: number) {
         }
       }
 
-      // Build AR entries from arToBatchMap so that ARs received in prior years
-      // but used in review-period batches are also included (e.g. IWAIORM2400xxx → D25D21)
+      const received = arToBatchMap.size;
+
+      // Step 3: Query MaterialRejection — only count rejections for AR numbers used in this formula
+      const rejectionRecords = await MaterialRejection.find({
+        materialCode: mat.materialCode
+      }).lean();
+
+      const yearRejections = rejectionRecords.filter((rec: any) => {
+        const d = parseBatchDate(rec.arDate);
+        return d && d.getFullYear() === yearNum;
+      });
+      const rejectedArNumbers = [...new Set(
+        yearRejections
+          .map((rec: any) => (rec.arNumber || '').trim())
+          .filter((ar: string) => ar && arToBatchMap.has(ar))
+      )] as string[];
+      const rejected = rejectedArNumbers.length;
+
+      // Step 4: Released = Received - Rejected
+      const released = received - rejected;
+
+      // Build AR entries from arToBatchMap
       const arEntries = Array.from(arToBatchMap.entries())
         .map(([ar, batchSet]) => ({
           arNumber: ar,
@@ -1163,7 +1246,7 @@ export async function getApqrData(productCode: string, year: number) {
         remark
       });
 
-      console.log(`  ${mat.materialName}: Received=${received}, Rejected=${rejected}, Released=${released}, ARs=${uniqueArNumbers.length}`);
+      console.log(`  ${mat.materialName}: Received=${received}, Rejected=${rejected}, Released=${released}, ARs=${arToBatchMap.size}`);
     }
     console.log(`✅ Active Raw Material Details (Section 5.1.1): ${activeRawMaterialDetails.length} materials`);
   } else {
@@ -1172,6 +1255,9 @@ export async function getApqrData(productCode: string, year: number) {
 
   // ── Section 5.1.2 — Active Raw Material Test Details ──
   const activeRMTestDetails: RMTestMaterial512[] = [];
+
+  // Regex to detect section headers like "[ALL SPECIFICATION BELOW ARE AS PER IP]"
+  const specSectionRegex512 = /\bAS\s+PER\s+([A-Z]{2,5})\b/i;
 
   for (const mat of activeRawMaterialDetails) {
     const arNumbers512 = mat.arEntries.map(e => e.arNumber);
@@ -1187,32 +1273,105 @@ export async function getApqrData(productCode: string, year: number) {
     );
     console.log(`  Section 5.1.2 "${mat.materialName}": ${arNumbers512.length} ARs queried, ${rmcoas512.length} RMCOA records found`);
 
-    // Extract limits from first available record
-    let phLimit512 = '', lodLimit512 = '', assayLimit512 = '';
-    const firstRmcoa512 = rmcoas512[0];
-    if (firstRmcoa512?.testParameters) {
-      for (const param of firstRmcoa512.testParameters) {
+    // Clean up limit strings — remove "Between", "w/v", "OAB"
+    const cleanLimit512 = (s: string) => (s || '')
+      .replace(/^between\s+/i, '')
+      .replace(/\s*w\/v\s*/gi, '')
+      .replace(/\s+OAB\b/gi, '')
+      .trim();
+
+    // --- Scan ALL COA records to find which spec sections exist (ordered by first appearance) ---
+    const specSectionsOrdered: string[] = [];
+    const specSectionsSet = new Set<string>();
+    for (const rmcoa of rmcoas512) {
+      for (const param of (rmcoa.testParameters || [])) {
         const n = (param.name || '').toUpperCase().trim();
-        if (n === 'PH' && !phLimit512) phLimit512 = param.limits || '';
-        else if ((n.includes('LOD') || n.includes('WATER') || n.includes('DRYING')) && !lodLimit512) lodLimit512 = param.limits || '';
-        else if (n.includes('ASSAY') && !assayLimit512) assayLimit512 = param.limits || '';
+        const m = n.match(specSectionRegex512);
+        if (m) {
+          const spec = m[1].toUpperCase();
+          if (!specSectionsSet.has(spec)) {
+            specSectionsSet.add(spec);
+            specSectionsOrdered.push(spec);
+          }
+        }
       }
     }
 
-    // Build rows sorted by AR number ascending
+    // Extract limits from first available record, tracking current spec section
+    let phLimit512 = '', waterLimit512 = '';
+    const assaySpecLimits = new Map<string, string>(); // spec -> limit
+    const firstRmcoa512 = rmcoas512[0];
+    if (firstRmcoa512?.testParameters) {
+      let currentSpec512 = '';
+      for (const param of firstRmcoa512.testParameters) {
+        const n = (param.name || '').toUpperCase().trim();
+        const raw = cleanLimit512(param.limits || '');
+        // Check if this entry is a spec section header
+        const sectionMatch = n.match(specSectionRegex512);
+        if (sectionMatch) {
+          currentSpec512 = sectionMatch[1].toUpperCase();
+          continue;
+        }
+        if (n === 'PH' && !phLimit512) {
+          phLimit512 = raw;
+        } else if ((n.includes('LOD') || n.includes('WATER') || n.includes('DRYING')) && !waterLimit512) {
+          waterLimit512 = raw;
+        } else if (n.includes('ASSAY')) {
+          if (currentSpec512 && !assaySpecLimits.has(currentSpec512)) {
+            assaySpecLimits.set(currentSpec512, raw);
+          } else if (!currentSpec512) {
+            // No spec section detected — assign to all discovered specs or use a generic key
+            const fallbackKey = specSectionsOrdered[0] || 'ASSAY';
+            if (!assaySpecLimits.has(fallbackKey)) assaySpecLimits.set(fallbackKey, raw);
+          }
+        }
+      }
+    }
+
+    // Build assaySpecs array preserving discovery order
+    // If no spec sections detected but assay limits found, create a generic single column
+    const assaySpecs: { specName: string; limit: string }[] = [];
+    if (specSectionsOrdered.length > 0) {
+      for (const spec of specSectionsOrdered) {
+        assaySpecs.push({ specName: spec, limit: assaySpecLimits.get(spec) || '' });
+      }
+    } else if (assaySpecLimits.size > 0) {
+      for (const [spec, limit] of assaySpecLimits) {
+        assaySpecs.push({ specName: spec, limit });
+      }
+    }
+
+    // Build rows — extract assay per spec section from each COA, sorted by AR number ascending
     const rows512: RMTestRow512[] = [];
     for (const arEntry of mat.arEntries) {
       const rmcoa = rmcoaByAr512.get((arEntry.arNumber || '').toUpperCase().trim());
       if (!rmcoa) continue;
-      let desc = '', ph = '', lod = '', assay = '';
+      let desc = '', ph = '', water = '';
+      const assays: Record<string, string> = {};
+      let currentSpec512 = '';
       for (const param of (rmcoa.testParameters || [])) {
         const n = (param.name || '').toUpperCase().trim();
+        const res = (param.result || '').replace(/\s*%\s*$/, '').trim();
+        // Check for spec section header
+        const sectionMatch = n.match(specSectionRegex512);
+        if (sectionMatch) {
+          currentSpec512 = sectionMatch[1].toUpperCase();
+          continue;
+        }
         if (n === 'DESCRIPTION' && !desc) desc = param.result || '';
-        else if (n === 'PH' && !ph) ph = param.result || '';
-        else if ((n.includes('LOD') || n.includes('WATER') || n.includes('DRYING')) && !lod) lod = param.result || '';
-        else if (n.includes('ASSAY') && !assay) assay = param.result || '';
+        else if (n === 'PH' && !ph) ph = res;
+        else if ((n.includes('LOD') || n.includes('WATER') || n.includes('DRYING')) && !water) water = res;
+        else if (n.includes('ASSAY')) {
+          if (currentSpec512 && !assays[currentSpec512]) {
+            assays[currentSpec512] = res;
+          } else if (!currentSpec512) {
+            // No spec section header found — assign to first known spec or a generic key
+            const fallbackKey = specSectionsOrdered[0] || 'ASSAY';
+            if (!assays[fallbackKey]) assays[fallbackKey] = res;
+          }
+        }
       }
-      rows512.push({ arNumber: arEntry.arNumber, description: desc, ph, lod, assay });
+      rows512.push({ arNumber: arEntry.arNumber, description: desc, ph, water, assays });
     }
     rows512.sort((a, b) => (a.arNumber || '').localeCompare(b.arNumber || '', undefined, { numeric: true, sensitivity: 'base' }));
 
@@ -1220,8 +1379,8 @@ export async function getApqrData(productCode: string, year: number) {
       materialCode: mat.materialCode,
       materialName: mat.materialName,
       phLimit: phLimit512,
-      lodLimit: lodLimit512,
-      assayLimit: assayLimit512,
+      waterLimit: waterLimit512,
+      assaySpecs,
       rows: rows512
     });
   }
@@ -1271,15 +1430,28 @@ export async function getApqrData(productCode: string, year: number) {
       const pmInwardRecords = await InwardRegister.find({
         materialCode: mat.materialCode
       }).lean();
+
+      // Build make map per AR from inward records (use `make` field = brand/MAKE tag)
+      const makeByAr521 = new Map<string, string>();
+      for (const rec of pmInwardRecords) {
+        const ar = ((rec as any).arNumber || '').trim();
+        const mk = ((rec as any).make || '').trim();
+        if (ar && mk && !makeByAr521.has(ar)) makeByAr521.set(ar, mk);
+      }
+
       const yearPmInward = pmInwardRecords.filter((rec: any) => {
         const d = parseBatchDate(rec.inwardDate);
         return d && d.getFullYear() === yearNum;
       });
-      const inwardArNumbers = [...new Set(
+      const allInwardArNumbers = [...new Set(
         yearPmInward
           .map((rec: any) => (rec.arNumber || '').trim())
           .filter((ar: string) => ar && ar !== 'N/A')
       )] as string[];
+      // Exclude Renova make AR numbers
+      const inwardArNumbers = allInwardArNumbers.filter(
+        ar => !/renova/i.test(makeByAr521.get(ar) || '')
+      );
       const received = inwardArNumbers.length;
 
       // Step 2b: Build AR→batch map from REQUISITION (MFC-filtered) for the AR entries column
@@ -1291,10 +1463,15 @@ export async function getApqrData(productCode: string, year: number) {
           if (batch.mfcNo !== mfcNo) continue;
           const batchDate = parseBatchDate(batch.mfgDate);
           if (!batchDate || batchDate.getFullYear() !== yearNum) continue;
+          // Collect make from batch as fallback
+          const batchMake = (batch.make || '').trim();
           for (const item of (batch.materials || [])) {
             if (item.materialCode === mat.materialCode && item.arNo) {
               const arNo = (item.arNo || '').trim();
               if (arNo) {
+                if (batchMake && !makeByAr521.has(arNo)) makeByAr521.set(arNo, batchMake);
+                // Skip Renova ARs
+                if (/renova/i.test(makeByAr521.get(arNo) || '')) continue;
                 mfcFilteredArNumbers.add(arNo);
                 if (!arToBatchMap521.has(arNo)) arToBatchMap521.set(arNo, new Set());
                 arToBatchMap521.get(arNo)!.add(batch.batchNumber);
@@ -1315,9 +1492,13 @@ export async function getApqrData(productCode: string, year: number) {
         const d = parseBatchDate(rec.arDate);
         return d && d.getFullYear() === yearNum;
       });
-      const rejectedArNumbers = [...new Set(
+      const allRejectedArNumbers = [...new Set(
         yearRejections.map((rec: any) => (rec.arNumber || '').trim()).filter((ar: string) => ar)
       )] as string[];
+      // Exclude Renova make AR numbers from rejected count
+      const rejectedArNumbers = allRejectedArNumbers.filter(
+        ar => !/renova/i.test(makeByAr521.get(ar) || '')
+      );
       const rejected = rejectedArNumbers.length;
 
       // Step 4: Released = Received - Rejected
@@ -1329,7 +1510,7 @@ export async function getApqrData(productCode: string, year: number) {
           arNumber: ar,
           batchNumbers: arToBatchMap521.has(ar)
             ? Array.from(arToBatchMap521.get(ar)!).filter(bn => finalBatchNumbersSet.has(bn))
-                .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }))
+              .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }))
             : []
         }))
         .filter(entry => entry.batchNumbers.length > 0)
@@ -1352,7 +1533,8 @@ export async function getApqrData(productCode: string, year: number) {
         remark
       });
 
-      console.log(`  ${mat.materialName}: InwardARs=${inwardArNumbers.length}(received), ReqARs=${uniqueArNumbers.length}, Rejected=${rejected}, Released=${released}`);
+      const renovaIgnored = allInwardArNumbers.length - inwardArNumbers.length;
+      console.log(`  ${mat.materialName}: InwardARs=${inwardArNumbers.length}(received, ${renovaIgnored} Renova ignored), ReqARs=${uniqueArNumbers.length}, Rejected=${rejected}, Released=${released}`);
     }
     // Sort by received consignment count ascending (42 before 58 before 91 etc.)
     primaryPackingMaterialDetails.sort((a, b) => a.received - b.received);
@@ -1698,8 +1880,9 @@ export async function getApqrData(productCode: string, year: number) {
     therapeutic_category: productMaster?.therapeuticCategory || '',
     storage_condition: productMaster?.storageCondition || '',
 
-    // From Formula Master
-    label_claim: formatLabelClaim(formula.batchInfo?.labelClaim || ''),
+    // From Formula Master — support 1 or more label claims (IP, USP, etc.)
+    label_claims: buildLabelClaimsText(formula.batchInfo),
+    label_claim: buildLabelClaimsText(formula.batchInfo)[0] || '',
     shelf_life: formula.masterFormulaDetails?.shelfLife || '',
     mfg_lic_no: formula.masterFormulaDetails?.manufacturingLicenseNo || '',
 
@@ -1788,10 +1971,194 @@ function toTitleCase(str: string): string {
   }).join(' ');
 }
 
+function splitMultipleCompositionBlocks(raw: string): string[] {
+  if (!raw || raw.trim() === 'N/A') return [raw];
+
+  // Find start index of every "COMPOSITION" keyword (case-insensitive)
+  const compRegex = /COMPOSITION\s*[:\-]?\s*/gi;
+  const matches: number[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = compRegex.exec(raw)) !== null) {
+    matches.push(m.index);
+  }
+
+  // If 0 or 1 COMPOSITION blocks, no splitting needed
+  if (matches.length <= 1) return [raw];
+
+  // Slice the string at each COMPOSITION start
+  const parts: string[] = [];
+  for (let i = 0; i < matches.length; i++) {
+    const start = matches[i];
+    const end = i + 1 < matches.length ? matches[i + 1] : raw.length;
+    const part = raw.substring(start, end).trim();
+    if (part) parts.push(part);
+  }
+
+  return parts.length > 0 ? parts : [raw];
+}
 
 /**
+ * Build an array of formatted label claim strings from batchInfo.
+ * Supports 1 or more label claims (e.g. IP and USP) — each as a separate string.
+ */
+function buildLabelClaimsText(batchInfo: { labelClaim?: string; labelClaims?: string[] } | undefined): string[] {
+  if (!batchInfo) return [];
+
+  // Prefer the labelClaims array if it has entries, fall back to single labelClaim
+  const rawClaims: string[] = (batchInfo.labelClaims && batchInfo.labelClaims.length > 0)
+    ? batchInfo.labelClaims
+    : (batchInfo.labelClaim ? [batchInfo.labelClaim] : []);
+
+  // For each raw claim string, check if it contains multiple COMPOSITION blocks.
+  // This handles the legacy case where both IP and USP are stored in one string.
+  const splitClaims: string[] = [];
+  for (const raw of rawClaims) {
+    const subClaims = splitMultipleCompositionBlocks(raw);
+    splitClaims.push(...subClaims);
+  }
+
+  return splitClaims
+    .map(c => formatLabelClaim(c))
+    .filter(Boolean);
+}
+function formatDotLeaderClaim(trimmed: string): string {
+  const hasComposition = /^COMPOSITION\s*[:\-]?\s*/i.test(trimmed);
+  const body = trimmed.replace(/^COMPOSITION\s*[:\-]?\s*/i, '').trim();
+
+  const parts = body.split(/\.{2,}/);
+  if (parts.length < 2) return trimmed.toUpperCase();
+
+  const outputLines: string[] = [];
+  if (hasComposition) outputLines.push('COMPOSITION:');
+
+  let currentName = parts[0].trim().toUpperCase();
+
+  for (let i = 1; i < parts.length; i++) {
+    const segment = parts[i].trim();
+
+    const valueMatch = segment.match(
+      /^([\d.]+\s*%\s*[A-Z/Vv]+|Q\.?\s*S\.?(?:\s+ON\s+DRIED\s+BASIS)?)\s*(\([^)]*\))?\s*([\s\S]*?)$/i
+    );
+
+    if (valueMatch) {
+      const concentration = normalizeConcentration(valueMatch[1]);
+      const qualifier = valueMatch[2] ? valueMatch[2].trim().toUpperCase() : '';
+      const rest = valueMatch[3].trim().toUpperCase();
+
+      // Split spec from name (last token if pharmacopoeia)
+      const nameTokens = currentName.split(/\s+/);
+      const specToken = extractSpecToken(nameTokens);
+      let spec = '';
+      let namePart = currentName;
+
+      if (specToken) {
+        spec = specToken;
+        nameTokens.pop();
+        while (nameTokens.length > 0 && extractSpecToken(nameTokens)) nameTokens.pop();
+        namePart = nameTokens.join(' ');
+      }
+
+      // Build the formatted lines for this ingredient
+      const ingredientLines = buildIngredientLines(namePart, spec, concentration, qualifier);
+      outputLines.push(...ingredientLines);
+
+      currentName = rest;
+    } else {
+      // Bare qualifier or continuation — attach to previous or carry forward
+      if (/^\([^)]*\)$/.test(segment.trim())) {
+        if (outputLines.length > 0) outputLines[outputLines.length - 1] += ' ' + segment.trim().toUpperCase();
+        currentName = '';
+      } else {
+        if (currentName) outputLines.push(currentName);
+        currentName = segment.toUpperCase();
+      }
+    }
+  }
+
+  if (currentName && currentName.trim()) {
+    const alreadyPresent = outputLines.some(l =>
+      l.toUpperCase().includes(currentName.split(/\s+/)[0])
+    );
+    if (!alreadyPresent) outputLines.push(currentName.trim());
+  }
+
+  return outputLines.join('\n');
+}
+function buildIngredientLines(
+  name: string,
+  spec: string,
+  concentration: string,
+  qualifier: string
+): string[] {
+  const lines: string[] = [];
+
+  // Detect "EQ. TO" split point (case-insensitive)
+  const eqToMatch = name.match(/^(.*?)\s+(EQ\.?\s+TO\s+.*)$/i);
+
+  if (eqToMatch) {
+    // Case A: split at "EQ. TO"
+    const namePart1 = eqToMatch[1].trim();
+    const namePart2 = eqToMatch[2].trim();
+
+    // Line 1: first part of name + spec in col 1, nothing in col 2
+    lines.push(`${namePart1}\t${spec}\t`);
+
+    // Line 2: second part of name + concentration in col 2
+    const line2Name = qualifier ? `${namePart2} ${qualifier}` : namePart2;
+    lines.push(`${line2Name}\t\t${concentration}`);
+
+  } else {
+    // Case B: single-line ingredient
+    const displayName = qualifier ? `${name} ${qualifier}` : name;
+    lines.push(`${displayName}\t${spec}\t${concentration}`);
+  }
+
+  return lines;
+}
+
+
+/**
+ * Format a space/newline-separated label claim to ALL CAPS tabular lines.
+ * e.g. "COMPOSITION:\nSODIUM HYALURONATE BP 0.1% WV\nSTERILE AQUEOUS BASE Q.S"
+ */
+function formatSpaceSeparatedClaim(trimmed: string): string {
+  const hasComposition = /^COMPOSITION\s*[:\-]?\s*/i.test(trimmed);
+  const body = trimmed.replace(/^COMPOSITION\s*[:\-]?\s*/i, '').trim();
+
+  const rawLines = body
+    .split(/\n|\r\n|\r/)
+    .map(l => l.trim())
+    .filter(l => l.length > 0);
+
+  const outputLines: string[] = [];
+  if (hasComposition) outputLines.push('COMPOSITION:');
+
+  const processLine = (rawLine: string) => {
+    const parsed = parseSpaceSeparatedIngredient(rawLine);
+    if (parsed) {
+      const ingredientLines = buildIngredientLines(
+        parsed.name.toUpperCase(),
+        parsed.spec.toUpperCase(),
+        normalizeConcentration(parsed.concentration),
+        parsed.qualifier.toUpperCase()
+      );
+      outputLines.push(...ingredientLines);
+    } else {
+      outputLines.push(rawLine.toUpperCase());
+    }
+  };
+
+  if (rawLines.length > 0) {
+    rawLines.forEach(processLine);
+  } else if (body.length > 0) {
+    processLine(body);
+  }
+
+  return outputLines.join('\n');
+}
+/**
  * Parse raw label claim text and format it for DOCX display.
- * 
+ *
  * Handles two input formats:
  * A) Dot-leader format: "NAME BP.....0.1%W/V NAME2....0.005%W/V (AS PRESERVATIVE) NAME3....Q.S."
  * B) Space/tab-separated format: "COMPOSITION:\nSODIUM HYALURONATE    BP    0.1% WV\nSTABILIZED OXYCHLORO COMPLEX ..."
@@ -1803,142 +2170,15 @@ function formatLabelClaim(raw: string): string {
   if (!raw || raw.trim() === 'N/A') return raw || '';
 
   const trimmed = raw.trim();
-
-  // ── Detect which format we have ──
   const hasDotLeaders = /\.{2,}/.test(trimmed);
 
   if (hasDotLeaders) {
-    // ── FORMAT A: Dot-leader separated ──
-    const hasComposition = /^COMPOSITION\s*[:\-]?\s*/i.test(trimmed);
-    const body = trimmed.replace(/^COMPOSITION\s*[:\-]?\s*/i, '').trim();
-
-    const parts = body.split(/\.{2,}/);
-    if (parts.length < 2) return trimmed;
-
-    const lines: string[] = [];
-    if (hasComposition) lines.push('COMPOSITION:');
-
-    let currentName = parts[0].trim();
-
-    for (let i = 1; i < parts.length; i++) {
-      const segment = parts[i].trim();
-
-      const valueMatch = segment.match(
-        /^([\d.]+\s*%\s*[A-Z/V]+|Q\.S\.(?:\s+ON\s+DRIED\s+BASIS)?|Q\.S\.?)\s*(\([^)]*\))?\s*([\s\S]*?)$/i
-      );
-
-      if (valueMatch) {
-        const rawValue = valueMatch[1].trim();
-        const qualifier = valueMatch[2] ? valueMatch[2].trim() : '';
-        const rest = valueMatch[3].trim();
-
-        const concentration = normalizeConcentration(rawValue);
-
-        // ── Parse name: strip spec token if already present in currentName ──
-        const nameTokens = currentName.split(/\s+/);
-        const specToken = extractSpecToken(nameTokens);
-        
-        if (specToken) {
-          nameTokens.pop(); // Remove the first found spec token
-          // Keep removing if there are accidental duplicate spec tokens (e.g. "BP BP")
-          while (nameTokens.length > 0 && extractSpecToken(nameTokens)) {
-            nameTokens.pop();
-          }
-        }
-        
-        const cleanName = nameTokens.join(' ');
-
-        // Build line with tab spacing: Name  Spec  Concentration  [Qualifier]
-        let line = toTitleCase(cleanName);
-        if (specToken) {
-          line += `\t${specToken}\t${concentration}`;
-        } else {
-          line += `\t\t${concentration}`;
-        }
-        if (qualifier) line += `\n${toTitleCase(qualifier)}`;
-
-        lines.push(line);
-
-        // Only carry forward `rest` if it looks like an ingredient name
-        // (i.e. not empty and not a stray duplicate of something already emitted)
-        currentName = rest;
-      } else {
-        // Segment didn't match — it might be a standalone qualifier line
-        // like "(AS PRESERVATIVE)" that got split oddly
-        if (/^\([^)]*\)$/.test(segment.trim())) {
-          // It's a pure qualifier — attach to last line
-          if (lines.length > 0) {
-            lines[lines.length - 1] += `\n${toTitleCase(segment.trim())}`;
-          }
-          currentName = ''; // consumed
-        } else {
-          if (currentName) lines.push(toTitleCase(currentName));
-          currentName = segment;
-        }
-      }
-    }
-
-    // Only append trailing currentName if it's a real ingredient
-    // (non-empty and not already represented as part of a line)
-    if (currentName && currentName.trim()) {
-      const alreadyPresent = lines.some(l =>
-        l.toLowerCase().includes(currentName.toLowerCase().split(/\s+/)[0].toLowerCase())
-      );
-      if (!alreadyPresent) {
-        lines.push(toTitleCase(currentName.trim()));
-      }
-    }
-
-    return lines.join('\n');
-
+    return formatDotLeaderClaim(trimmed);
   } else {
-    // ── FORMAT B: Space/newline-separated (tabular) ──
-    const hasComposition = /^COMPOSITION\s*[:\-]?\s*/i.test(trimmed);
-    const body = trimmed.replace(/^COMPOSITION\s*[:\-]?\s*/i, '').trim();
-
-    const rawLines = body
-      .split(/\n|\r\n|\r/)
-      .map(l => l.trim())
-      .filter(l => l.length > 0);
-
-    const lines: string[] = [];
-    if (hasComposition) lines.push('COMPOSITION:');
-
-    for (const rawLine of rawLines) {
-      const parsed = parseSpaceSeparatedIngredient(rawLine);
-      if (parsed) {
-        let line = toTitleCase(parsed.name);
-        if (parsed.spec) {
-          line += `\t${parsed.spec}\t${normalizeConcentration(parsed.concentration)}`;
-        } else {
-          line += `\t\t${normalizeConcentration(parsed.concentration)}`;
-        }
-        if (parsed.qualifier) line += `\n${toTitleCase(parsed.qualifier)}`;
-        lines.push(line);
-      } else {
-        lines.push(toTitleCase(rawLine));
-      }
-    }
-
-    if (rawLines.length === 0 && body.length > 0) {
-      const parsed = parseSpaceSeparatedIngredient(body);
-      if (parsed) {
-        let line = toTitleCase(parsed.name);
-        if (parsed.spec) {
-          line += `\t${parsed.spec}\t${normalizeConcentration(parsed.concentration)}`;
-        } else {
-          line += `\t\t${normalizeConcentration(parsed.concentration)}`;
-        }
-        if (parsed.qualifier) line += `\n${toTitleCase(parsed.qualifier)}`;
-        lines.push(line);
-      } else {
-        lines.push(toTitleCase(body));
-      }
-    }
-
-    return lines.join('\n');
+    return formatSpaceSeparatedClaim(trimmed);
   }
 }
+
 
 /**
  * Extract a trailing pharmacopoeia spec token from a name token array.
@@ -1958,18 +2198,18 @@ function extractSpecToken(tokens: string[]): string | null {
 function normalizeConcentration(raw: string): string {
   const s = raw.trim();
 
-  // Q.S. variants
-  if (/^Q\.?\s*S\.?$/i.test(s)) return 'q.s.';
-  if (/^Q\.S\.\s+ON\s+DRIED\s+BASIS$/i.test(s)) return 'q.s. on dried basis';
+  // Q.S. variants → "Q. S"
+  if (/^Q\.?\s*S\.?$/i.test(s)) return 'Q. S';
+  if (/^Q\.S\.\s+ON\s+DRIED\s+BASIS$/i.test(s)) return 'Q. S ON DRIED BASIS';
 
   return s
-    .toLowerCase()
-    .replace(/%\s*w\s*v\b/g, '% w/v')   // %WV or %W V
-    .replace(/%\s*w\s*\/\s*v/g, '% w/v')
-    .replace(/%\s*w\s*\/\s*w/g, '% w/w')
-    .replace(/%\s*v\s*\/\s*v/g, '% v/v')
-    .replace(/%\s*v\s*v\b/g, '% v/v')
-    .replace(/%\s*w\s*w\b/g, '% w/w');
+    .toUpperCase()
+    .replace(/%\s*W\s*V\b/g, '% W/V')
+    .replace(/%\s*W\s*\/\s*V/g, '% W/V')
+    .replace(/%\s*W\s*\/\s*W/g, '% W/W')
+    .replace(/%\s*V\s*\/\s*V/g, '% V/V')
+    .replace(/%\s*V\s*V\b/g, '% V/V')
+    .replace(/%\s*W\s*W\b/g, '% W/W');
 }
 
 /**
@@ -1989,17 +2229,8 @@ function parseSpaceSeparatedIngredient(line: string): {
   concentration: string;
   qualifier: string;
 } | null {
-
-  // Regex breakdown:
-  // ^(.*?)          — ingredient name (non-greedy)
-  // \s*(\([^)]*\))? — optional qualifier like (AS PRESERVATIVE)
-  // \s+             — whitespace separator
-  // (               — concentration group:
-  //   [\d.]+\s*%\s*[A-Z/V]+   — e.g. "0.1% WV", "0.005% W/V"
-  //   | Q\.?\s*S\.?            — Q.S / Q.S. / Q. S
-  // )$
   const match = line.match(
-    /^(.*?)\s*(\([^)]*\))?\s+([\d.]+\s*%\s*[A-Za-z/]+|Q\.?\s*S\.?)$/i
+    /^(.*?)\s*(\([^)]*\))?\s+([\d.]+\s*%\s*[A-Za-z/]+|Q\.?\s*S\.?(?:\s+ON\s+DRIED\s+BASIS)?)$/i
   );
 
   if (!match) return null;
@@ -2008,7 +2239,7 @@ function parseSpaceSeparatedIngredient(line: string): {
   const qualifier = match[2] ? match[2].trim() : '';
   const concentration = match[3].trim();
 
-  // Check if last word of namePart is a pharmacopoeia spec token
+  // Check if last token of namePart is a pharmacopoeia spec
   const nameTokens = namePart.split(/\s+/);
   const specToken = extractSpecToken(nameTokens);
   let spec = '';
@@ -2016,10 +2247,7 @@ function parseSpaceSeparatedIngredient(line: string): {
   if (specToken) {
     spec = specToken;
     nameTokens.pop();
-    // Keep removing if there are accidental duplicate spec tokens (e.g. "BP BP")
-    while (nameTokens.length > 0 && extractSpecToken(nameTokens)) {
-      nameTokens.pop();
-    }
+    while (nameTokens.length > 0 && extractSpecToken(nameTokens)) nameTokens.pop();
     namePart = nameTokens.join(' ');
   }
 
@@ -2027,6 +2255,7 @@ function parseSpaceSeparatedIngredient(line: string): {
 
   return { name: namePart, spec, concentration, qualifier };
 }
+
 
 /**
  * Extract unique pack sizes from fillingDetails and format them.
@@ -2099,7 +2328,7 @@ function replaceCellText(rowXml: string, cellIndex: number, newText: string, isR
       // Or just <w:tc><w:p>...</w:p></w:tc>
       const tcPrMatch = cellContent.match(/<w:tcPr>[\s\S]*?<\/w:tcPr>/);
       let tcPr = tcPrMatch ? tcPrMatch[0] : '<w:tcPr></w:tcPr>';
-      
+
       if (vMergeVal) {
         // Remove any existing vMerge
         tcPr = tcPr.replace(/<w:vMerge[^>]*\/>/g, '');
@@ -2143,6 +2372,90 @@ function replaceCellText(rowXml: string, cellIndex: number, newText: string, isR
 
   return result;
 }
+
+/**
+ * After the "Label Claim:" row has been written with the first composition,
+ * clone its structure and insert one new row per extra claim (IP+USP, etc.).
+ * Each extra row has an empty first cell and the composition in the second cell.
+ */
+function injectExtraLabelClaimRows(xml: string, extraClaims: string[]): string {
+  if (!extraClaims.length) return xml;
+
+  const labelClaimIdx = xml.indexOf('Label Claim:');
+  if (labelClaimIdx === -1) return xml;
+
+  const trStart = xml.lastIndexOf('<w:tr', labelClaimIdx);
+  const trEnd = xml.indexOf('</w:tr>', labelClaimIdx) + 7;
+  if (trStart === -1 || trEnd < 7) return xml;
+
+  const labelClaimRow = xml.substring(trStart, trEnd);
+
+  const trPrMatch = labelClaimRow.match(/<w:trPr>[\s\S]*?<\/w:trPr>/);
+  const trPr = trPrMatch ? trPrMatch[0] : '';
+
+  const cellRegex = /<w:tc\b[^>]*>[\s\S]*?<\/w:tc>/g;
+  const cells: string[] = [];
+  let mc: RegExpExecArray | null;
+  while ((mc = cellRegex.exec(labelClaimRow)) !== null) cells.push(mc[0]);
+
+  if (cells.length < 2) return xml;
+
+  // Empty first cell
+  const labelTcPrMatch = cells[0].match(/<w:tcPr>[\s\S]*?<\/w:tcPr>/);
+  const labelTcPr = labelTcPrMatch ? labelTcPrMatch[0] : '';
+  const emptyLabelCell = `<w:tc>${labelTcPr}<w:p><w:pPr></w:pPr></w:p></w:tc>`;
+
+  // Value cell structure
+  const valueTcPrMatch = cells[1].match(/<w:tcPr>[\s\S]*?<\/w:tcPr>/);
+  const valueTcPr = valueTcPrMatch ? valueTcPrMatch[0] : '';
+
+  const pPrMatch = cells[1].match(/<w:pPr>[\s\S]*?<\/w:pPr>/);
+  const pPrBase = pPrMatch ? pPrMatch[0] : '<w:pPr></w:pPr>';
+
+  const rPrMatch = cells[1].match(/<w:rPr>[\s\S]*?<\/w:rPr>/);
+  let rPr = rPrMatch ? rPrMatch[0] : '';
+  if (rPr) {
+    rPr = rPr.replace(/<w:color\b[^>]*\/>/g, '');
+    rPr = rPr.replace(/<w:color\b[^>]*>[\s\S]*?<\/w:color>/g, '');
+    rPr = rPr.replace(/<w:caps\b[^>]*\/?>/g, '');
+    rPr = rPr.replace(/<w:smallCaps\b[^>]*\/?>/g, '');
+  }
+
+  // Inject tab stops: col1=3400 (spec), col2=4600 (concentration)
+  let pPr = pPrBase;
+  if (!/<w:tabs>/.test(pPr)) {
+    pPr = pPr.replace(
+      '</w:pPr>',
+      '<w:tabs><w:tab w:val="left" w:pos="3400"/><w:tab w:val="left" w:pos="4600"/></w:tabs></w:pPr>'
+    );
+  }
+
+  const lineToRuns = (line: string): string => {
+    const segments = line.split('\t');
+    if (segments.length === 1) {
+      return `<w:r>${rPr}<w:t xml:space="preserve">${xmlEscape(line)}</w:t></w:r>`;
+    }
+    return segments.map((seg, idx) => {
+      const tabRun = idx < segments.length - 1 ? `<w:r>${rPr}<w:tab/></w:r>` : '';
+      return `<w:r>${rPr}<w:t xml:space="preserve">${xmlEscape(seg)}</w:t></w:r>${tabRun}`;
+    }).join('');
+  };
+
+  let extraRows = '';
+  for (const claim of extraClaims) {
+    const valueLines = claim.split('\n');
+    const paras = valueLines
+      .map(line => `<w:p>${pPr}${lineToRuns(line)}</w:p>`)
+      .join('');
+    const valueCell = `<w:tc>${valueTcPr}${paras}</w:tc>`;
+    extraRows += `<w:tr>${trPr}${emptyLabelCell}${valueCell}</w:tr>`;
+  }
+
+  return xml.substring(0, trEnd) + extraRows + xml.substring(trEnd);
+}
+
+
+
 
 /**
  * Replace the VALUE cell in a table row identified by a LABEL in the first cell.
@@ -2201,7 +2514,7 @@ function replaceTableFieldValue(xml: string, labelText: string, newValue: string
     // Preserve <w:tcPr> (cell properties like width, borders)
     const tcPrMatch = valueCell.match(/<w:tcPr>[\s\S]*?<\/w:tcPr>/);
     let tcPr = tcPrMatch ? tcPrMatch[0] : '';
-    
+
     // If there are multiple value cells, they were split in the template (e.g. Label Claim)
     // We must merge them back into a single wider cell to prevent text wrapping.
     const innerCellsCount = cells.length - 1;
@@ -2225,7 +2538,7 @@ function replaceTableFieldValue(xml: string, labelText: string, newValue: string
     // Preserve <w:pPr> (paragraph properties like alignment)
     const pPrMatch = valueCell.match(/<w:pPr>[\s\S]*?<\/w:pPr>/);
     let pPr = pPrMatch ? pPrMatch[0] : '<w:pPr></w:pPr>';
-    
+
     // Inject exact tab stops (3400 for Spec, 4600 for Concentration) to prevent them 
     // from jumping wildly based on ingredient name lengths.
     if (!/<w:tabs>/.test(pPr)) {
@@ -2347,20 +2660,25 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
   }
 
   // ── 2b. Clean up redundant composition rows in the template ──
-  // The template has multiple hardcoded composition rows under "Label Claim:". 
+  // The template has multiple hardcoded composition rows under "Label Claim:".
   // We remove all <w:tr> elements located between the "Label Claim:" row and "Therapeutic Category:" row.
   const idxLabel = docXml.indexOf('Label Claim:');
   const idxTherapeutic = docXml.indexOf('Therapeutic Category:');
-  
+
   if (idxLabel !== -1 && idxTherapeutic !== -1 && idxLabel < idxTherapeutic) {
     const trEndIdx = docXml.indexOf('</w:tr>', idxLabel) + 7;
     const trStartIdx = docXml.lastIndexOf('<w:tr', idxTherapeutic);
-    
+
     if (trEndIdx > 0 && trStartIdx > trEndIdx) {
       const middleSection = docXml.substring(trEndIdx, trStartIdx);
       const cleanedMiddle = middleSection.replace(/<w:tr\b[^>]*>[\s\S]*?<\/w:tr>/g, '');
       docXml = docXml.substring(0, trEndIdx) + cleanedMiddle + docXml.substring(trStartIdx);
     }
+  }
+
+  // ── 2b2. Inject extra rows for additional label claims (IP + USP, etc.) ──
+  if (data.label_claims.length > 1) {
+    docXml = injectExtraLabelClaimRows(docXml, data.label_claims.slice(1));
   }
 
   // ── 2c. Global text replacements for non-table content ────────────
@@ -2499,7 +2817,11 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
               const rPrMatch = cell.xml.match(/<w:rPr>[\s\S]*?<\/w:rPr>/);
               const rPr = rPrMatch ? rPrMatch[0] : '';
 
-              const newCell = `<w:tc>${tcPr}<w:p>${pPr}<w:r>${rPr}<w:t>${newValue}</w:t></w:r></w:p></w:tc>`;
+              // Strip shading from tcPr — count rows must be white, not grey
+              const cleanTcPr = tcPr
+                .replace(/<w:shd\b[^>]*\/>/g, '')
+                .replace(/<w:shd\b[^>]*>[\s\S]*?<\/w:shd>/g, '');
+              const newCell = `<w:tc>${cleanTcPr}<w:p>${pPr}<w:r>${rPr}<w:t>${newValue}</w:t></w:r></w:p></w:tc>`;
               rowXml = rowXml.substring(0, cell.start) + newCell + rowXml.substring(cell.end);
             }
 
@@ -2605,9 +2927,16 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
           });
           const combined = rowTexts.join(' ');
 
-          if (combined.includes('Details of Product') || combined.includes('Batch Number') || combined.includes('Month') && combined.includes('Batch')) {
+          const isHeaderRow =
+            combined.includes('Details of Product') ||
+            combined.includes('Batch Number') ||
+            (combined.includes('Month') && combined.includes('Batch') && combined.includes('Size'));
+
+          if (isHeaderRow) {
             headerEndIdx = i + 1;
           }
+
+          // Also mark total row correctly — must NOT be treated as header
           if (combined.includes('Total Batches Manufactured')) {
             totalRowIdx = i;
           }
@@ -2644,8 +2973,13 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
 
         console.log(`  Header rows: 0-${headerEndIdx - 1}, Data rows: ${headerEndIdx}-${totalRowIdx - 1}, Total row: ${totalRowIdx}`);
 
-        // Get a template data row to use as a pattern (first data row)
-        const templateDataRow = rows[headerEndIdx]?.xml || '';
+        const rawTemplateDataRow = rows[headerEndIdx]?.xml || '';
+
+        // Strip ALL <w:shd .../> self-closing shading tags from the template data row.
+        // This prevents header-row grey shading from bleeding into every data row.
+        const templateDataRow = rawTemplateDataRow
+          .replace(/<w:shd\b[^>]*\/>/g, '')           // self-closing: <w:shd ... />
+          .replace(/<w:shd\b[^>]*>[\s\S]*?<\/w:shd>/g, ''); // paired tags (rare but safe)
 
         if (templateDataRow && totalRowIdx > headerEndIdx) {
           // Build new data rows
@@ -2819,6 +3153,7 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
 
           // Generate new rows
           let newRowsXml = '';
+          let rmPrevVendor: string | null = null;
 
           for (const item of data.materialVendorDetails) {
             let rowXml = templateRow;
@@ -2832,8 +3167,22 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
             // 4. AR Numbers (Multiple, stacked vertically with line breaks)
             const arNumbersText = item.arNumbers.join('<w:br/>');
             rowXml = replaceCellText(rowXml, 3, arNumbersText, true);
-            // 5. Vendor
-            rowXml = replaceCellText(rowXml, 4, xmlEscape(item.vendor));
+            // 5. Vendor — merge consecutive rows with the same vendor
+            const effectiveVendor = (item.vendor || '').trim();
+            let vendorMerge: 'restart' | 'continue';
+            let vendorText: string;
+            if (effectiveVendor === '') {
+              vendorMerge = rmPrevVendor !== null ? 'continue' : 'restart';
+              vendorText = '';
+            } else if (effectiveVendor === rmPrevVendor) {
+              vendorMerge = 'continue';
+              vendorText = '';
+            } else {
+              vendorMerge = 'restart';
+              vendorText = xmlEscape(effectiveVendor);
+              rmPrevVendor = effectiveVendor;
+            }
+            rowXml = replaceCellText(rowXml, 4, vendorText, false, vendorMerge);
 
             newRowsXml += rowXml;
           }
@@ -2928,6 +3277,7 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
 
           // Generate new PPM rows
           let ppmNewRowsXml = '';
+          let ppmPrevVendor: string | null = null;
           for (const item of data.ppmVendorDetails) {
             let rowXml = ppmTemplateRow;
             rowXml = replaceCellText(rowXml, 0, item.srNo.toString());
@@ -2935,7 +3285,22 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
             rowXml = replaceCellText(rowXml, 2, xmlEscape(item.materialName));
             const arNumbersText = item.arNumbers.join('<w:br/>');
             rowXml = replaceCellText(rowXml, 3, arNumbersText, true);
-            rowXml = replaceCellText(rowXml, 4, xmlEscape(item.vendor));
+            // Vendor — merge consecutive rows with the same vendor
+            const ppmEffectiveVendor = (item.vendor || '').trim();
+            let ppmVendorMerge: 'restart' | 'continue';
+            let ppmVendorText: string;
+            if (ppmEffectiveVendor === '') {
+              ppmVendorMerge = ppmPrevVendor !== null ? 'continue' : 'restart';
+              ppmVendorText = '';
+            } else if (ppmEffectiveVendor === ppmPrevVendor) {
+              ppmVendorMerge = 'continue';
+              ppmVendorText = '';
+            } else {
+              ppmVendorMerge = 'restart';
+              ppmVendorText = xmlEscape(ppmEffectiveVendor);
+              ppmPrevVendor = ppmEffectiveVendor;
+            }
+            rowXml = replaceCellText(rowXml, 4, ppmVendorText, false, ppmVendorMerge);
             ppmNewRowsXml += rowXml;
           }
 
@@ -2991,48 +3356,65 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
           console.log(`Secondary Pkg table: replacing template rows with ${data.secondaryPackagingDetails.length} data rows`);
 
           // Group items by their 2-character material code prefix (e.g. 2C, 21, 2L, 25)
+          // No prefix grouping — each item is its own group (sequential Sr. No)
           const groupedItems = new Map<string, any[]>();
           for (const item of data.secondaryPackagingDetails) {
-            const prefix = (item.materialCode || '').substring(0, 2).toUpperCase();
-            if (!groupedItems.has(prefix)) groupedItems.set(prefix, []);
-            groupedItems.get(prefix)!.push(item);
+            groupedItems.set(item.materialCode, [item]);
           }
-
           let newRowsXml = '';
-          let srNo = 1;
 
-          for (const [prefix, group] of groupedItems.entries()) {
-            let prevVendor = null;
+          // Sr. No is simply sequential — one number per material item, no grouping
+          // Vendor merges across ALL consecutive rows with the same non-empty vendor
+          let prevVendor: string | null = null;
+          let currentSrNo = 1;
 
+          for (const [, group] of groupedItems.entries()) {
             for (let i = 0; i < group.length; i++) {
               const item = group[i];
               let rowXml = templateRow;
 
-              // Cell 0: Sr. No (Merge entire group)
-              const srNoMerge = i === 0 ? 'restart' : 'continue';
-              const srNoText = i === 0 ? srNo.toString() : '';
-              rowXml = replaceCellText(rowXml, 0, srNoText, false, srNoMerge);
+              // Cell 0: Sr. No — one per row, no merging
+              rowXml = replaceCellText(rowXml, 0, currentSrNo.toString());
+              currentSrNo++;
 
-              // Cell 1: Material Code (No merge)
+              // Cell 1: Material Code
               rowXml = replaceCellText(rowXml, 1, xmlEscape(item.materialCode));
 
-              // Cell 2: Material Name (No merge)
+              // Cell 2: Material Name
               rowXml = replaceCellText(rowXml, 2, xmlEscape(item.materialName));
 
-              // Cell 3: Vendor (Merge consecutive identical vendors)
-              const vendorMerge = (i === 0 || item.vendor !== prevVendor) ? 'restart' : 'continue';
-              const vendorText = vendorMerge === 'continue' ? '' : xmlEscape(item.vendor);
+              // Cell 3: Vendor — merge consecutive rows with the same vendor.
+              // Empty vendor strings are treated as a continuation of the previous
+              // vendor's merge (so blank rows don't break a running merge chain).
+              const effectiveVendor = (item.vendor || '').trim();
+              let vendorMerge: 'restart' | 'continue';
+              let vendorText: string;
+
+              if (effectiveVendor === '') {
+                // No vendor data — continue whatever merge was active
+                vendorMerge = prevVendor !== null ? 'continue' : 'restart';
+                vendorText = '';
+              } else if (effectiveVendor === prevVendor) {
+                // Same vendor as previous row — extend the merge
+                vendorMerge = 'continue';
+                vendorText = '';
+              } else {
+                // New vendor — start a fresh merge
+                vendorMerge = 'restart';
+                vendorText = xmlEscape(effectiveVendor);
+                prevVendor = effectiveVendor;
+              }
+
               rowXml = replaceCellText(rowXml, 3, vendorText, false, vendorMerge);
 
-              prevVendor = item.vendor;
-
-              // Cell 4: Artwork (No merge)
+              // Cell 4: Artwork
               rowXml = replaceCellText(rowXml, 4, xmlEscape(item.artworkStatus));
 
               newRowsXml += rowXml;
             }
-            srNo++;
           }
+
+          // Increment srNo is no longer needed (we use groupIdx + 1 directly above)
 
           docXml = docXml.substring(0, templateRowStart) + newRowsXml + docXml.substring(lastRowEnd);
           console.log('✅ Secondary/Tertiary Packaging table (section 3.3) updated');
@@ -3517,11 +3899,11 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
         + '<w:insideH w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
         + '<w:insideV w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
         + '</w:tblBorders></w:tblPr>';
-      // Fixed 5-column grid matching template exactly
-      const tblGrid512 = '<w:tblGrid>'
-        + '<w:gridCol w:w="2340"/><w:gridCol w:w="2821"/>'
-        + '<w:gridCol w:w="1527"/><w:gridCol w:w="1527"/><w:gridCol w:w="1690"/>'
-        + '</w:tblGrid>';
+      // Dynamic grid: 4 base columns + N assay spec columns
+      let tblGrid512 = '<w:tblGrid><w:gridCol w:w="2200"/><w:gridCol w:w="2500"/>'
+        + '<w:gridCol w:w="1200"/><w:gridCol w:w="1200"/>';
+      for (let _i = 0; _i < mat.assaySpecs.length; _i++) tblGrid512 += '<w:gridCol w:w="1200"/>';
+      tblGrid512 += '</w:tblGrid>';
 
       // ── Cell builders ──
       // Shaded header cell (bold, centered)
@@ -3557,16 +3939,37 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
       const trOpen = `<w:tr><w:trPr><w:trHeight w:val="454"/><w:jc w:val="center"/></w:trPr>`;
       let rowsXml512 = '';
 
-      // Row 0: Description (vMerge restart) | AR. Number (vMerge restart) | As Per (gridSpan=3)
-      rowsXml512 += trOpen + hc512('Description', true) + hc512('AR. Number', true) + hc512('As Per', false, false, 3) + '</w:tr>';
-      // Row 1: vMerge continue × 2 | pH | LOD (%) | Assay (%)
-      rowsXml512 += trOpen + hc512('', false, true) + hc512('', false, true) + hc512('pH') + hc512('LOD (%)') + hc512('Assay (%)') + '</w:tr>';
-      // Row 2: vMerge continue × 2 | limits
-      rowsXml512 += trOpen + hc512('', false, true) + hc512('', false, true) + hc512(mat.phLimit) + hc512(mat.lodLimit) + hc512(mat.assayLimit) + '</w:tr>';
+      // Helper: build the spec-section header label ("As Per IP & USP" when >1 spec, otherwise "As Per IP")
+      const specHeaderSpan512 = mat.assaySpecs.length > 1
+        ? mat.assaySpecs.map(s => `As Per ${s.specName}`).join(' & ')
+        : mat.assaySpecs.length === 1 ? `As Per ${mat.assaySpecs[0].specName}` : 'Assay';
+
+      // Row 0: Description (vMerge) | AR. Number (vMerge) | combined spec header (span=N) | individual spec headers
+      rowsXml512 += trOpen
+        + hc512('Description', true) + hc512('AR. Number', true)
+        + hc512(specHeaderSpan512, false, false, Math.max(mat.assaySpecs.length, 1))
+        + (mat.assaySpecs.length > 1 ? mat.assaySpecs.map(s => hc512(`As Per ${s.specName}`)).join('') : '')
+        + '</w:tr>';
+      // Row 1: vMerge cont ×2 | pH | Water (%) | Assay (%) per spec
+      rowsXml512 += trOpen
+        + hc512('', false, true) + hc512('', false, true)
+        + hc512('pH') + hc512('Water (%)')
+        + mat.assaySpecs.map(() => hc512('Assay (%)')).join('')
+        + '</w:tr>';
+      // Row 2: vMerge cont ×2 | phLimit | waterLimit | assay limit per spec
+      rowsXml512 += trOpen
+        + hc512('', false, true) + hc512('', false, true)
+        + hc512(mat.phLimit) + hc512(mat.waterLimit)
+        + mat.assaySpecs.map(s => hc512(s.limit)).join('')
+        + '</w:tr>';
 
       // Data rows
       for (const row of mat.rows) {
-        rowsXml512 += trOpen + dc512(row.description) + dc512(row.arNumber) + dc512(row.ph) + dc512(row.lod) + dc512(row.assay) + '</w:tr>';
+        rowsXml512 += trOpen
+          + dc512(row.description) + dc512(row.arNumber)
+          + dc512(row.ph) + dc512(row.water)
+          + mat.assaySpecs.map(s => dc512(row.assays[s.specName] || '')).join('')
+          + '</w:tr>';
       }
 
       // Statistics
@@ -3580,16 +3983,19 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
         return { min: min.toFixed(2), max: max.toFixed(2), avg: avg.toFixed(2), sd: sd.toFixed(2) };
       };
       const phS = calcStats512(mat.rows.map(r => toNum512(r.ph)).filter((v): v is number => v !== null));
-      const lodS = calcStats512(mat.rows.map(r => toNum512(r.lod)).filter((v): v is number => v !== null));
-      const assayS = calcStats512(mat.rows.map(r => toNum512(r.assay)).filter((v): v is number => v !== null));
+      const waterS = calcStats512(mat.rows.map(r => toNum512(r.water)).filter((v): v is number => v !== null));
+      const statsBySpec512 = mat.assaySpecs.map(s =>
+        calcStats512(mat.rows.map(r => toNum512(r.assays[s.specName] || '')).filter((v): v is number => v !== null))
+      );
 
-      const statRow512 = (label: string, ph: string, lod: string, assay: string) =>
-        trOpen + sc512(label, 2) + sc512(ph) + sc512(lod) + sc512(assay) + '</w:tr>';
+      const statRow512 = (label: string, ph: string, water: string, specVals: string[]) =>
+        trOpen + sc512(label, 2) + sc512(ph) + sc512(water)
+        + specVals.map(v => sc512(v)).join('') + '</w:tr>';
 
-      rowsXml512 += statRow512('Minimum', phS.min, lodS.min, assayS.min);
-      rowsXml512 += statRow512('Maximum', phS.max, lodS.max, assayS.max);
-      rowsXml512 += statRow512('Average', phS.avg, lodS.avg, assayS.avg);
-      rowsXml512 += statRow512('Standard Deviation', phS.sd, lodS.sd, assayS.sd);
+      rowsXml512 += statRow512('Minimum', phS.min, waterS.min, statsBySpec512.map(s => s.min));
+      rowsXml512 += statRow512('Maximum', phS.max, waterS.max, statsBySpec512.map(s => s.max));
+      rowsXml512 += statRow512('Average', phS.avg, waterS.avg, statsBySpec512.map(s => s.avg));
+      rowsXml512 += statRow512('Standard Deviation', phS.sd, waterS.sd, statsBySpec512.map(s => s.sd));
 
       const replacement512 = '<w:tbl>' + origTblPr512 + tblGrid512 + rowsXml512 + '</w:tbl>';
       docXml = docXml.substring(0, nextTblIdx512) + replacement512 + docXml.substring(tblEnd512);
@@ -3666,12 +4072,13 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
         Array(n).fill(limit ?? 0);
 
       const phLims = parseLimit(mat.phLimit);
-      const lodLims = parseLimit(mat.lodLimit);
-      const assayLims = parseLimit(mat.assayLimit);
+      const waterLims = parseLimit(mat.waterLimit);
+      const firstSpec512 = mat.assaySpecs[0]?.specName || '';
+      const assayLims = parseLimit(mat.assaySpecs[0]?.limit || '');
 
       const phVals = mat.rows.map((r: RMTestRow512) => parseNumVal(r.ph) ?? 0);
-      const lodVals = mat.rows.map((r: RMTestRow512) => parseNumVal(r.lod) ?? 0);
-      const assayVals = mat.rows.map((r: RMTestRow512) => parseNumVal(r.assay) ?? 0);
+      const waterVals = mat.rows.map((r: RMTestRow512) => parseNumVal(r.water) ?? 0);
+      const assayVals = mat.rows.map((r: RMTestRow512) => parseNumVal(r.assays[firstSpec512] || '') ?? 0);
       const n = arNumbers.length;
 
       // chart1.xml → pH (3 series: actual, NLT, NMT)
@@ -3686,8 +4093,8 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
       // chart2.xml → LOD (2 series: actual, NMT only)
       const chart2Xml = await zip.file('word/charts/chart2.xml')!.async('string');
       const lodSeries: { name: string; values: number[] }[] = [
-        { name: '% LOD', values: lodVals },
-        ...(lodLims.nmt !== undefined ? [{ name: `NMT ${lodLims.nmt}%`, values: limitLine(lodLims.nmt, n) }] : []),
+        { name: '% Water', values: waterVals },
+        ...(waterLims.nmt !== undefined ? [{ name: `NMT ${waterLims.nmt}%`, values: limitLine(waterLims.nmt, n) }] : []),
       ];
       zip.file('word/charts/chart2.xml', updateChartXml(chart2Xml, lodSeries));
 
@@ -4411,7 +4818,7 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
       if (anchorIdx !== -1 && anchor === '5.3.2') {
         anchorIdx = docXml.lastIndexOf(anchor);
       }
-      
+
       console.log(`  5.3.2 DEBUG: anchor="${anchor}" idx=${anchorIdx}`);
       if (anchorIdx === -1) continue;
       const nextTblIdx = docXml.indexOf('<w:tbl>', anchorIdx);
@@ -4467,7 +4874,7 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
           remarkTblGrid532 = origRemark.match(/<w:tblGrid>[\s\S]*?<\/w:tblGrid>/)?.[0] || remarkTblGrid532;
           const remarkOrigRows = [...origRemark.matchAll(/<w:tr\b[\s\S]*?<\/w:tr>/g)];
           signatureRow532 = remarkOrigRows.length > 1 ? remarkOrigRows[remarkOrigRows.length - 1][0] : '';
-          
+
           // Now extend sectionContentEnd to capture the two redundant CPK tables AFTER the heading
           let currentIdx = nextSectionHeading;
           let tablesFound = 0;
@@ -4482,8 +4889,8 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
             }
           }
           if (tablesFound === 2) {
-             console.log(`  ✅ Found 2 CPK template tables after heading, removing them. Extended bound: ${currentIdx}`);
-             sectionContentEnd = currentIdx;
+            console.log(`  ✅ Found 2 CPK template tables after heading, removing them. Extended bound: ${currentIdx}`);
+            sectionContentEnd = currentIdx;
           }
         }
       } else {
@@ -4700,388 +5107,388 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
       const fpColStats: Map<string, ProcessCapabilityResults | null> = new Map();
 
       if (fpQuantCols.length > 0) {
-          newXmlContent += pSeparator;
+        newXmlContent += pSeparator;
 
-          // ── Data extraction: gather all numeric values per column ──
-          // For FP, each batch can have multiple AR rows — all individual numeric values are used
-          // for Uniformity-style parameters. For per-batch parameters (pH, Osmolality, Assay),
-          // each unique batch value is used once.
+        // ── Data extraction: gather all numeric values per column ──
+        // For FP, each batch can have multiple AR rows — all individual numeric values are used
+        // for Uniformity-style parameters. For per-batch parameters (pH, Osmolality, Assay),
+        // each unique batch value is used once.
 
-          for (const col of fpQuantCols) {
-            const rawValues: number[] = [];
-            for (const row of (data.finishInProcessData || [])) {
-              // Now we need to look for the result value specifically
-              const cell = row.results[`${col.key}|||result`];
-              if (cell && cell !== '--' && cell !== '') {
-                const num = parseFloat(cell);
-                if (!isNaN(num)) rawValues.push(num);
-              }
+        for (const col of fpQuantCols) {
+          const rawValues: number[] = [];
+          for (const row of (data.finishInProcessData || [])) {
+            // Now we need to look for the result value specifically
+            const cell = row.results[`${col.key}|||result`];
+            if (cell && cell !== '--' && cell !== '') {
+              const num = parseFloat(cell);
+              if (!isNaN(num)) rawValues.push(num);
             }
-              if (rawValues.length >= 2) {
-                fpColStats.set(col.key, calculateProcessCapability(rawValues, col.limit));
-              } else {
-                fpColStats.set(col.key, null);
-              }
-            }
+          }
+          if (rawValues.length >= 2) {
+            fpColStats.set(col.key, calculateProcessCapability(rawValues, col.limit));
+          } else {
+            fpColStats.set(col.key, null);
+          }
+        }
 
-          // ── Layout helpers ──
-          // Total data cols: vMerge(811) + label(1661) + N FP quant cols
-          const fpTotalCols = 2 + fpQuantCols.length; // vMerge + label + each quant col
-          const fpColW = 1200; // approx width per parameter column
+        // ── Layout helpers ──
+        // Total data cols: vMerge(811) + label(1661) + N FP quant cols
+        const fpTotalCols = 2 + fpQuantCols.length; // vMerge + label + each quant col
+        const fpColW = 1200; // approx width per parameter column
 
-          const fp_fmt5 = (num: number | undefined) => num !== undefined && !isNaN(num) ? num.toFixed(5) : 'N/A';
-          const fp_fmt2 = (num: number | undefined) => num !== undefined && !isNaN(num) ? num.toFixed(2) : 'N/A';
+        const fp_fmt5 = (num: number | undefined) => num !== undefined && !isNaN(num) ? num.toFixed(5) : 'N/A';
+        const fp_fmt2 = (num: number | undefined) => num !== undefined && !isNaN(num) ? num.toFixed(2) : 'N/A';
 
-          const fp_boldP = (text: string) =>
-            `<w:p><w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/>`
+        const fp_boldP = (text: string) =>
+          `<w:p><w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/>`
+          + `<w:rPr><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:pPr>`
+          + `<w:r><w:rPr><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>`
+          + `<w:t xml:space="preserve">${xmlEscape(text)}</w:t></w:r></w:p>`;
+
+        // Data value cell
+        const fp_valCell = (val: string, shade = '') =>
+          `<w:tc><w:tcPr>${shade}<w:vAlign w:val="center"/></w:tcPr>`
+          + `<w:p><w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/>`
+          + `<w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:pPr>`
+          + `<w:r><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>`
+          + `<w:t>${xmlEscape(val)}</w:t></w:r></w:p></w:tc>`;
+
+        // vMerge continue cell
+        const fp_vMergeCont =
+          `<w:tc><w:tcPr><w:vMerge w:val="continue"/><w:vAlign w:val="center"/></w:tcPr><w:p/></w:tc>`;
+
+        // Row with a label cell spanning cols 1+2 (gridSpan=2) and one value cell per quant col
+        const fp_buildSimpleRow = (labelXml: string, vals: string[], shaded = false) => {
+          const shade = shaded ? `<w:shd w:val="clear" w:color="auto" w:fill="D9D9D9"/>` : '';
+          let row = `<w:tr><w:trPr><w:trHeight w:val="350"/><w:jc w:val="center"/></w:trPr>`
+            + `<w:tc><w:tcPr><w:gridSpan w:val="2"/>${shade}<w:vAlign w:val="center"/></w:tcPr>${labelXml}</w:tc>`;
+          for (const v of vals) row += fp_valCell(v, shade);
+          row += `</w:tr>`;
+          return row;
+        };
+
+        // Row within Short-Term or Long-Term block (vMerge continue in col 0, label in col 1)
+        const fp_buildBlockRow = (label: string, vals: string[], shaded = false) => {
+          const shade = shaded ? `<w:shd w:val="clear" w:color="auto" w:fill="D9D9D9"/>` : '';
+          let row = `<w:tr><w:trPr><w:trHeight w:val="350"/><w:jc w:val="center"/></w:trPr>`
+            + fp_vMergeCont
+            + `<w:tc><w:tcPr>${shade}<w:vAlign w:val="center"/></w:tcPr>`
+            + `<w:p><w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/>`
             + `<w:rPr><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:pPr>`
             + `<w:r><w:rPr><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>`
-            + `<w:t xml:space="preserve">${xmlEscape(text)}</w:t></w:r></w:p>`;
+            + `<w:t xml:space="preserve">${xmlEscape(label)}</w:t></w:r></w:p></w:tc>`;
+          for (const v of vals) row += fp_valCell(v, shade);
+          row += `</w:tr>`;
+          return row;
+        };
 
-          // Data value cell
-          const fp_valCell = (val: string, shade = '') =>
-            `<w:tc><w:tcPr>${shade}<w:vAlign w:val="center"/></w:tcPr>`
+        // Helper: get formatted values for each FP quantile column
+        const fp_fmt5All = (getter: (s: ProcessCapabilityResults | null) => number | undefined) =>
+          fpQuantCols.map(c => fp_fmt5(getter(fpColStats.get(c.key) ?? null)));
+        const fp_fmt2All = (getter: (s: ProcessCapabilityResults | null) => number | undefined) =>
+          fpQuantCols.map(c => fp_fmt2(getter(fpColStats.get(c.key) ?? null)));
+
+        // Build column display names for header row
+        const fp_colHeaders = fpQuantCols.map((c: any) => {
+          if (c.type === 'ph') return 'pH';
+          if (c.type === 'assay') return `Assay (%)\n${c.name}`;
+          if (c.type === 'critical' && (c.name || '').toUpperCase().includes('UNIFORMITY')) {
+            return `Uniformity of Volume\n(${c.limit})`;
+          }
+          if (c.type === 'critical' && (c.name || '').toUpperCase().includes('OSMOLALITY')) {
+            return `Osmolality\n(${c.limit})`;
+          }
+          return c.name || c.type;
+        });
+
+        // Grid: vMerge col (811) + label col (1661) + N quant cols (fpColW each)
+        let fpCpkGrid = `<w:tblGrid><w:gridCol w:w="811"/><w:gridCol w:w="1661"/>`;
+        for (let i = 0; i < fpQuantCols.length; i++) fpCpkGrid += `<w:gridCol w:w="${fpColW}"/>`;
+        fpCpkGrid += `</w:tblGrid>`;
+
+        let fpCpkRows = '';
+
+        // ── ROW 1: Title row spanning all columns ──
+        fpCpkRows +=
+          `<w:tr><w:trPr><w:trHeight w:val="397"/><w:jc w:val="center"/></w:trPr>`
+          + `<w:tc><w:tcPr><w:gridSpan w:val="${fpTotalCols}"/>`
+          + `<w:shd w:val="clear" w:color="auto" w:fill="D9D9D9"/><w:vAlign w:val="center"/></w:tcPr>`
+          + `<w:p><w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/>`
+          + `<w:rPr><w:b/><w:color w:val="7F6000"/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:pPr>`
+          + `<w:r><w:rPr><w:b/><w:color w:val="7F6000"/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>`
+          + `<w:t>Process Capability &amp; Performance parameters (Cp, Cpk, and Pp, Ppk)</w:t>`
+          + `</w:r></w:p></w:tc>`
+          + `</w:tr>`;
+
+        // ── ROW 2: Column headers (empty label area + one header per quant col) ──
+        {
+          let hdrRow = `<w:tr><w:trPr><w:trHeight w:val="397"/><w:jc w:val="center"/></w:trPr>`
+            + `<w:tc><w:tcPr><w:gridSpan w:val="2"/>`
+            + `<w:shd w:val="clear" w:color="auto" w:fill="D9D9D9"/><w:vAlign w:val="center"/></w:tcPr>`
+            + `<w:p/></w:tc>`;
+          for (const hdr of fp_colHeaders) {
+            // Build multi-line header (split on \n)
+            const lines = hdr.split('\n');
+            let hdrCellContent = '';
+            for (const line of lines) {
+              hdrCellContent += fp_boldP(line);
+            }
+            hdrRow += `<w:tc><w:tcPr>`
+              + `<w:shd w:val="clear" w:color="auto" w:fill="D9D9D9"/><w:vAlign w:val="center"/></w:tcPr>`
+              + hdrCellContent + `</w:tc>`;
+          }
+          hdrRow += `</w:tr>`;
+          fpCpkRows += hdrRow;
+        }
+
+        // Derived intermediates
+        const fp_uslLsl = fpQuantCols.map((c: any) => {
+          const s = fpColStats.get(c.key);
+          return s ? s.usl - s.lsl : NaN;
+        });
+        const fp_uslAvg = fpQuantCols.map((c: any) => {
+          const s = fpColStats.get(c.key);
+          return s ? s.usl - s.average : NaN;
+        });
+        const fp_avgLsl = fpQuantCols.map((c: any) => {
+          const s = fpColStats.get(c.key);
+          return s ? s.average - s.lsl : NaN;
+        });
+
+        // ── ROWS 3–8: Basic statistics ──
+        fpCpkRows += fp_buildSimpleRow(fp_boldP('Average'), fp_fmt5All(s => s?.average));
+        fpCpkRows += fp_buildSimpleRow(fp_boldP('Maximum'), fp_fmt5All(s => s?.max));
+        fpCpkRows += fp_buildSimpleRow(fp_boldP('Minimum'), fp_fmt5All(s => s?.min));
+        fpCpkRows += fp_buildSimpleRow(fp_boldP('Upper Specification Limit \u2013 Lower Specification Limit (USL \u2013 LSL)'), fp_uslLsl.map(v => fp_fmt5(v)));
+        fpCpkRows += fp_buildSimpleRow(fp_boldP('Upper Specification Limit (USL) \u2013 Average'), fp_uslAvg.map(v => fp_fmt5(v)));
+        fpCpkRows += fp_buildSimpleRow(fp_boldP('Average \u2013 Lower Specification Limit (LSL)'), fp_avgLsl.map(v => fp_fmt5(v)));
+
+        // ── ROW 9: Short-Term header + Estimated Std Dev (σ) ──
+        {
+          let stRow = `<w:tr><w:trPr><w:trHeight w:val="350"/><w:jc w:val="center"/></w:trPr>`
+            + `<w:tc><w:tcPr><w:vMerge w:val="restart"/><w:vAlign w:val="center"/></w:tcPr>`
+            + fp_boldP('Process Capability parameters Short-Term Statistics') + `</w:tc>`
+            + `<w:tc><w:tcPr><w:vAlign w:val="center"/></w:tcPr>`
             + `<w:p><w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/>`
-            + `<w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:pPr>`
-            + `<w:r><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>`
-            + `<w:t>${xmlEscape(val)}</w:t></w:r></w:p></w:tc>`;
+            + `<w:rPr><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:pPr>`
+            + `<w:r><w:rPr><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>`
+            + `<w:t xml:space="preserve">Estimated Std Deviation (</w:t></w:r>`
+            + `<w:r><w:rPr><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/><w:rFonts w:ascii="Symbol" w:hAnsi="Symbol" w:cs="Symbol"/></w:rPr>`
+            + `<w:t>s</w:t></w:r>`
+            + `<w:r><w:rPr><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr><w:t xml:space="preserve">)</w:t></w:r></w:p></w:tc>`;
+          for (const [, s] of [...fpQuantCols.map((c: any) => fpColStats.get(c.key))].entries()) stRow += fp_valCell(fp_fmt5(s?.sigmaEstimated));
+          stRow += `</w:tr>`;
+          fpCpkRows += stRow;
+        }
 
-          // vMerge continue cell
-          const fp_vMergeCont =
-            `<w:tc><w:tcPr><w:vMerge w:val="continue"/><w:vAlign w:val="center"/></w:tcPr><w:p/></w:tc>`;
+        fpCpkRows += fp_buildBlockRow('3\u03c3 = (3 X \u03c3)', fpQuantCols.map((c: any) => fp_fmt2((fpColStats.get(c.key)?.sigmaEstimated ?? NaN) * 3)));
+        fpCpkRows += fp_buildBlockRow('6\u03c3 = (6 X \u03c3)', fpQuantCols.map((c: any) => fp_fmt2((fpColStats.get(c.key)?.sigmaEstimated ?? NaN) * 6)));
+        fpCpkRows += fp_buildBlockRow('Cpku = (USL \u2013 Average) / 3\u03c3', fp_fmt2All(s => s?.cpku));
+        fpCpkRows += fp_buildBlockRow('Cpkl = (Average \u2013 LSL) / 3\u03c3', fp_fmt2All(s => s?.cpkl));
+        fpCpkRows += fp_buildBlockRow('Cpk Value = Min (Cpkl & Cpku)', fp_fmt2All(s => s?.cpk), true);
+        fpCpkRows += fp_buildBlockRow('Cp Value = (USL \u2013 LSL) / 6\u03c3', fp_fmt2All(s => s?.cp), true);
 
-          // Row with a label cell spanning cols 1+2 (gridSpan=2) and one value cell per quant col
-          const fp_buildSimpleRow = (labelXml: string, vals: string[], shaded = false) => {
-            const shade = shaded ? `<w:shd w:val="clear" w:color="auto" w:fill="D9D9D9"/>` : '';
-            let row = `<w:tr><w:trPr><w:trHeight w:val="350"/><w:jc w:val="center"/></w:trPr>`
-              + `<w:tc><w:tcPr><w:gridSpan w:val="2"/>${shade}<w:vAlign w:val="center"/></w:tcPr>${labelXml}</w:tc>`;
-            for (const v of vals) row += fp_valCell(v, shade);
-            row += `</w:tr>`;
-            return row;
-          };
+        // ── ROW 16: Long-Term header + Std Dev S ──
+        {
+          let ltRow = `<w:tr><w:trPr><w:trHeight w:val="350"/><w:jc w:val="center"/></w:trPr>`
+            + `<w:tc><w:tcPr><w:vMerge w:val="restart"/><w:vAlign w:val="center"/></w:tcPr>`
+            + fp_boldP('Process Performance parameters (Long-Term Statistics)') + `</w:tc>`
+            + `<w:tc><w:tcPr><w:vAlign w:val="center"/></w:tcPr>`
+            + fp_boldP('Std Deviation (S)') + `</w:tc>`;
+          for (const c of fpQuantCols) {
+            const s = fpColStats.get(c.key);
+            ltRow += fp_valCell(fp_fmt5(s?.sigmaSample));
+          }
+          ltRow += `</w:tr>`;
+          fpCpkRows += ltRow;
+        }
 
-          // Row within Short-Term or Long-Term block (vMerge continue in col 0, label in col 1)
-          const fp_buildBlockRow = (label: string, vals: string[], shaded = false) => {
-            const shade = shaded ? `<w:shd w:val="clear" w:color="auto" w:fill="D9D9D9"/>` : '';
-            let row = `<w:tr><w:trPr><w:trHeight w:val="350"/><w:jc w:val="center"/></w:trPr>`
-              + fp_vMergeCont
-              + `<w:tc><w:tcPr>${shade}<w:vAlign w:val="center"/></w:tcPr>`
+        fpCpkRows += fp_buildBlockRow('3S = (3 X Std deviation)', fpQuantCols.map((c: any) => fp_fmt2((fpColStats.get(c.key)?.sigmaSample ?? NaN) * 3)));
+        fpCpkRows += fp_buildBlockRow('6S = (6 X Std deviation)', fpQuantCols.map((c: any) => fp_fmt2((fpColStats.get(c.key)?.sigmaSample ?? NaN) * 6)));
+        fpCpkRows += fp_buildBlockRow('Ppku = (USL \u2013 Average) / 3S', fp_fmt2All(s => s?.ppku));
+        fpCpkRows += fp_buildBlockRow('Ppkl = (Average \u2013 LSL) / 3S', fp_fmt2All(s => s?.ppkl));
+        fpCpkRows += fp_buildBlockRow('Ppk Value = Min(Ppkl & Ppku)', fp_fmt2All(s => s?.ppk));
+        fpCpkRows += fp_buildBlockRow('Pp Value = (USL \u2013 LSL) / 6S', fp_fmt2All(s => s?.pp));
+
+        // Assemble FP CPK table
+        const fpCpkTblPr = origTblPr532;
+        const fpCpkTable = `<w:tbl>${fpCpkTblPr}${fpCpkGrid}${fpCpkRows}</w:tbl>`;
+        newXmlContent += fpCpkTable;
+
+        // ── Limit Conclusion Table (Cp, Cpk, Pp, Ppk interpretation) ──
+        newXmlContent += pSeparator;
+        {
+          const limHCell = (text: string, gs?: number) => {
+            const gsAttr = gs ? `<w:gridSpan w:val="${gs}"/>` : '';
+            return `<w:tc><w:tcPr><w:shd w:val="clear" w:color="auto" w:fill="D9D9D9"/>${gsAttr}<w:vAlign w:val="center"/></w:tcPr>`
               + `<w:p><w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/>`
               + `<w:rPr><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:pPr>`
               + `<w:r><w:rPr><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>`
-              + `<w:t xml:space="preserve">${xmlEscape(label)}</w:t></w:r></w:p></w:tc>`;
-            for (const v of vals) row += fp_valCell(v, shade);
-            row += `</w:tr>`;
-            return row;
+              + `<w:t xml:space="preserve">${xmlEscape(text)}</w:t></w:r></w:p></w:tc>`;
+          };
+          const limDCell = (text: string) => {
+            return `<w:tc><w:tcPr><w:vAlign w:val="center"/></w:tcPr>`
+              + `<w:p><w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/>`
+              + `<w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:pPr>`
+              + `<w:r><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>`
+              + `<w:t xml:space="preserve">${xmlEscape(text)}</w:t></w:r></w:p></w:tc>`;
           };
 
-          // Helper: get formatted values for each FP quantile column
-          const fp_fmt5All = (getter: (s: ProcessCapabilityResults | null) => number | undefined) =>
-            fpQuantCols.map(c => fp_fmt5(getter(fpColStats.get(c.key) ?? null)));
-          const fp_fmt2All = (getter: (s: ProcessCapabilityResults | null) => number | undefined) =>
-            fpQuantCols.map(c => fp_fmt2(getter(fpColStats.get(c.key) ?? null)));
+          let limitRows = '';
 
-          // Build column display names for header row
-          const fp_colHeaders = fpQuantCols.map((c: any) => {
-            if (c.type === 'ph') return 'pH';
-            if (c.type === 'assay') return `Assay (%)\n${c.name}`;
-            if (c.type === 'critical' && (c.name || '').toUpperCase().includes('UNIFORMITY')) {
-              return `Uniformity of Volume\n(${c.limit})`;
-            }
-            if (c.type === 'critical' && (c.name || '').toUpperCase().includes('OSMOLALITY')) {
-              return `Osmolality\n(${c.limit})`;
-            }
-            return c.name || c.type;
-          });
-
-          // Grid: vMerge col (811) + label col (1661) + N quant cols (fpColW each)
-          let fpCpkGrid = `<w:tblGrid><w:gridCol w:w="811"/><w:gridCol w:w="1661"/>`;
-          for (let i = 0; i < fpQuantCols.length; i++) fpCpkGrid += `<w:gridCol w:w="${fpColW}"/>`;
-          fpCpkGrid += `</w:tblGrid>`;
-
-          let fpCpkRows = '';
-
-          // ── ROW 1: Title row spanning all columns ──
-          fpCpkRows +=
-            `<w:tr><w:trPr><w:trHeight w:val="397"/><w:jc w:val="center"/></w:trPr>`
-            + `<w:tc><w:tcPr><w:gridSpan w:val="${fpTotalCols}"/>`
+          // Row 1: "Limit for Process Capability & Performance parameters" spanning all 4 cols
+          limitRows += `<w:tr><w:trPr><w:trHeight w:val="397"/><w:jc w:val="center"/></w:trPr>`
+            + `<w:tc><w:tcPr><w:gridSpan w:val="4"/>`
             + `<w:shd w:val="clear" w:color="auto" w:fill="D9D9D9"/><w:vAlign w:val="center"/></w:tcPr>`
             + `<w:p><w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/>`
-            + `<w:rPr><w:b/><w:color w:val="7F6000"/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:pPr>`
-            + `<w:r><w:rPr><w:b/><w:color w:val="7F6000"/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>`
-            + `<w:t>Process Capability &amp; Performance parameters (Cp, Cpk, and Pp, Ppk)</w:t>`
-            + `</w:r></w:p></w:tc>`
+            + `<w:rPr><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:pPr>`
+            + `<w:r><w:rPr><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>`
+            + `<w:t>Limit for Process Capability &amp; Performance parameters (Cp, Cpk, and Pp, Ppk)</w:t>`
+            + `</w:r></w:p></w:tc></w:tr>`;
+
+          // Row 2: blank | "Cp, Cpk, and Pp, Ppk" spanning 3
+          limitRows += `<w:tr><w:trPr><w:trHeight w:val="350"/><w:jc w:val="center"/></w:trPr>`
+            + limHCell('')
+            + limHCell('Cp, Cpk, and Pp, Ppk', 3)
             + `</w:tr>`;
 
-          // ── ROW 2: Column headers (empty label area + one header per quant col) ──
-          {
-            let hdrRow = `<w:tr><w:trPr><w:trHeight w:val="397"/><w:jc w:val="center"/></w:trPr>`
-              + `<w:tc><w:tcPr><w:gridSpan w:val="2"/>`
-              + `<w:shd w:val="clear" w:color="auto" w:fill="D9D9D9"/><w:vAlign w:val="center"/></w:tcPr>`
-              + `<w:p/></w:tc>`;
-            for (const hdr of fp_colHeaders) {
-              // Build multi-line header (split on \n)
-              const lines = hdr.split('\n');
-              let hdrCellContent = '';
-              for (const line of lines) {
-                hdrCellContent += fp_boldP(line);
-              }
-              hdrRow += `<w:tc><w:tcPr>`
-                + `<w:shd w:val="clear" w:color="auto" w:fill="D9D9D9"/><w:vAlign w:val="center"/></w:tcPr>`
-                + hdrCellContent + `</w:tc>`;
-            }
-            hdrRow += `</w:tr>`;
-            fpCpkRows += hdrRow;
-          }
+          // Row 3: blank | < 1 | Between 1 to 1.33 | > 1.33
+          limitRows += `<w:tr><w:trPr><w:trHeight w:val="350"/><w:jc w:val="center"/></w:trPr>`
+            + limHCell('')
+            + limHCell('< 1')
+            + limHCell('Between 1 to 1.33')
+            + limHCell('> 1.33')
+            + `</w:tr>`;
 
-          // Derived intermediates
-          const fp_uslLsl = fpQuantCols.map((c: any) => {
-            const s = fpColStats.get(c.key);
-            return s ? s.usl - s.lsl : NaN;
-          });
-          const fp_uslAvg = fpQuantCols.map((c: any) => {
-            const s = fpColStats.get(c.key);
-            return s ? s.usl - s.average : NaN;
-          });
-          const fp_avgLsl = fpQuantCols.map((c: any) => {
-            const s = fpColStats.get(c.key);
-            return s ? s.average - s.lsl : NaN;
-          });
+          // Row 4: Conclusion | not capable | capable | very excellent / very capable
+          limitRows += `<w:tr><w:trPr><w:trHeight w:val="350"/><w:jc w:val="center"/></w:trPr>`
+            + limDCell('Conclusion')
+            + limDCell('Process is not capable')
+            + limDCell('Process is capable')
+            + limDCell('very excellent / very capable')
+            + `</w:tr>`;
 
-          // ── ROWS 3–8: Basic statistics ──
-          fpCpkRows += fp_buildSimpleRow(fp_boldP('Average'), fp_fmt5All(s => s?.average));
-          fpCpkRows += fp_buildSimpleRow(fp_boldP('Maximum'), fp_fmt5All(s => s?.max));
-          fpCpkRows += fp_buildSimpleRow(fp_boldP('Minimum'), fp_fmt5All(s => s?.min));
-          fpCpkRows += fp_buildSimpleRow(fp_boldP('Upper Specification Limit \u2013 Lower Specification Limit (USL \u2013 LSL)'), fp_uslLsl.map(v => fp_fmt5(v)));
-          fpCpkRows += fp_buildSimpleRow(fp_boldP('Upper Specification Limit (USL) \u2013 Average'), fp_uslAvg.map(v => fp_fmt5(v)));
-          fpCpkRows += fp_buildSimpleRow(fp_boldP('Average \u2013 Lower Specification Limit (LSL)'), fp_avgLsl.map(v => fp_fmt5(v)));
-
-          // ── ROW 9: Short-Term header + Estimated Std Dev (σ) ──
-          {
-            let stRow = `<w:tr><w:trPr><w:trHeight w:val="350"/><w:jc w:val="center"/></w:trPr>`
-              + `<w:tc><w:tcPr><w:vMerge w:val="restart"/><w:vAlign w:val="center"/></w:tcPr>`
-              + fp_boldP('Process Capability parameters Short-Term Statistics') + `</w:tc>`
-              + `<w:tc><w:tcPr><w:vAlign w:val="center"/></w:tcPr>`
-              + `<w:p><w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/>`
-              + `<w:rPr><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:pPr>`
-              + `<w:r><w:rPr><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>`
-              + `<w:t xml:space="preserve">Estimated Std Deviation (</w:t></w:r>`
-              + `<w:r><w:rPr><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/><w:rFonts w:ascii="Symbol" w:hAnsi="Symbol" w:cs="Symbol"/></w:rPr>`
-              + `<w:t>s</w:t></w:r>`
-              + `<w:r><w:rPr><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr><w:t xml:space="preserve">)</w:t></w:r></w:p></w:tc>`;
-            for (const [, s] of [...fpQuantCols.map((c: any) => fpColStats.get(c.key))].entries()) stRow += fp_valCell(fp_fmt5(s?.sigmaEstimated));
-            stRow += `</w:tr>`;
-            fpCpkRows += stRow;
-          }
-
-          fpCpkRows += fp_buildBlockRow('3\u03c3 = (3 X \u03c3)', fpQuantCols.map((c: any) => fp_fmt2((fpColStats.get(c.key)?.sigmaEstimated ?? NaN) * 3)));
-          fpCpkRows += fp_buildBlockRow('6\u03c3 = (6 X \u03c3)', fpQuantCols.map((c: any) => fp_fmt2((fpColStats.get(c.key)?.sigmaEstimated ?? NaN) * 6)));
-          fpCpkRows += fp_buildBlockRow('Cpku = (USL \u2013 Average) / 3\u03c3', fp_fmt2All(s => s?.cpku));
-          fpCpkRows += fp_buildBlockRow('Cpkl = (Average \u2013 LSL) / 3\u03c3', fp_fmt2All(s => s?.cpkl));
-          fpCpkRows += fp_buildBlockRow('Cpk Value = Min (Cpkl & Cpku)', fp_fmt2All(s => s?.cpk), true);
-          fpCpkRows += fp_buildBlockRow('Cp Value = (USL \u2013 LSL) / 6\u03c3', fp_fmt2All(s => s?.cp), true);
-
-          // ── ROW 16: Long-Term header + Std Dev S ──
-          {
-            let ltRow = `<w:tr><w:trPr><w:trHeight w:val="350"/><w:jc w:val="center"/></w:trPr>`
-              + `<w:tc><w:tcPr><w:vMerge w:val="restart"/><w:vAlign w:val="center"/></w:tcPr>`
-              + fp_boldP('Process Performance parameters (Long-Term Statistics)') + `</w:tc>`
-              + `<w:tc><w:tcPr><w:vAlign w:val="center"/></w:tcPr>`
-              + fp_boldP('Std Deviation (S)') + `</w:tc>`;
-            for (const c of fpQuantCols) {
-              const s = fpColStats.get(c.key);
-              ltRow += fp_valCell(fp_fmt5(s?.sigmaSample));
-            }
-            ltRow += `</w:tr>`;
-            fpCpkRows += ltRow;
-          }
-
-          fpCpkRows += fp_buildBlockRow('3S = (3 X Std deviation)', fpQuantCols.map((c: any) => fp_fmt2((fpColStats.get(c.key)?.sigmaSample ?? NaN) * 3)));
-          fpCpkRows += fp_buildBlockRow('6S = (6 X Std deviation)', fpQuantCols.map((c: any) => fp_fmt2((fpColStats.get(c.key)?.sigmaSample ?? NaN) * 6)));
-          fpCpkRows += fp_buildBlockRow('Ppku = (USL \u2013 Average) / 3S', fp_fmt2All(s => s?.ppku));
-          fpCpkRows += fp_buildBlockRow('Ppkl = (Average \u2013 LSL) / 3S', fp_fmt2All(s => s?.ppkl));
-          fpCpkRows += fp_buildBlockRow('Ppk Value = Min(Ppkl & Ppku)', fp_fmt2All(s => s?.ppk));
-          fpCpkRows += fp_buildBlockRow('Pp Value = (USL \u2013 LSL) / 6S', fp_fmt2All(s => s?.pp));
-
-          // Assemble FP CPK table
-          const fpCpkTblPr = origTblPr532;
-          const fpCpkTable = `<w:tbl>${fpCpkTblPr}${fpCpkGrid}${fpCpkRows}</w:tbl>`;
-          newXmlContent += fpCpkTable;
-
-          // ── Limit Conclusion Table (Cp, Cpk, Pp, Ppk interpretation) ──
-          newXmlContent += pSeparator;
-          {
-            const limHCell = (text: string, gs?: number) => {
-              const gsAttr = gs ? `<w:gridSpan w:val="${gs}"/>` : '';
-              return `<w:tc><w:tcPr><w:shd w:val="clear" w:color="auto" w:fill="D9D9D9"/>${gsAttr}<w:vAlign w:val="center"/></w:tcPr>`
-                + `<w:p><w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/>`
-                + `<w:rPr><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:pPr>`
-                + `<w:r><w:rPr><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>`
-                + `<w:t xml:space="preserve">${xmlEscape(text)}</w:t></w:r></w:p></w:tc>`;
-            };
-            const limDCell = (text: string) => {
-              return `<w:tc><w:tcPr><w:vAlign w:val="center"/></w:tcPr>`
-                + `<w:p><w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/>`
-                + `<w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:pPr>`
-                + `<w:r><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>`
-                + `<w:t xml:space="preserve">${xmlEscape(text)}</w:t></w:r></w:p></w:tc>`;
-            };
-
-            let limitRows = '';
-
-            // Row 1: "Limit for Process Capability & Performance parameters" spanning all 4 cols
-            limitRows += `<w:tr><w:trPr><w:trHeight w:val="397"/><w:jc w:val="center"/></w:trPr>`
-              + `<w:tc><w:tcPr><w:gridSpan w:val="4"/>`
-              + `<w:shd w:val="clear" w:color="auto" w:fill="D9D9D9"/><w:vAlign w:val="center"/></w:tcPr>`
-              + `<w:p><w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/>`
-              + `<w:rPr><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:pPr>`
-              + `<w:r><w:rPr><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>`
-              + `<w:t>Limit for Process Capability &amp; Performance parameters (Cp, Cpk, and Pp, Ppk)</w:t>`
-              + `</w:r></w:p></w:tc></w:tr>`;
-
-            // Row 2: blank | "Cp, Cpk, and Pp, Ppk" spanning 3
-            limitRows += `<w:tr><w:trPr><w:trHeight w:val="350"/><w:jc w:val="center"/></w:trPr>`
-              + limHCell('')
-              + limHCell('Cp, Cpk, and Pp, Ppk', 3)
-              + `</w:tr>`;
-
-            // Row 3: blank | < 1 | Between 1 to 1.33 | > 1.33
-            limitRows += `<w:tr><w:trPr><w:trHeight w:val="350"/><w:jc w:val="center"/></w:trPr>`
-              + limHCell('')
-              + limHCell('< 1')
-              + limHCell('Between 1 to 1.33')
-              + limHCell('> 1.33')
-              + `</w:tr>`;
-
-            // Row 4: Conclusion | not capable | capable | very excellent / very capable
-            limitRows += `<w:tr><w:trPr><w:trHeight w:val="350"/><w:jc w:val="center"/></w:trPr>`
-              + limDCell('Conclusion')
-              + limDCell('Process is not capable')
-              + limDCell('Process is capable')
-              + limDCell('very excellent / very capable')
-              + `</w:tr>`;
-
-            const limitTblGrid = `<w:tblGrid><w:gridCol w:w="1500"/><w:gridCol w:w="1500"/><w:gridCol w:w="2500"/><w:gridCol w:w="2500"/></w:tblGrid>`;
-            const limitTable = `<w:tbl>${origTblPr532}${limitTblGrid}${limitRows}</w:tbl>`;
-            newXmlContent += limitTable;
-          }
-
-          // ── UCL & LCL Table ──
-          newXmlContent += pSeparator;
-          {
-            // Title paragraph
-            newXmlContent += `<w:p><w:pPr><w:spacing w:before="240"/><w:jc w:val="left"/></w:pPr><w:r><w:rPr><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/><w:u w:val="single"/></w:rPr><w:t xml:space="preserve">Upper Control Limits (UCL) &amp; Lower Control Limits (LCL): -</w:t></w:r></w:p>`;
-            
-            const uclHCell = (text: string, shade = '') => {
-              return `<w:tc><w:tcPr>${shade}<w:vAlign w:val="center"/></w:tcPr>`
-                + `<w:p><w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/>`
-                + `<w:rPr><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:pPr>`
-                + `<w:r><w:rPr><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>`
-                + `<w:t xml:space="preserve">${xmlEscape(text)}</w:t></w:r></w:p></w:tc>`;
-            };
-            const uclDCell = (text: string, bold = false) => {
-              const bTag = bold ? '<w:b/>' : '';
-              return `<w:tc><w:tcPr><w:vAlign w:val="center"/></w:tcPr>`
-                + `<w:p><w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/>`
-                + `<w:rPr>${bTag}<w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:pPr>`
-                + `<w:r><w:rPr>${bTag}<w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>`
-                + `<w:t xml:space="preserve">${xmlEscape(text)}</w:t></w:r></w:p></w:tc>`;
-            };
-
-            const uclTotalCols = 1 + fpQuantCols.length;
-            let uclGrid = `<w:tblGrid><w:gridCol w:w="2000"/>`;
-            for (let i = 0; i < fpQuantCols.length; i++) uclGrid += `<w:gridCol w:w="1200"/>`;
-            uclGrid += `</w:tblGrid>`;
-
-            let uclRows = '';
-            const shadeStr = '<w:shd w:val="clear" w:color="auto" w:fill="D9D9D9"/>';
-
-            // Row 1: Headers
-            uclRows += `<w:tr><w:trPr><w:trHeight w:val="432"/><w:jc w:val="center"/></w:trPr>`;
-            uclRows += uclHCell('', shadeStr);
-            for (const c of fpQuantCols) {
-              let hdr = c.name;
-              if (c.type === 'ph') hdr = 'pH';
-              else if (c.type === 'assay') hdr = `Assay (%)\n${c.name}`;
-              else if (c.type === 'critical' && (c.name || '').toUpperCase().includes('UNIFORMITY')) {
-                hdr = `Uniformity of Volume\n(ml)`; 
-              }
-              else if (c.type === 'critical' && (c.name || '').toUpperCase().includes('OSMOLALITY')) {
-                hdr = `Osmolality\n(mOsmol/kg)`;
-              }
-              
-              const lines = hdr.split('\n');
-              let cellContent = '';
-              for (const line of lines) {
-                cellContent += `<w:p><w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/>`
-                             + `<w:rPr><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:pPr>`
-                             + `<w:r><w:rPr><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>`
-                             + `<w:t xml:space="preserve">${xmlEscape(line)}</w:t></w:r></w:p>`;
-              }
-              uclRows += `<w:tc><w:tcPr>${shadeStr}<w:vAlign w:val="center"/></w:tcPr>${cellContent}</w:tc>`;
-            }
-            uclRows += `</w:tr>`;
-
-            // Row 2: Specification Limit
-            uclRows += `<w:tr><w:trPr><w:trHeight w:val="350"/><w:jc w:val="center"/></w:trPr>`;
-            uclRows += uclHCell('Specification Limit', shadeStr);
-            for (const c of fpQuantCols) {
-              let lim = (c.limit || '').trim();
-              if (lim) {
-                 if (!lim.startsWith('(')) lim = `(${lim})`;
-              } else {
-                 lim = '(--)';
-              }
-              uclRows += uclHCell(lim, shadeStr);
-            }
-            uclRows += `</w:tr>`;
-
-            const uclFmt = (num: number | undefined) => num !== undefined && !isNaN(num) ? num.toFixed(2) : 'N/A';
-
-            // Row 3: Average
-            uclRows += `<w:tr><w:trPr><w:trHeight w:val="350"/><w:jc w:val="center"/></w:trPr>`;
-            uclRows += uclDCell('Average');
-            for (const c of fpQuantCols) {
-              const s = fpColStats.get(c.key);
-              uclRows += uclDCell(uclFmt(s?.average));
-            }
-            uclRows += `</w:tr>`;
-
-            // Row 4: Std. Dev.
-            uclRows += `<w:tr><w:trPr><w:trHeight w:val="350"/><w:jc w:val="center"/></w:trPr>`;
-            uclRows += uclDCell('Std. Dev.');
-            for (const c of fpQuantCols) {
-              const s = fpColStats.get(c.key);
-              uclRows += uclDCell(uclFmt(s?.sigmaSample));
-            }
-            uclRows += `</w:tr>`;
-
-            // Row 5: Upper Control Limit (UCL)
-            uclRows += `<w:tr><w:trPr><w:trHeight w:val="350"/><w:jc w:val="center"/></w:trPr>`;
-            uclRows += uclDCell('Upper Control Limit (UCL)', true);
-            for (const c of fpQuantCols) {
-              const s = fpColStats.get(c.key);
-              const ucl = s ? s.average + (3 * s.sigmaSample) : undefined;
-              uclRows += uclDCell(uclFmt(ucl), true);
-            }
-            uclRows += `</w:tr>`;
-
-            // Row 6: Lower Control Limit (LCL)
-            uclRows += `<w:tr><w:trPr><w:trHeight w:val="350"/><w:jc w:val="center"/></w:trPr>`;
-            uclRows += uclDCell('Lower Control Limit (LCL)', true);
-            for (const c of fpQuantCols) {
-              const s = fpColStats.get(c.key);
-              const lcl = s ? s.average - (3 * s.sigmaSample) : undefined;
-              uclRows += uclDCell(uclFmt(lcl), true);
-            }
-            uclRows += `</w:tr>`;
-
-            const uclTableXml = `<w:tbl>${origTblPr532}${uclGrid}${uclRows}</w:tbl>`;
-            newXmlContent += uclTableXml;
-          }
-
-          console.log(`  ✅ Section 5.3.2 FP CPK table added (${fpQuantCols.length} quantifiable columns)`);
+          const limitTblGrid = `<w:tblGrid><w:gridCol w:w="1500"/><w:gridCol w:w="1500"/><w:gridCol w:w="2500"/><w:gridCol w:w="2500"/></w:tblGrid>`;
+          const limitTable = `<w:tbl>${origTblPr532}${limitTblGrid}${limitRows}</w:tbl>`;
+          newXmlContent += limitTable;
         }
+
+        // ── UCL & LCL Table ──
+        newXmlContent += pSeparator;
+        {
+          // Title paragraph
+          newXmlContent += `<w:p><w:pPr><w:spacing w:before="240"/><w:jc w:val="left"/></w:pPr><w:r><w:rPr><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/><w:u w:val="single"/></w:rPr><w:t xml:space="preserve">Upper Control Limits (UCL) &amp; Lower Control Limits (LCL): -</w:t></w:r></w:p>`;
+
+          const uclHCell = (text: string, shade = '') => {
+            return `<w:tc><w:tcPr>${shade}<w:vAlign w:val="center"/></w:tcPr>`
+              + `<w:p><w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/>`
+              + `<w:rPr><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:pPr>`
+              + `<w:r><w:rPr><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>`
+              + `<w:t xml:space="preserve">${xmlEscape(text)}</w:t></w:r></w:p></w:tc>`;
+          };
+          const uclDCell = (text: string, bold = false) => {
+            const bTag = bold ? '<w:b/>' : '';
+            return `<w:tc><w:tcPr><w:vAlign w:val="center"/></w:tcPr>`
+              + `<w:p><w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/>`
+              + `<w:rPr>${bTag}<w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:pPr>`
+              + `<w:r><w:rPr>${bTag}<w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>`
+              + `<w:t xml:space="preserve">${xmlEscape(text)}</w:t></w:r></w:p></w:tc>`;
+          };
+
+          const uclTotalCols = 1 + fpQuantCols.length;
+          let uclGrid = `<w:tblGrid><w:gridCol w:w="2000"/>`;
+          for (let i = 0; i < fpQuantCols.length; i++) uclGrid += `<w:gridCol w:w="1200"/>`;
+          uclGrid += `</w:tblGrid>`;
+
+          let uclRows = '';
+          const shadeStr = '<w:shd w:val="clear" w:color="auto" w:fill="D9D9D9"/>';
+
+          // Row 1: Headers
+          uclRows += `<w:tr><w:trPr><w:trHeight w:val="432"/><w:jc w:val="center"/></w:trPr>`;
+          uclRows += uclHCell('', shadeStr);
+          for (const c of fpQuantCols) {
+            let hdr = c.name;
+            if (c.type === 'ph') hdr = 'pH';
+            else if (c.type === 'assay') hdr = `Assay (%)\n${c.name}`;
+            else if (c.type === 'critical' && (c.name || '').toUpperCase().includes('UNIFORMITY')) {
+              hdr = `Uniformity of Volume\n(ml)`;
+            }
+            else if (c.type === 'critical' && (c.name || '').toUpperCase().includes('OSMOLALITY')) {
+              hdr = `Osmolality\n(mOsmol/kg)`;
+            }
+
+            const lines = hdr.split('\n');
+            let cellContent = '';
+            for (const line of lines) {
+              cellContent += `<w:p><w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/>`
+                + `<w:rPr><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:pPr>`
+                + `<w:r><w:rPr><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>`
+                + `<w:t xml:space="preserve">${xmlEscape(line)}</w:t></w:r></w:p>`;
+            }
+            uclRows += `<w:tc><w:tcPr>${shadeStr}<w:vAlign w:val="center"/></w:tcPr>${cellContent}</w:tc>`;
+          }
+          uclRows += `</w:tr>`;
+
+          // Row 2: Specification Limit
+          uclRows += `<w:tr><w:trPr><w:trHeight w:val="350"/><w:jc w:val="center"/></w:trPr>`;
+          uclRows += uclHCell('Specification Limit', shadeStr);
+          for (const c of fpQuantCols) {
+            let lim = (c.limit || '').trim();
+            if (lim) {
+              if (!lim.startsWith('(')) lim = `(${lim})`;
+            } else {
+              lim = '(--)';
+            }
+            uclRows += uclHCell(lim, shadeStr);
+          }
+          uclRows += `</w:tr>`;
+
+          const uclFmt = (num: number | undefined) => num !== undefined && !isNaN(num) ? num.toFixed(2) : 'N/A';
+
+          // Row 3: Average
+          uclRows += `<w:tr><w:trPr><w:trHeight w:val="350"/><w:jc w:val="center"/></w:trPr>`;
+          uclRows += uclDCell('Average');
+          for (const c of fpQuantCols) {
+            const s = fpColStats.get(c.key);
+            uclRows += uclDCell(uclFmt(s?.average));
+          }
+          uclRows += `</w:tr>`;
+
+          // Row 4: Std. Dev.
+          uclRows += `<w:tr><w:trPr><w:trHeight w:val="350"/><w:jc w:val="center"/></w:trPr>`;
+          uclRows += uclDCell('Std. Dev.');
+          for (const c of fpQuantCols) {
+            const s = fpColStats.get(c.key);
+            uclRows += uclDCell(uclFmt(s?.sigmaSample));
+          }
+          uclRows += `</w:tr>`;
+
+          // Row 5: Upper Control Limit (UCL)
+          uclRows += `<w:tr><w:trPr><w:trHeight w:val="350"/><w:jc w:val="center"/></w:trPr>`;
+          uclRows += uclDCell('Upper Control Limit (UCL)', true);
+          for (const c of fpQuantCols) {
+            const s = fpColStats.get(c.key);
+            const ucl = s ? s.average + (3 * s.sigmaSample) : undefined;
+            uclRows += uclDCell(uclFmt(ucl), true);
+          }
+          uclRows += `</w:tr>`;
+
+          // Row 6: Lower Control Limit (LCL)
+          uclRows += `<w:tr><w:trPr><w:trHeight w:val="350"/><w:jc w:val="center"/></w:trPr>`;
+          uclRows += uclDCell('Lower Control Limit (LCL)', true);
+          for (const c of fpQuantCols) {
+            const s = fpColStats.get(c.key);
+            const lcl = s ? s.average - (3 * s.sigmaSample) : undefined;
+            uclRows += uclDCell(uclFmt(lcl), true);
+          }
+          uclRows += `</w:tr>`;
+
+          const uclTableXml = `<w:tbl>${origTblPr532}${uclGrid}${uclRows}</w:tbl>`;
+          newXmlContent += uclTableXml;
+        }
+
+        console.log(`  ✅ Section 5.3.2 FP CPK table added (${fpQuantCols.length} quantifiable columns)`);
+      }
 
       // Replace everything between the start of the first table and the end of the remark table
       docXml = docXml.substring(0, sectionContentStart) + newXmlContent + docXml.substring(sectionContentEnd);
@@ -5090,7 +5497,7 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
       // ── 11b. Dynamic Finished Stage Trend Charts ──
       // rId-based paragraph lookup (DOCX fragments text in w:t so direct string search fails).
 
-      const batchNumsFP = data.finishInProcessData.map((r: any) => r.batchNo || '');
+      const batchNumsFP = data.finishInProcessData.map((r: any) => r.batchNumber || r.batchNo || '');
 
       const buildStrCacheFP = (vals: string[]) => {
         const pts = vals.map((v, i) => `<c:pt idx="${i}"><c:v>${xmlEscape(v)}</c:v></c:pt>`).join('');
@@ -5196,6 +5603,128 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
   }
 
 
+
+  // ── 11c. Dynamic Section 5.3.3 – Sterility Testing ──
+  {
+    // Find the sterility column from finishInProcessColumns
+    const sterilityCol = (data.finishInProcessColumns || []).find((c: any) =>
+      c.name.toLowerCase().includes('sterility') || c.name.toLowerCase().includes('sterile')
+    );
+    const sterilityKey = sterilityCol?.key || null;
+    const sterilityLimit = sterilityCol?.limit || 'Growth or turbidity should not present in the original clear media.';
+
+    console.log(`\n📋 Section 5.3.3 Sterility: key=${sterilityKey}, limit=${sterilityLimit}`);
+
+    // Find the 5.3.3 section heading (skip TOC region at top ~30% of doc)
+    const searchFrom533 = Math.floor(docXml.length * 0.3);
+    let sec533Idx = -1;
+    for (const anchor of ['5.3.3', 'Sterility Testing:', 'STERILITY TESTING']) {
+      const idx = docXml.indexOf(anchor, searchFrom533);
+      if (idx !== -1) { sec533Idx = idx; break; }
+    }
+
+    if (sec533Idx === -1) {
+      console.warn('Section 5.3.3: Could not find section heading in template — skipping');
+    } else {
+      const tblStart533 = docXml.indexOf('<w:tbl>', sec533Idx);
+      if (tblStart533 === -1 || (tblStart533 - sec533Idx) > 3000) {
+        console.warn('Section 5.3.3: Could not find data table near heading — skipping');
+      } else {
+        const tblEnd533 = docXml.indexOf('</w:tbl>', tblStart533) + 8;
+        const origTable533 = docXml.substring(tblStart533, tblEnd533);
+
+        const origTblPr533 = origTable533.match(/<w:tblPr>[\s\S]*?<\/w:tblPr>/)?.[0]
+          || '<w:tblPr><w:tblW w:w="9000" w:type="dxa"/><w:jc w:val="center"/><w:tblBorders>'
+          + '<w:top w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
+          + '<w:left w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
+          + '<w:bottom w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
+          + '<w:right w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
+          + '<w:insideH w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
+          + '<w:insideV w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
+          + '</w:tblBorders></w:tblPr>';
+
+        const tblGrid533 = '<w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="7000"/></w:tblGrid>';
+
+        const hCell533 = (text: string, opts?: { gridSpan?: number; vMerge?: 'restart' | 'continue' }) => {
+          let tcPr = '<w:shd w:val="clear" w:color="auto" w:fill="D9D9D9"/><w:vAlign w:val="center"/>';
+          if (opts?.gridSpan) tcPr += `<w:gridSpan w:val="${opts.gridSpan}"/>`;
+          if (opts?.vMerge === 'restart') tcPr = '<w:vMerge w:val="restart"/>' + tcPr;
+          else if (opts?.vMerge === 'continue') tcPr = '<w:vMerge/>' + tcPr;
+          const rPr = '<w:rPr><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>';
+          const pPr = '<w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/>' + rPr + '</w:pPr>';
+          return '<w:tc><w:tcPr>' + tcPr + '</w:tcPr>'
+            + '<w:p>' + pPr
+            + (text ? '<w:r>' + rPr + `<w:t xml:space="preserve">${xmlEscape(text)}</w:t></w:r>` : '')
+            + '</w:p></w:tc>';
+        };
+
+        const dCell533 = (text: string, opts?: { vMerge?: 'restart' | 'continue' }) => {
+          let tcPr = '<w:vAlign w:val="center"/>';
+          if (opts?.vMerge === 'restart') tcPr = '<w:vMerge w:val="restart"/>' + tcPr;
+          else if (opts?.vMerge === 'continue') tcPr = '<w:vMerge/>' + tcPr;
+          return '<w:tc><w:tcPr>' + tcPr + '</w:tcPr>'
+            + '<w:p><w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/>'
+            + '<w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:pPr>'
+            + '<w:r><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>'
+            + `<w:t xml:space="preserve">${xmlEscape(text)}</w:t>`
+            + '</w:r></w:p></w:tc>';
+        };
+
+        let rowsXml = '';
+
+        // Header Row 1: BATCH NO. | STERILITY TESTING
+        rowsXml += '<w:tr><w:trPr><w:trHeight w:val="432"/><w:jc w:val="center"/></w:trPr>';
+        rowsXml += hCell533('BATCH NO.', { vMerge: 'restart' });
+        rowsXml += hCell533('STERILITY TESTING');
+        rowsXml += '</w:tr>';
+
+        // Header Row 2: (batch merged) | limit/description
+        rowsXml += '<w:tr><w:trPr><w:trHeight w:val="432"/><w:jc w:val="center"/></w:trPr>';
+        rowsXml += hCell533('', { vMerge: 'continue' });
+        rowsXml += hCell533(sterilityLimit);
+        rowsXml += '</w:tr>';
+
+        // Data rows – one per batch; split multi-line results into separate rows with vMerge
+        const rows533 = data.finishInProcessData || [];
+        if (rows533.length === 0) {
+          rowsXml += '<w:tr><w:trPr><w:jc w:val="center"/></w:trPr>'
+            + '<w:tc><w:tcPr><w:gridSpan w:val="2"/><w:vAlign w:val="center"/></w:tcPr>'
+            + '<w:p><w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/>'
+            + '<w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:pPr>'
+            + '<w:r><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>'
+            + '<w:t>No sterility data found for the selected product and year.</w:t>'
+            + '</w:r></w:p></w:tc></w:tr>';
+        } else {
+          for (const row of rows533) {
+            const batchNo = row.batchNumber || (row as any).batchNo || '--';
+            const rawResult = sterilityKey
+              ? (row.results[`${sterilityKey}|||result`] || '--')
+              : '--';
+            // Split on newlines to support multi-line sterility results (e.g. two media)
+            const resultLines = rawResult.split(/\n|\\n/).map((s: string) => s.trim()).filter(Boolean);
+            if (resultLines.length <= 1) {
+              rowsXml += '<w:tr><w:trPr><w:jc w:val="center"/></w:trPr>';
+              rowsXml += dCell533(batchNo);
+              rowsXml += dCell533(rawResult);
+              rowsXml += '</w:tr>';
+            } else {
+              // Multiple lines: vMerge the batch number cell
+              for (let li = 0; li < resultLines.length; li++) {
+                rowsXml += '<w:tr><w:trPr><w:jc w:val="center"/></w:trPr>';
+                rowsXml += dCell533(li === 0 ? batchNo : '', { vMerge: li === 0 ? 'restart' : 'continue' });
+                rowsXml += dCell533(resultLines[li]);
+                rowsXml += '</w:tr>';
+              }
+            }
+          }
+        }
+
+        const newTable533 = `<w:tbl>${origTblPr533}${tblGrid533}${rowsXml}</w:tbl>`;
+        docXml = docXml.substring(0, tblStart533) + newTable533 + docXml.substring(tblEnd533);
+        console.log(`  ✅ Section 5.3.3 Sterility table replaced with ${rows533.length} batch rows`);
+      }
+    }
+  }
 
   // ── 12a. Dynamic Section 5.4.2 – At Finished Stage Yield ──
   {
@@ -5326,6 +5855,77 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
       }
     } else {
       console.warn('Section 5.4.2: "At Finished Stage:" anchor not found in template body');
+    }
+
+    // ── 12b. Trend Analysis of Finished Stage Yield Chart (chart12.xml) ──
+    // Uses same rId-based approach as the 5.3.2 FP charts.
+    // Chart has 3 series: % YIELD AT FINISHED STAGE, NLT 95%, NMT 100%
+    if (yieldRows.length > 0) {
+      const yieldRelsXml = await zip.file('word/_rels/document.xml.rels')?.async('string') ?? '';
+      const yieldRelRx = /Id="([^"]+)"[^>]*Target="charts\/chart12\.xml"/;
+      const yieldRelM = yieldRelsXml.match(yieldRelRx);
+
+      if (yieldRelM) {
+        const yieldRId = yieldRelM[1];
+        const yieldRIdRef = `"${yieldRId}"`;
+        const yieldRIdIdx = docXml.indexOf(yieldRIdRef);
+
+        if (yieldRIdIdx !== -1) {
+          const yieldCXmlRaw = await zip.file('word/charts/chart12.xml')?.async('string');
+          if (yieldCXmlRaw) {
+            const batchNos = yieldRows.map(r => r.batchNo);
+            const yieldVals = yieldRows.map(r => r.avgYield);
+            const nYield = yieldRows.length;
+            const nltVal = 95;
+            const nmtVal = 100;
+
+            const yBuildStrCache = (vals: string[]) => {
+              const pts = vals.map((v, i) => `<c:pt idx="${i}"><c:v>${xmlEscape(v)}</c:v></c:pt>`).join('');
+              return `<c:strCache><c:ptCount val="${vals.length}"/>${pts}</c:strCache>`;
+            };
+            const yBuildNumCache = (vals: number[]) => {
+              const pts = vals.map((v, i) => `<c:pt idx="${i}"><c:v>${v}</c:v></c:pt>`).join('');
+              return `<c:numCache><c:formatCode>General</c:formatCode><c:ptCount val="${vals.length}"/>${pts}</c:numCache>`;
+            };
+            const yBuildSerName = (name: string) =>
+              `<c:strCache><c:ptCount val="1"/><c:pt idx="0"><c:v>${xmlEscape(name)}</c:v></c:pt></c:strCache>`;
+            const yFlat = (val: number, n: number) => Array(n).fill(val);
+
+            const yieldSeries = [
+              { name: '% YIELD AT FINISHED STAGE', values: yieldVals },
+              { name: `NLT ${nltVal}%`, values: yFlat(nltVal, nYield) },
+              { name: `NMT ${nmtVal}%`, values: yFlat(nmtVal, nYield) },
+            ];
+
+            let yieldIdx = 0;
+            const updatedYieldChart = yieldCXmlRaw.replace(/<c:ser>([\s\S]*?)<\/c:ser>/g, (match, content) => {
+              if (yieldIdx >= yieldSeries.length) return '';
+              const sd = yieldSeries[yieldIdx++];
+              let updated = content;
+              updated = updated.replace(
+                /(<c:tx>[\s\S]*?<c:strRef>[\s\S]*?)<c:strCache>[\s\S]*?<\/c:strCache>([\s\S]*?<\/c:strRef>[\s\S]*?<\/c:tx>)/,
+                `$1${yBuildSerName(sd.name)}$2`
+              );
+              updated = updated.replace(
+                /(<c:cat>[\s\S]*?<c:strRef>[\s\S]*?)<c:strCache>[\s\S]*?<\/c:strCache>([\s\S]*?<\/c:strRef>[\s\S]*?<\/c:cat>)/,
+                `$1${yBuildStrCache(batchNos)}$2`
+              );
+              updated = updated.replace(
+                /(<c:val>[\s\S]*?<c:numRef>[\s\S]*?)<c:numCache>[\s\S]*?<\/c:numCache>([\s\S]*?<\/c:numRef>[\s\S]*?<\/c:val>)/,
+                `$1${yBuildNumCache(sd.values)}$2`
+              );
+              return `<c:ser>${updated}</c:ser>`;
+            });
+
+            zip.file('word/charts/chart12.xml', updatedYieldChart);
+            console.log(`  ✅ chart12.xml (Finished Stage Yield) updated: ${nYield} batches`);
+          }
+        } else {
+          console.warn(`  ⚠️ rId ${yieldRelM[1]} for chart12.xml not found in document.xml`);
+        }
+      } else {
+        console.warn('  ⚠️ chart12.xml not found in document rels — yield chart not updated');
+      }
     }
   }
 

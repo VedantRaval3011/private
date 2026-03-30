@@ -1,0 +1,8 @@
+﻿scripts/analyze-yield-xml.ts(12,22): error TS7006: Parameter 'item' implicitly has an 'any' type.
+scripts/analyze-yield-xml.ts(12,28): error TS7006: Parameter 'index' implicitly has an 'any' type.
+scripts/find-missing-qty.ts(13,26): error TS7006: Parameter 'prodQty' implicitly has an 'any' type.
+scripts/find-missing-qty.ts(13,35): error TS7006: Parameter 'index' implicitly has an 'any' type.
+scripts/test-parser-output.ts(9,36): error TS18048: 'result.data' is possibly 'undefined'.
+src/lib/yieldParser.ts(129,35): error TS2353: Object literal may only specify known properties, and 'itemCode' does not exist in type '{ packing: string; qty: string; total: number; }'.
+src/lib/yieldParser.ts(147,11): error TS2322: Type '{ packing: string; qty: string; total: number; }[]' is not assignable to type 'IPackingDetail[]'.
+  Type '{ packing: string; qty: string; total: number; }' is missing the following properties from type 'IPackingDetail': itemCode, batchSize, batchUom, prodQty, and 2 more.

@@ -32,6 +32,7 @@ const InwardRegisterSchema = new Schema<IInwardRegister>({
     sourceFile: { type: String, required: true },
     uploadedAt: { type: Date, default: Date.now },
     manufacturedBy: { type: String },
+    make: { type: String },
     contentHash: { type: String, index: true },
     parsingStatus: {
         type: String,

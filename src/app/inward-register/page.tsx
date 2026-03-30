@@ -32,6 +32,7 @@ export default function InwardRegisterPage() {
         { key: 'vendorName', label: 'Vendor Name' },
         { key: 'materialName', label: 'Material Name' },
         { key: 'manufacturedBy', label: 'Manufactured By' },
+        { key: 'make', label: 'Make' },
         { key: 'materialCode', label: 'Material Code' },
         { key: 'batchNumber', label: 'Batch No' },
         { key: 'arNumber', label: 'AR Number' },
@@ -343,13 +344,13 @@ export default function InwardRegisterPage() {
                             <tbody>
                                 {isLoading ? (
                                     <tr>
-                                        <td colSpan={9} style={{ padding: '2rem', textAlign: 'center', color: 'var(--muted-foreground)' }}>
+                                        <td colSpan={11} style={{ padding: '2rem', textAlign: 'center', color: 'var(--muted-foreground)' }}>
                                             Loading data...
                                         </td>
                                     </tr>
                                 ) : inwardData.length === 0 ? (
                                     <tr>
-                                        <td colSpan={9} style={{ padding: '2rem', textAlign: 'center', color: 'var(--muted-foreground)' }}>
+                                        <td colSpan={11} style={{ padding: '2rem', textAlign: 'center', color: 'var(--muted-foreground)' }}>
                                             No records found. Try uploading Inward Register XML files.
                                         </td>
                                     </tr>
@@ -364,6 +365,7 @@ export default function InwardRegisterPage() {
                                             <td style={{ padding: '0.75rem 1rem', fontWeight: '500' }}>{item.vendorName}</td>
                                             <td style={{ padding: '0.75rem 1rem' }}>{item.materialName}</td>
                                             <td style={{ padding: '0.75rem 1rem', fontStyle: 'italic', fontSize: '0.85rem' }}>{item.manufacturedBy || '-'}</td>
+                                            <td style={{ padding: '0.75rem 1rem', fontSize: '0.85rem', fontWeight: 600, color: item.make ? 'var(--primary-700)' : 'var(--muted-foreground)' }}>{item.make || '-'}</td>
                                             <td style={{ padding: '0.75rem 1rem', fontFamily: 'monospace', fontSize: '0.85rem', color: 'var(--primary-700)' }}>{item.materialCode || '-'}</td>
                                             <td style={{ padding: '0.75rem 1rem' }}>{item.batchNumber || '-'}</td>
                                             <td style={{ padding: '0.75rem 1rem', color: item.arNumber ? 'var(--foreground)' : 'var(--muted-foreground)' }}>

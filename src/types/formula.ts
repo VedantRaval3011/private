@@ -38,6 +38,7 @@ export interface MasterFormulaDetails {
 export interface BatchInfo {
   batchSize: string;
   labelClaim: string;
+  labelClaims: string[];  // All label claims (IP, USP, etc.) — 1 or more
   marketedBy?: string;
   volume?: string;
 }

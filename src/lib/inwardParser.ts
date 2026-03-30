@@ -166,11 +166,13 @@ export async function parseInwardRegisterXml(xmlContent: string, fileName: strin
                     // Vendor name can also be at item level
                     const vendorName = extractTag(cleanBlock, 'ACNAME') || headerVendorName;
 
-                    // Manufactured by / Make
-                    const manufacturedBy = extractTag(cleanBlock, 'MATMAKE') || 
-                                           extractTag(headerBlock, 'MATMAKE') || 
-                                           extractTag(cleanBlock, 'MAKE') || 
-                                           extractTag(headerBlock, 'MAKE');
+                    // Manufactured by (Mfg. By) — MATMAKE tag
+                    const manufacturedBy = extractTag(cleanBlock, 'MATMAKE') ||
+                                           extractTag(headerBlock, 'MATMAKE');
+
+                    // Make (brand) — MAKE tag, stored separately
+                    const make = extractTag(cleanBlock, 'MAKE') ||
+                                 extractTag(headerBlock, 'MAKE');
 
                     // Inward date from item or header
                     const inwardDate = extractTag(cleanBlock, 'MATINWDATE') || headerInwardDate;
@@ -184,6 +186,7 @@ export async function parseInwardRegisterXml(xmlContent: string, fileName: strin
                         records.push({
                             vendorName: vendorName || 'Unknown Vendor',
                             manufacturedBy,
+                            make,
                             inwardNumber: inwardNumber || 'Unknown Inward No',
                             inwardDate,
                             arNumber: arNumber || 'N/A',
