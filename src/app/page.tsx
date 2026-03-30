@@ -31,6 +31,10 @@ import { parseBatchRegistryXml, parseFormulaXml } from '@/lib/xmlParser';
 type View = 'upload' | 'list' | 'detail' | 'batch-detail' | 'combined-view';
 type UploadType = 'batch' | 'formula' | null;
 
+type NavItem =
+  | { kind: 'link'; href: string; label: string; icon: React.ReactNode; requiresPermission?: boolean }
+  | { kind: 'logout' };
+
 // Interface for tracking file upload status
 interface SelectedFile {
   file: File;
@@ -41,7 +45,8 @@ interface SelectedFile {
 
 export default function Home() {
   const router = useRouter();
-  const { user: currentUser } = useAuth();
+  const { user: currentUser, logout } = useAuth();
+  const [allowedRoutes, setAllowedRoutes] = useState<Set<string> | null>(null);
   // State
   const [view, setView] = useState<View>('upload');
   const [isUploading, setIsUploading] = useState(false);
@@ -123,6 +128,36 @@ export default function Home() {
       fetchBatches();
     }
   }, [view, fetchFormulas, fetchBatches]);
+
+  // Fetch allowed routes (for employees) to hide unauthorized pages in nav
+  useEffect(() => {
+    if (!currentUser) {
+      setAllowedRoutes(null);
+      return;
+    }
+    if (currentUser.role !== 'employee') {
+      setAllowedRoutes(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/page-permissions/allowed');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (cancelled) return;
+        const routes = new Set<string>((data.pages ?? []).map((p: any) => p.pageRoute));
+        routes.add('/'); // always allow home shell
+        setAllowedRoutes(routes);
+      } catch {
+        // If anything fails, keep nav conservative for employees
+        if (!cancelled) setAllowedRoutes(new Set(['/']));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUser]);
 
   // Check if both uploads are complete, navigate to combined view
   useEffect(() => {
@@ -504,191 +539,173 @@ export default function Home() {
               borderRadius: 'var(--radius-lg)',
               backdropFilter: 'blur(10px)',
             }}>
-              <button
-                onClick={handleBackToUpload}
-                style={{
-                  padding: '0.625rem 1.25rem',
-                  background: view === 'upload' || view === 'combined-view' ? 'white' : 'transparent',
-                  color: view === 'upload' || view === 'combined-view' ? 'var(--primary-700)' : 'white',
-                  border: 'none',
-                  borderRadius: 'var(--radius-md)',
-                  cursor: 'pointer',
-                  fontWeight: '500',
-                  transition: 'all var(--transition-fast)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.5rem',
-                }}
-              >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
-                  <polyline points="17 8 12 3 7 8" />
-                  <line x1="12" y1="3" x2="12" y2="15" />
-                </svg>
-                Upload
-              </button>
-              <button
-                onClick={() => { setView('list'); setSelectedFormula(null); setSelectedBatch(null); }}
-                style={{
-                  padding: '0.625rem 1.25rem',
-                  background: view === 'list' ? 'white' : 'transparent',
-                  color: view === 'list' ? 'var(--primary-700)' : 'white',
-                  border: 'none',
-                  borderRadius: 'var(--radius-md)',
-                  cursor: 'pointer',
-                  fontWeight: '500',
-                  transition: 'all var(--transition-fast)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.5rem',
-                }}
-              >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <line x1="8" y1="6" x2="21" y2="6" />
-                  <line x1="8" y1="12" x2="21" y2="12" />
-                  <line x1="8" y1="18" x2="21" y2="18" />
-                  <line x1="3" y1="6" x2="3.01" y2="6" />
-                  <line x1="3" y1="12" x2="3.01" y2="12" />
-                  <line x1="3" y1="18" x2="3.01" y2="18" />
-                </svg>
-                History
-              </button>
-              <Link
-                href="/batch-data"
-                style={{
-                  padding: '0.625rem 1.25rem',
-                  background: 'transparent',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: 'var(--radius-md)',
-                  textDecoration: 'none',
-                  fontWeight: '500',
-                  transition: 'all var(--transition-fast)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.5rem',
-                }}
-              >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
-                  <polyline points="14 2 14 8 20 8" />
-                </svg>
-                Batch Data
-              </Link>
-              <Link
-                href="/formula-data"
-                style={{
-                  padding: '0.625rem 1.25rem',
-                  background: 'transparent',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: 'var(--radius-md)',
-                  textDecoration: 'none',
-                  fontWeight: '500',
-                  transition: 'all var(--transition-fast)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.5rem',
-                }}
-              >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
-                </svg>
-                Formula Data
-              </Link>
-              <Link
-                href="/coa"
-                style={{
-                  padding: '0.625rem 1.25rem',
-                  background: 'transparent',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: 'var(--radius-md)',
-                  textDecoration: 'none',
-                  fontWeight: '500',
-                  transition: 'all var(--transition-fast)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.5rem',
-                }}
-              >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                </svg>
-                COA Data
-              </Link>
-              <Link
-                href="/processing-logs"
-                style={{
-                  padding: '0.625rem 1.25rem',
-                  background: 'transparent',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: 'var(--radius-md)',
-                  textDecoration: 'none',
-                  fontWeight: '500',
-                  transition: 'all var(--transition-fast)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.5rem',
-                }}
-              >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                  <polyline points="14 2 14 8 20 8" />
-                  <line x1="16" y1="13" x2="8" y2="13" />
-                  <line x1="16" y1="17" x2="8" y2="17" />
-                </svg>
-                Logs
-              </Link>
-              <Link
-                href="/skipped-duplicates"
-                style={{
-                  padding: '0.625rem 1.25rem',
-                  background: 'transparent',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: 'var(--radius-md)',
-                  textDecoration: 'none',
-                  fontWeight: '500',
-                  transition: 'all var(--transition-fast)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.5rem',
-                }}
-              >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
-                  <line x1="12" y1="9" x2="12" y2="13" />
-                  <line x1="12" y1="17" x2="12.01" y2="17" />
-                </svg>
-                Duplicates
-              </Link>
-              <Link
-                href="/inward-register"
-                style={{
-                  padding: '0.625rem 1.25rem',
-                  background: 'transparent',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: 'var(--radius-md)',
-                  textDecoration: 'none',
-                  fontWeight: '500',
-                  transition: 'all var(--transition-fast)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.5rem',
-                }}
-              >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M12 5v14M5 12h14" />
-                </svg>
-                Inward Reg
-              </Link>
+              {(() => {
+                const navItems: NavItem[] = [
+                  {
+                    kind: 'link',
+                    href: '/',
+                    label: 'Upload',
+                    requiresPermission: false,
+                    icon: (
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                        <polyline points="17 8 12 3 7 8" />
+                        <line x1="12" y1="3" x2="12" y2="15" />
+                      </svg>
+                    ),
+                  },
+                  {
+                    kind: 'link',
+                    href: '/batch-data',
+                    label: 'Batch Data',
+                    requiresPermission: true,
+                    icon: (
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                        <polyline points="14 2 14 8 20 8" />
+                      </svg>
+                    ),
+                  },
+                  {
+                    kind: 'link',
+                    href: '/formula-data',
+                    label: 'Formula Data',
+                    requiresPermission: true,
+                    icon: (
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
+                      </svg>
+                    ),
+                  },
+                  {
+                    kind: 'link',
+                    href: '/coa',
+                    label: 'COA Data',
+                    requiresPermission: true,
+                    icon: (
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M9 12h6m-6 4h6m2 5H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5.586a1 1 0 0 1 .707.293l5.414 5.414a1 1 0 0 1 .293.707V19a2 2 0 0 1-2 2z" />
+                      </svg>
+                    ),
+                  },
+                  {
+                    kind: 'link',
+                    href: '/retained-sample',
+                    label: 'Retained Sample',
+                    requiresPermission: true,
+                    icon: (
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M10 2v2" />
+                        <path d="M14 2v2" />
+                        <path d="M7 6h10" />
+                        <path d="M6 6v14a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V6" />
+                        <path d="M10 11v6" />
+                        <path d="M14 11v6" />
+                      </svg>
+                    ),
+                  },
+                  {
+                    kind: 'link',
+                    href: '/processing-logs',
+                    label: 'Logs',
+                    requiresPermission: true,
+                    icon: (
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                        <polyline points="14 2 14 8 20 8" />
+                        <line x1="16" y1="13" x2="8" y2="13" />
+                        <line x1="16" y1="17" x2="8" y2="17" />
+                      </svg>
+                    ),
+                  },
+                  {
+                    kind: 'link',
+                    href: '/skipped-duplicates',
+                    label: 'Duplicates',
+                    requiresPermission: true,
+                    icon: (
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                        <line x1="12" y1="9" x2="12" y2="13" />
+                        <line x1="12" y1="17" x2="12.01" y2="17" />
+                      </svg>
+                    ),
+                  },
+                  {
+                    kind: 'link',
+                    href: '/inward-register',
+                    label: 'Inward Reg',
+                    requiresPermission: true,
+                    icon: (
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M12 5v14M5 12h14" />
+                      </svg>
+                    ),
+                  },
+                  {
+                    kind: 'link',
+                    href: '/yield',
+                    label: 'Yield',
+                    requiresPermission: true,
+                    icon: (
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+                        <polyline points="7.5 4.21 12 6.81 16.5 4.21" />
+                        <polyline points="7.5 19.79 7.5 14.6 3 12" />
+                      </svg>
+                    ),
+                  },
+                  {
+                    kind: 'link',
+                    href: '/rm-data',
+                    label: 'RM Data',
+                    requiresPermission: true,
+                    icon: (
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+                        <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
+                        <line x1="12" y1="22.08" x2="12" y2="12" />
+                      </svg>
+                    ),
+                  },
+                  {
+                    kind: 'link',
+                    href: '/product-master',
+                    label: 'Product Master',
+                    requiresPermission: true,
+                    icon: (
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <rect x="2" y="3" width="20" height="14" rx="2" ry="2" />
+                        <line x1="8" y1="21" x2="16" y2="21" />
+                        <line x1="12" y1="17" x2="12" y2="21" />
+                      </svg>
+                    ),
+                  },
+                  {
+                    kind: 'link',
+                    href: '/rejected-data',
+                    label: 'Rejected Data',
+                    requiresPermission: true,
+                    icon: (
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <circle cx="12" cy="12" r="10" />
+                        <line x1="15" y1="9" x2="9" y2="15" />
+                        <line x1="9" y1="9" x2="15" y2="15" />
+                      </svg>
+                    ),
+                  },
+                ];
 
-              <Link
-                href="/yield"
-                style={{
+                const canShow = (item: NavItem) => {
+                  if (item.kind !== 'link') return true;
+                  if (!item.requiresPermission) return true;
+                  if (!currentUser) return false;
+                  if (currentUser.role !== 'employee') return true;
+                  if (!allowedRoutes) return false;
+                  return allowedRoutes.has(item.href);
+                };
+
+                const linkStyleBase: React.CSSProperties = {
                   padding: '0.625rem 1.25rem',
                   background: 'transparent',
                   color: 'white',
@@ -700,114 +717,103 @@ export default function Home() {
                   display: 'flex',
                   alignItems: 'center',
                   gap: '0.5rem',
-                }}
-              >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
-                  <polyline points="7.5 4.21 12 6.81 16.5 4.21"></polyline>
-                  <polyline points="7.5 19.79 7.5 14.6 3 12"></polyline>
-                </svg>
-                Yield
-              </Link>
+                };
 
-              <Link
-                href="/rm-data"
-                style={{
-                  padding: '0.625rem 1.25rem',
-                  background: 'transparent',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: 'var(--radius-md)',
-                  textDecoration: 'none',
-                  fontWeight: '500',
-                  transition: 'all var(--transition-fast)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.5rem',
-                }}
-              >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
-                  <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
-                  <line x1="12" y1="22.08" x2="12" y2="12" />
-                </svg>
-                RM Data
-              </Link>
+                return (
+                  <>
+                    <button
+                      onClick={handleBackToUpload}
+                      style={{
+                        ...linkStyleBase,
+                        background: view === 'upload' || view === 'combined-view' ? 'white' : 'transparent',
+                        color: view === 'upload' || view === 'combined-view' ? 'var(--primary-700)' : 'white',
+                        cursor: 'pointer',
+                        fontWeight: '500',
+                      }}
+                    >
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                        <polyline points="17 8 12 3 7 8" />
+                        <line x1="12" y1="3" x2="12" y2="15" />
+                      </svg>
+                      Upload
+                    </button>
 
-              <Link
-                href="/product-master"
-                style={{
-                  padding: '0.625rem 1.25rem',
-                  background: 'transparent',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: 'var(--radius-md)',
-                  textDecoration: 'none',
-                  fontWeight: '500',
-                  transition: 'all var(--transition-fast)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.5rem',
-                }}
-              >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <rect x="2" y="3" width="20" height="14" rx="2" ry="2" />
-                  <line x1="8" y1="21" x2="16" y2="21" />
-                  <line x1="12" y1="17" x2="12" y2="21" />
-                </svg>
-                Product Master
-              </Link>
+                    <button
+                      onClick={() => { setView('list'); setSelectedFormula(null); setSelectedBatch(null); }}
+                      style={{
+                        ...linkStyleBase,
+                        background: view === 'list' ? 'white' : 'transparent',
+                        color: view === 'list' ? 'var(--primary-700)' : 'white',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <line x1="8" y1="6" x2="21" y2="6" />
+                        <line x1="8" y1="12" x2="21" y2="12" />
+                        <line x1="8" y1="18" x2="21" y2="18" />
+                        <line x1="3" y1="6" x2="3.01" y2="6" />
+                        <line x1="3" y1="12" x2="3.01" y2="12" />
+                        <line x1="3" y1="18" x2="3.01" y2="18" />
+                      </svg>
+                      History
+                    </button>
 
-              <Link
-                href="/rejected-data"
-                style={{
-                  padding: '0.625rem 1.25rem',
-                  background: 'rgba(220, 38, 38, 0.25)',
-                  color: 'white',
-                  borderRadius: 'var(--radius-md)',
-                  textDecoration: 'none',
-                  fontWeight: '500',
-                  transition: 'all var(--transition-fast)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.5rem',
-                  border: '1px solid rgba(220,38,38,0.4)',
-                }}
-              >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <circle cx="12" cy="12" r="10" />
-                  <line x1="15" y1="9" x2="9" y2="15" />
-                  <line x1="9" y1="9" x2="15" y2="15" />
-                </svg>
-                Rejected Data
-              </Link>
+                    {navItems.filter(canShow).map((item) => (
+                      <Link
+                        key={item.href}
+                        href={item.href}
+                        style={item.href === '/rejected-data'
+                          ? { ...linkStyleBase, background: 'rgba(220, 38, 38, 0.25)', border: '1px solid rgba(220,38,38,0.4)' }
+                          : linkStyleBase}
+                      >
+                        {item.icon}
+                        {item.label}
+                      </Link>
+                    ))}
 
-              {['admin', 'super-admin'].includes(currentUser?.role ?? '') && (
-                <Link
-                  href="/admin/users"
-                  style={{
-                    padding: '0.625rem 1.25rem',
-                    background: 'rgba(255,255,255,0.15)',
-                    color: 'white',
-                    borderRadius: 'var(--radius-md)',
-                    textDecoration: 'none',
-                    fontWeight: '500',
-                    transition: 'all var(--transition-fast)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '0.5rem',
-                    border: '1px solid rgba(255,255,255,0.2)',
-                  }}
-                >
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
-                    <circle cx="9" cy="7" r="4" />
-                    <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
-                    <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-                  </svg>
-                  Users
-                </Link>
-              )}
+                    {['admin', 'super-admin'].includes(currentUser?.role ?? '') && (
+                      <Link
+                        href="/admin/users"
+                        style={{
+                          ...linkStyleBase,
+                          background: 'rgba(255,255,255,0.15)',
+                          border: '1px solid rgba(255,255,255,0.2)',
+                          fontWeight: '500',
+                        }}
+                      >
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                          <circle cx="9" cy="7" r="4" />
+                          <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+                          <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+                        </svg>
+                        Users
+                      </Link>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() => logout()}
+                      style={{
+                        ...linkStyleBase,
+                        background: 'rgba(239, 68, 68, 0.25)',
+                        border: '1px solid rgba(239, 68, 68, 0.4)',
+                        cursor: 'pointer',
+                        fontWeight: '600',
+                      }}
+                      title="Log out"
+                    >
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                        <polyline points="16 17 21 12 16 7" />
+                        <line x1="21" y1="12" x2="9" y2="12" />
+                      </svg>
+                      Logout
+                    </button>
+                  </>
+                );
+              })()}
 
             </nav>
 

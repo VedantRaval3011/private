@@ -3,6 +3,7 @@ import connectToDatabase from '@/lib/mongodb';
 import PagePermission from '@/models/PagePermission';
 import { isAdminRole } from '@/lib/auth';
 import { UserRole } from '@/types/auth';
+import mongoose from 'mongoose';
 
 export const ALL_PAGES = [
   { pageRoute: '/', pageName: 'Dashboard' },
@@ -77,7 +78,12 @@ export async function PUT(request: NextRequest) {
       (p: { pageRoute: string; allowedRoles: UserRole[]; allowedUsers?: string[] }) => ({
         updateOne: {
           filter: { pageRoute: p.pageRoute },
-          update: { $set: { allowedRoles: p.allowedRoles, allowedUsers: p.allowedUsers ?? [] } },
+          update: {
+            $set: {
+              allowedRoles: p.allowedRoles,
+              allowedUsers: (p.allowedUsers ?? []).map((id) => new mongoose.Types.ObjectId(id)),
+            },
+          },
           upsert: true,
         },
       })

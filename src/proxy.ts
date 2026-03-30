@@ -5,6 +5,7 @@ const PUBLIC_PATHS = [
   '/login',
   '/api/auth/login',
   '/api/seed',
+  '/api/page-permissions/check',
 ];
 
 export async function proxy(request: NextRequest) {
@@ -44,6 +45,23 @@ export async function proxy(request: NextRequest) {
     const res = NextResponse.redirect(new URL('/login', request.url));
     res.cookies.delete('auth-token');
     return res;
+  }
+
+  // Enforce page restrictions for non-admin pages.
+  // Middleware runs on Edge (no DB access), so we delegate to a server route.
+  if (!pathname.startsWith('/api/')) {
+    const checkUrl = new URL('/api/page-permissions/check', request.url);
+    checkUrl.searchParams.set('path', pathname);
+    const res = await fetch(checkUrl, {
+      headers: {
+        'x-user-id': payload.userId,
+        'x-user-role': payload.role,
+      },
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok || !data?.allowed) {
+      return NextResponse.redirect(new URL('/login', request.url));
+    }
   }
 
   // Only super-admin can access page-permissions management
