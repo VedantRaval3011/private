@@ -1,10 +1,11 @@
-import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
+import { SignJWT, jwtVerify } from 'jose';
 import { JWTPayload } from '@/types/auth';
 import { cookies } from 'next/headers';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'formula-master-secret-change-in-production';
 export const COOKIE_NAME = 'auth-token';
+const JWT_SECRET_KEY = new TextEncoder().encode(JWT_SECRET);
 
 export async function hashPassword(password: string): Promise<string> {
   return bcrypt.hash(password, 12);
@@ -17,13 +18,20 @@ export async function verifyPassword(
   return bcrypt.compare(password, hash);
 }
 
-export function signToken(payload: JWTPayload): string {
-  return jwt.sign(payload, JWT_SECRET, { expiresIn: '7d' });
+export async function signToken(payload: JWTPayload): Promise<string> {
+  return new SignJWT(payload as unknown as Record<string, unknown>)
+    .setProtectedHeader({ alg: 'HS256' })
+    .setIssuedAt()
+    .setExpirationTime('7d')
+    .sign(JWT_SECRET_KEY);
 }
 
-export function verifyToken(token: string): JWTPayload | null {
+export async function verifyToken(token: string): Promise<JWTPayload | null> {
   try {
-    return jwt.verify(token, JWT_SECRET) as JWTPayload;
+    const { payload } = await jwtVerify(token, JWT_SECRET_KEY, {
+      algorithms: ['HS256'],
+    });
+    return payload as unknown as JWTPayload;
   } catch {
     return null;
   }
@@ -46,5 +54,5 @@ export async function getAuthUser(): Promise<JWTPayload | null> {
   const cookieStore = await cookies();
   const token = cookieStore.get(COOKIE_NAME)?.value;
   if (!token) return null;
-  return verifyToken(token);
+  return await verifyToken(token);
 }

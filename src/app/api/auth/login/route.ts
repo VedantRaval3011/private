@@ -41,7 +41,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const token = signToken({
+    const token = await signToken({
       userId: user._id.toString(),
       username: user.username,
       role: user.role,

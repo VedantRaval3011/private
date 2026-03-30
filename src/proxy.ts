@@ -7,7 +7,7 @@ const PUBLIC_PATHS = [
   '/api/seed',
 ];
 
-export function proxy(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // Allow Next.js internals and static files
@@ -33,7 +33,7 @@ export function proxy(request: NextRequest) {
     return NextResponse.redirect(new URL('/login', request.url));
   }
 
-  const payload = verifyToken(token);
+  const payload = await verifyToken(token);
 
   if (!payload) {
     if (pathname.startsWith('/api/')) {
