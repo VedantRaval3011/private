@@ -127,7 +127,7 @@ function isPhOutOfRange(value: string, limit: string): boolean {
 // ── Global summary helpers ────────────────────────────────
 function computeYearStats(
   groups: MFCGroup[],
-  editState: EditState,
+  saved: EditState,
   year: number | null   // null = all years
 ): { fullyCompleted: number; pending: number; overdue: number } {
   let fullyCompleted = 0, pending = 0, overdue = 0;
@@ -142,13 +142,13 @@ function computeYearStats(
         if (!hasIntervalInYear) continue;
       }
       if (requiredMonths.length > 0 && requiredMonths.every(m =>
-        cellIsFilled(editState[cellKey(batch.batchNumber, m)])
+        cellIsFilled(saved[cellKey(batch.batchNumber, batch.itemCode, m)])
       )) fullyCompleted++;
       if (!mfgD) continue;
       for (const m of STABILITY_MONTHS) {
         const due = dueDate(mfgD, m);
         if (year !== null && due.getFullYear() !== year) continue;
-        if (cellIsFilled(editState[cellKey(batch.batchNumber, m)])) continue;
+        if (cellIsFilled(saved[cellKey(batch.batchNumber, batch.itemCode, m)])) continue;
         if (due < today) overdue++;
         else pending++;
       }
@@ -159,7 +159,7 @@ function computeYearStats(
 
 function computeMonthStats(
   groups: MFCGroup[],
-  editState: EditState,
+  saved: EditState,
   refDate: Date,
   filterYear: number | null,
   filterMonth: number | null,
@@ -171,7 +171,7 @@ function computeMonthStats(
     for (const batch of group.batches) {
       const mfgD = parseMfgDate(batch.mfgDate);
       if (requiredMonths.length > 0) {
-        if (requiredMonths.every(m => cellIsFilled(editState[cellKey(batch.batchNumber, m)])))
+        if (requiredMonths.every(m => cellIsFilled(saved[cellKey(batch.batchNumber, batch.itemCode, m)])))
           fullyCompleted++;
       }
       if (!mfgD) continue;
@@ -179,8 +179,8 @@ function computeMonthStats(
         const due = dueDate(mfgD, m);
         if (filterYear !== null && due.getFullYear() !== filterYear) continue;
         if (filterMonth !== null && (due.getMonth() + 1) !== filterMonth) continue;
-        const key = cellKey(batch.batchNumber, m);
-        const isFilled = cellIsFilled(editState[key]);
+        const key = cellKey(batch.batchNumber, batch.itemCode, m);
+        const isFilled = cellIsFilled(saved[key]);
         const status = getIntervalStatus(mfgD, m, isFilled, refDate);
         if (status === 'completed') done++;
         else if (status === 'due-this-month') pending++;
@@ -212,8 +212,8 @@ type EditState = Record<string, CellEdit>;
 type SavingState = Record<string, boolean>;
 type SaveStatusState = Record<string, 'saved' | 'error'>;
 
-function cellKey(batchNumber: string, month: number): string {
-  return `${batchNumber}:${month}`;
+function cellKey(batchNumber: string, itemCode: string, month: number): string {
+  return `${batchNumber}|${itemCode}:${month}`;
 }
 
 export default function RetainedSamplePage() {
@@ -222,6 +222,7 @@ export default function RetainedSamplePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [editState, setEditState] = useState<EditState>({});
+  const [savedState, setSavedState] = useState<EditState>({}); // snapshot of last-saved values
   const [saving, setSaving] = useState<SavingState>({});
   const [saveStatus, setSaveStatus] = useState<SaveStatusState>({});
   const [expandedMFCs, setExpandedMFCs] = useState<Set<string>>(new Set());
@@ -234,6 +235,7 @@ export default function RetainedSamplePage() {
   type SortKey = 'mfc-asc' | 'mfc-desc' | 'batches-desc' | 'batches-asc' | 'intervals-desc' | 'intervals-asc' | 'shelf-life-desc' | 'shelf-life-asc';
   const [primarySort, setPrimarySort] = useState<SortKey>('mfc-asc');
   const [secondarySort, setSecondarySort] = useState<SortKey>('mfc-asc');
+  const [showOutOfRangeOnly, setShowOutOfRangeOnly] = useState(false);
 
   // ── Timeline Filter State ────────────────────────────────
   const [selectedMonth, setSelectedMonth] = useState<{ month: number; year: number } | null>(null);
@@ -272,14 +274,33 @@ export default function RetainedSamplePage() {
   }, [selectedMonth]);
 
   const yearStats = useMemo(
-    () => computeYearStats(allGroups, editState, selectedYear),
-    [allGroups, editState, selectedYear]
+    () => computeYearStats(allGroups, savedState, selectedYear),
+    [allGroups, savedState, selectedYear]
   );
 
   const monthStats = useMemo(
-    () => computeMonthStats(allGroups, editState, refDate, selectedYear, selectedMonth?.month ?? null),
-    [allGroups, editState, refDate, selectedYear, selectedMonth]
+    () => computeMonthStats(allGroups, savedState, refDate, selectedYear, selectedMonth?.month ?? null),
+    [allGroups, savedState, refDate, selectedYear, selectedMonth]
   );
+
+  // Compute batches that have out-of-range pH saved
+  const outOfRangeBatchKeys = useMemo(() => {
+    const keys = new Set<string>();
+    for (const group of allGroups) {
+      for (const batch of group.batches) {
+        const hasOOR = STABILITY_MONTHS.some((m) => {
+          const saved = savedState[cellKey(batch.batchNumber, batch.itemCode, m)];
+          if (!saved) return false;
+          return batch.phParams.some((param) => {
+            const val = saved.phValues[param.label] ?? '';
+            return !!val && isPhOutOfRange(val, param.limit);
+          });
+        });
+        if (hasOOR) keys.add(batch.batchNumber);
+      }
+    }
+    return keys;
+  }, [allGroups, savedState]);
 
   useEffect(() => {
     fetchData();
@@ -308,14 +329,13 @@ export default function RetainedSamplePage() {
             } else if (entry.pH) {
               phRecord = { '': entry.pH };
             }
-            initialEdits[cellKey(batch.batchNumber, entry.month)] = {
-              phValues: phRecord,
-              description: entry.description,
-            };
+            const cellEdit = { phValues: phRecord, description: entry.description };
+            initialEdits[cellKey(batch.batchNumber, batch.itemCode, entry.month)] = cellEdit;
           }
         }
       }
       setEditState(initialEdits);
+      setSavedState(initialEdits);
       setExpandedMFCs(new Set());
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error');
@@ -334,8 +354,8 @@ export default function RetainedSamplePage() {
   }
 
   // field = 'description' | a pH label ('' for unlabelled, 'IP', 'USP', etc.)
-  function handleEdit(batchNumber: string, month: number, field: string, value: string) {
-    const key = cellKey(batchNumber, month);
+  function handleEdit(batchNumber: string, itemCode: string, month: number, field: string, value: string) {
+    const key = cellKey(batchNumber, itemCode, month);
     setEditState((prev) => {
       const cell = prev[key] || { phValues: {}, description: '' };
       if (field === 'description') {
@@ -350,8 +370,8 @@ export default function RetainedSamplePage() {
     });
   }
 
-  async function handleSave(group: MFCGroup, batchNumber: string, month: StabilityMonth) {
-    const key = cellKey(batchNumber, month);
+  async function handleSave(group: MFCGroup, batchNumber: string, itemCode: string, month: StabilityMonth) {
+    const key = cellKey(batchNumber, itemCode, month);
     const edit = editState[key] || { phValues: {}, description: '' };
     setSaving((prev) => ({ ...prev, [key]: true }));
     try {
@@ -372,6 +392,7 @@ export default function RetainedSamplePage() {
       });
       const json = await res.json();
       if (!json.success) throw new Error(json.error || 'Save failed');
+      setSavedState((prev) => ({ ...prev, [key]: edit }));
       setSaveStatus((prev) => ({ ...prev, [key]: 'saved' }));
       setTimeout(() => {
         setSaveStatus((prev) => {
@@ -432,9 +453,9 @@ export default function RetainedSamplePage() {
     month: StabilityMonth,
     intervalStatus: IntervalStatus
   ) {
-    const key = cellKey(batch.batchNumber, month);
+    const key = cellKey(batch.batchNumber, batch.itemCode, month);
     const edit = editState[key] || { phValues: {}, description: '' };
-    const isFilled = cellIsFilled(edit);
+    const isFilled = cellIsFilled(savedState[key]);
     const isSaving = saving[key];
     const cellSaveStatus = saveStatus[key];
     const isLocked = intervalStatus === 'future' && !unlockedCells.has(key);
@@ -445,7 +466,7 @@ export default function RetainedSamplePage() {
       : [{ label: '', result: '', limit: '' }];
     const hasNoCOA = batch.phParams.length === 0;
 
-    // Block save if any entered pH is outside its limit
+    // Warn if any entered pH is outside its limit (but still allow save)
     const hasOutOfRange = phParams.some((param) => {
       const val = edit.phValues[param.label] ?? '';
       return !hasNoCOA && isPhOutOfRange(val, param.limit);
@@ -505,7 +526,7 @@ export default function RetainedSamplePage() {
                       <input
                         type="text"
                         value={inputVal}
-                        onChange={(e) => handleEdit(batch.batchNumber, month, param.label, e.target.value)}
+                        onChange={(e) => handleEdit(batch.batchNumber, batch.itemCode, month, param.label, e.target.value)}
                         placeholder={disabled ? 'N/A' : (param.limit || 'e.g. 6.4')}
                         disabled={disabled}
                         className={`${styles.phInput} ${disabled ? styles.phInputDisabled : ''} ${outOfRange ? styles.phInputError : ''}`}
@@ -522,7 +543,7 @@ export default function RetainedSamplePage() {
               })}
               <textarea
                 value={edit.description}
-                onChange={(e) => handleEdit(batch.batchNumber, month, 'description', e.target.value)}
+                onChange={(e) => handleEdit(batch.batchNumber, batch.itemCode, month, 'description', e.target.value)}
                 placeholder="Observation…"
                 rows={2}
                 className={styles.descInput}
@@ -530,14 +551,20 @@ export default function RetainedSamplePage() {
             </>
           )}
           {!isLocked && (
-            <button
-              onClick={() => handleSave(group, batch.batchNumber, month)}
-              disabled={isSaving || hasOutOfRange}
-              className={btnClass}
-              title={hasOutOfRange ? 'Fix out-of-range pH values before saving' : undefined}
-            >
-              {isSaving ? 'Saving…' : cellSaveStatus === 'saved' ? '✓ Saved' : cellSaveStatus === 'error' ? '✗ Error' : hasOutOfRange ? 'pH out of range' : 'Save'}
-            </button>
+            <>
+              {hasOutOfRange && (
+                <div className={styles.phOutOfRangeWarning}>
+                  ⚠ pH out of limit — saving anyway
+                </div>
+              )}
+              <button
+                onClick={() => handleSave(group, batch.batchNumber, batch.itemCode, month)}
+                disabled={isSaving}
+                className={btnClass}
+              >
+                {isSaving ? 'Saving…' : cellSaveStatus === 'saved' ? '✓ Saved' : cellSaveStatus === 'error' ? '✗ Error' : 'Save'}
+              </button>
+            </>
           )}
         </div>
       </td>
@@ -554,7 +581,7 @@ export default function RetainedSamplePage() {
           const mfgD = parseMfgDate(batch.mfgDate);
           if (!mfgD) return false;
           return STABILITY_MONTHS.some((m) => {
-            const isFilled = cellIsFilled(editState[cellKey(batch.batchNumber, m)]);
+            const isFilled = cellIsFilled(savedState[cellKey(batch.batchNumber, batch.itemCode, m)]);
             return getIntervalStatus(mfgD, m, isFilled, refDate) !== 'future';
           });
         })
@@ -566,20 +593,25 @@ export default function RetainedSamplePage() {
           })
         : group.batches;
 
+    // Filter by out-of-range pH
+    const batchesAfterOOR = showOutOfRangeOnly
+      ? batchesByTime.filter((b) => outOfRangeBatchKeys.has(b.batchNumber))
+      : batchesByTime;
+
     // Filter further by status
     const sl = parseInt(group.shelfLife);
     const requiredMonths = STABILITY_MONTHS.filter(m => isNaN(sl) || m <= sl);
     const batchesToShow = selectedStatus
-      ? batchesByTime.filter((batch) => {
+      ? batchesAfterOOR.filter((batch) => {
           if (selectedStatus === 'fully-completed') {
             return requiredMonths.length > 0 && requiredMonths.every(m =>
-              cellIsFilled(editState[cellKey(batch.batchNumber, m)])
+              cellIsFilled(savedState[cellKey(batch.batchNumber, batch.itemCode, m)])
             );
           }
           const mfgD = parseMfgDate(batch.mfgDate);
           if (!mfgD) return false;
           return STABILITY_MONTHS.some((m) => {
-            const isFilled = cellIsFilled(editState[cellKey(batch.batchNumber, m)]);
+            const isFilled = cellIsFilled(savedState[cellKey(batch.batchNumber, batch.itemCode, m)]);
             const s = getIntervalStatus(mfgD, m, isFilled, refDate);
             if (selectedStatus === 'completed') return s === 'completed';
             if (selectedStatus === 'pending')   return s === 'due-this-month';
@@ -587,9 +619,9 @@ export default function RetainedSamplePage() {
             return false;
           });
         })
-      : batchesByTime;
+      : batchesAfterOOR;
 
-    if ((selectedMonth || selectedYear || selectedStatus) && batchesToShow.length === 0) return null;
+    if ((selectedMonth || selectedYear || selectedStatus || showOutOfRangeOnly) && batchesToShow.length === 0) return null;
 
     const totalBatches = batchesToShow.length;
     const withCOA = batchesToShow.filter((b) => b.coaFound).length;
@@ -619,7 +651,7 @@ export default function RetainedSamplePage() {
       for (const batch of batchesToShow) {
         if (!batchDue.get(batch.batchNumber)?.has(m)) continue;
         total++;
-        const key = cellKey(batch.batchNumber, m);
+        const key = cellKey(batch.batchNumber, batch.itemCode, m);
         const ed = editState[key];
         if (cellIsFilled(ed)) filled++;
         const mfgD = parseMfgDate(batch.mfgDate);
@@ -813,7 +845,7 @@ export default function RetainedSamplePage() {
                             )}
                           </td>
                           {requiredMonths.map((m) => {
-                            const isFilled = cellIsFilled(editState[cellKey(batch.batchNumber, m)]);
+                            const isFilled = cellIsFilled(savedState[cellKey(batch.batchNumber, batch.itemCode, m)]);
                             const intervalStatus = mfgD
                               ? getIntervalStatus(mfgD, m, isFilled, refDate)
                               : 'future';
@@ -864,7 +896,7 @@ export default function RetainedSamplePage() {
       const mfgD = parseMfgDate(batch.mfgDate);
       if (!mfgD) continue;
       for (const m of STABILITY_MONTHS) {
-        const isFilled = cellIsFilled(editState[cellKey(batch.batchNumber, m)]);
+        const isFilled = cellIsFilled(savedState[cellKey(batch.batchNumber, batch.itemCode, m)]);
         const s = getIntervalStatus(mfgD, m, isFilled, refDate);
         if (s === 'overdue' || s === 'due-this-month') pending++;
       }
@@ -926,9 +958,19 @@ export default function RetainedSamplePage() {
               Track pH and observations across stability intervals — grouped by MFC
             </p>
           </div>
-          <button className={styles.refreshBtn} onClick={fetchData}>
-            ↺ Refresh
-          </button>
+          <div className={styles.headerBtns}>
+            {outOfRangeBatchKeys.size > 0 && (
+              <button
+                className={`${styles.outOfRangeFilterBtn} ${showOutOfRangeOnly ? styles.outOfRangeFilterBtnActive : ''}`}
+                onClick={() => setShowOutOfRangeOnly(p => !p)}
+              >
+                ⚠ pH Out of Range ({outOfRangeBatchKeys.size})
+              </button>
+            )}
+            <button className={styles.refreshBtn} onClick={fetchData}>
+              ↺ Refresh
+            </button>
+          </div>
         </div>
       </div>
 

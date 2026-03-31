@@ -4292,6 +4292,7 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
   }
 
   // ── 11. Dynamic Section 5.3.1 – In-Process Analysis Results at Bulk Stage ──
+  let bulk531SectionEnd = -1;
   if (data.bulkInProcessData && data.bulkInProcessData.length > 0) {
     console.log(`\n📋 Section 5.3.1 Bulk In-Process: ${data.bulkInProcessData.length} rows`);
 
@@ -4446,9 +4447,11 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
         // Replace: data table + remark table (if found)
         if (remarkTblEndFull531 !== -1) {
           docXml = docXml.substring(0, tblStart531) + replacementTable531 + remarkTable531Xml + docXml.substring(remarkTblEndFull531);
+          bulk531SectionEnd = tblStart531 + replacementTable531.length + remarkTable531Xml.length;
           console.log(`  ✅ Section 5.3.1 data table + remark table replaced (${totalCols} columns, ${assayCols.length} assay col(s))`);
         } else {
           docXml = docXml.substring(0, tblStart531) + replacementTable531 + docXml.substring(tblEnd531);
+          bulk531SectionEnd = tblStart531 + replacementTable531.length;
           console.log(`  ✅ Section 5.3.1 data table replaced (${totalCols} columns, remark table not found)`);
         }
       } else {
@@ -4462,42 +4465,57 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
     // ── 11b. Dynamic Process Capability & Performance Parameters (Cp, Cpk, Pp, Ppk) ──
     // FIXED: Replace the ENTIRE table including the title row, not just the data rows.
     // This prevents stale header/title rows from a previous product bleeding into the new table.
-    const cpkAnchorStr = 'Process Capability &amp; Performance parameters (Cp, Cpk, and Pp, Ppk)';
     let cpkTblStart = -1;
     let cpkTblEndFull = -1;
     let origCpkTable = '';
     {
-      let searchFrom = 0;
-      while (true) {
-        const anchorIdx = docXml.indexOf(cpkAnchorStr, searchFrom);
-        if (anchorIdx === -1) break;
-        const nextTbl = docXml.indexOf('<w:tbl', anchorIdx);
-        if (nextTbl !== -1) {
-          const afterTbl = docXml.substring(nextTbl);
-          let depth = 0;
-          let endOff = -1;
-          const regex = /<\/?w:tbl\b[^>]*>/g;
-          let match;
-          while ((match = regex.exec(afterTbl)) !== null) {
-            if (match[0].startsWith('<w:tbl')) depth++;
-            else if (match[0].startsWith('</w:tbl')) {
-              depth--;
-              if (depth === 0) { endOff = match.index + match[0].length; break; }
-            }
-          }
-          if (endOff !== -1) {
-            const tbl = afterTbl.substring(0, endOff);
-            const rowCount = [...tbl.matchAll(/<w:tr\b/g)].length;
-            if (rowCount >= 15) {
-              cpkTblStart = nextTbl;
-              cpkTblEndFull = nextTbl + endOff;
-              origCpkTable = tbl;
-              console.log(`  🔍 Found Cpk data table at index ${nextTbl} with ${rowCount} rows`);
-              break;
-            }
+      // ── Positional search: find CPK table right after 5.3.1 section ──
+      // Anchor-text search fails when text is split across multiple <w:t> elements.
+      const cpkSearchFrom = bulk531SectionEnd > 0
+        ? bulk531SectionEnd
+        : docXml.indexOf('Critical Parameters');
+      const cpkSearchCap = docXml.indexOf('5.3.2', cpkSearchFrom > 0 ? cpkSearchFrom : 0);
+      const cpkSearchEnd = cpkSearchCap > cpkSearchFrom
+        ? cpkSearchCap
+        : Math.floor(docXml.length * 0.85);
+
+      console.log(`  🔍 CPK search: from=${cpkSearchFrom}, cap=${cpkSearchEnd}`);
+
+      let searchPos = cpkSearchFrom > 0 ? cpkSearchFrom : 0;
+      while (searchPos < cpkSearchEnd) {
+        const nextTbl = docXml.indexOf('<w:tbl', searchPos);
+        if (nextTbl === -1 || nextTbl >= cpkSearchEnd) break;
+
+        const afterTbl = docXml.substring(nextTbl);
+        let depth = 0, endOff = -1;
+        const tblTagRx = /<\/?w:tbl\b[^>]*>/g;
+        let m;
+        while ((m = tblTagRx.exec(afterTbl)) !== null) {
+          if (m[0].startsWith('<w:tbl')) depth++;
+          else if (m[0].startsWith('</w:tbl')) {
+            depth--;
+            if (depth === 0) { endOff = m.index + m[0].length; break; }
           }
         }
-        searchFrom = anchorIdx + cpkAnchorStr.length;
+        if (endOff === -1) break;
+
+        const tbl = afterTbl.substring(0, endOff);
+        const rowCount = [...tbl.matchAll(/<w:tr\b/g)].length;
+        console.log(`  🔍 CPK candidate table at ${nextTbl}: rows=${rowCount}`);
+
+        if (rowCount >= 15) {
+          cpkTblStart = nextTbl;
+          cpkTblEndFull = nextTbl + endOff;
+          origCpkTable = tbl;
+          console.log(`  🔍 Found Cpk data table at index ${nextTbl} with ${rowCount} rows`);
+          break;
+        }
+
+        searchPos = nextTbl + endOff;
+      }
+
+      if (cpkTblStart === -1) {
+        console.warn('  ⚠️ CPK table not found between 5.3.1 and 5.3.2 sections');
       }
     }
 
@@ -4687,8 +4705,116 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
       // ── Assemble and replace the ENTIRE table ──
       const replacementCpkTable = '<w:tbl>' + cpkTblPr + cpkDynGrid + dynCpkRows + '</w:tbl>';
 
+      // ── Replace CPK table first ──
       docXml = docXml.substring(0, cpkTblStart) + replacementCpkTable + docXml.substring(cpkTblEndFull);
       console.log(`  ✅ Process Capability table replaced (${cpkTotalDataCols} columns, ${cpkAssayCols.length} assay col(s))`);
+
+      // ── Update the template UCL/LCL table IN-PLACE (preserve structure/styling) ──
+      // Scan tables after the CPK table; take the first one with 4–8 rows.
+      const cpkNewEnd = cpkTblStart + replacementCpkTable.length;
+      {
+        let searchPos = cpkNewEnd;
+        let uclTblStart = -1, uclTblEnd = -1;
+
+        // Scan up to 3 tables within 50000 chars to find the UCL/LCL table
+        for (let attempt = 0; attempt < 3; attempt++) {
+          const afterPos = docXml.substring(searchPos);
+          const nextTblOff = afterPos.indexOf('<w:tbl');
+          if (nextTblOff === -1 || nextTblOff > 50000) break;
+
+          const afterNext = afterPos.substring(nextTblOff);
+          let depth = 0, endOff = -1;
+          const rx = /<\/?w:tbl\b[^>]*>/g;
+          let m;
+          while ((m = rx.exec(afterNext)) !== null) {
+            if (m[0].startsWith('<w:tbl')) depth++;
+            else if (m[0].startsWith('</w:tbl')) { depth--; if (depth === 0) { endOff = m.index + m[0].length; break; } }
+          }
+          if (endOff === -1) break;
+
+          const candidateStart = searchPos + nextTblOff;
+          const candidateEnd = searchPos + nextTblOff + endOff;
+          const candidateXml = afterNext.substring(0, endOff);
+          const rowCount = [...candidateXml.matchAll(/<w:tr\b/g)].length;
+          console.log(`  🔍 UCL/LCL candidate table at ${candidateStart}: rows=${rowCount}`);
+
+          if (rowCount >= 4 && rowCount <= 8) {
+            uclTblStart = candidateStart;
+            uclTblEnd = candidateEnd;
+            break;
+          }
+          searchPos = candidateEnd; // skip and try next table
+        }
+
+        if (uclTblStart !== -1) {
+          let uclTblXml = docXml.substring(uclTblStart, uclTblEnd);
+          const uclRowCount = [...uclTblXml.matchAll(/<w:tr\b/g)].length;
+          console.log(`  🔍 Bulk UCL/LCL template table found (${uclRowCount} rows) — updating in-place`);
+
+          // Parse all rows
+          const uclRows: { xml: string; index: number }[] = [];
+          const uclRowRx = /<w:tr\b[^>]*>[\s\S]*?<\/w:tr>/g;
+          let uclRowMatch;
+          while ((uclRowMatch = uclRowRx.exec(uclTblXml)) !== null) {
+            uclRows.push({ xml: uclRowMatch[0], index: uclRowMatch.index });
+          }
+
+          const bulkUclFmt = (n: number | undefined) =>
+            n !== undefined && !isNaN(n) ? n.toFixed(2) : 'N/A';
+
+          // Column header names: row 0, cells 1..N
+          const colHeaders = [
+            'pH',
+            ...cpkAssayCols.map(c => `Assay (%)\n${c.compound}`),
+          ];
+
+          // Data values per data row: [pH, ...assays]
+          const specLabels = [
+            phStats ? `(${phStats.lsl} to ${phStats.usl})` : '--',
+            ...assayStatsArray.map(s => s ? `(${s.lsl} to ${s.usl})` : '--'),
+          ];
+          const averages = [
+            bulkUclFmt(phStats?.average),
+            ...assayStatsArray.map(s => bulkUclFmt(s?.average)),
+          ];
+          const stdDevs = [
+            bulkUclFmt(phStats?.sigmaEstimated),
+            ...assayStatsArray.map(s => bulkUclFmt(s?.sigmaEstimated)),
+          ];
+          const ucls = [
+            bulkUclFmt(phStats ? phStats.average + 3 * phStats.sigmaEstimated : undefined),
+            ...assayStatsArray.map(s => bulkUclFmt(s ? s.average + 3 * s.sigmaEstimated : undefined)),
+          ];
+          const lcls = [
+            bulkUclFmt(phStats ? phStats.average - 3 * phStats.sigmaEstimated : undefined),
+            ...assayStatsArray.map(s => bulkUclFmt(s ? s.average - 3 * s.sigmaEstimated : undefined)),
+          ];
+
+          // Row 0 = column headers (cell 0 blank, cells 1..N = pH / assay names)
+          // Rows 1–5 = Spec Limit, Average, Std Dev, UCL, LCL
+          const rowValues: string[][] = [colHeaders, specLabels, averages, stdDevs, ucls, lcls];
+
+          // Apply in reverse so indices stay valid
+          for (let ri = uclRows.length - 1; ri >= 0; ri--) {
+            const vals = rowValues[ri];
+            if (!vals || vals.length === 0) continue;
+            let rowXml = uclRows[ri].xml;
+            for (let ci = 0; ci < vals.length; ci++) {
+              // Row 0: cell 0 is blank label — start at cell index 1
+              // Rows 1+: cell 0 is the row label — start at cell index 1
+              rowXml = replaceCellText(rowXml, ci + 1, xmlEscape(vals[ci]));
+            }
+            uclTblXml = uclTblXml.substring(0, uclRows[ri].index)
+              + rowXml
+              + uclTblXml.substring(uclRows[ri].index + uclRows[ri].xml.length);
+          }
+
+          docXml = docXml.substring(0, uclTblStart) + uclTblXml + docXml.substring(uclTblEnd);
+          console.log(`  ✅ Bulk UCL/LCL table updated in-place`);
+        } else {
+          console.warn('  ⚠️ Bulk UCL/LCL template table not found after CPK table');
+        }
+      }
     }
   }
 

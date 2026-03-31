@@ -17,6 +17,7 @@ interface SelectedFile {
 interface BatchFileUploadProps {
     onFilesSelect: (files: File[]) => void;
     isLoading?: boolean;
+    disabled?: boolean;
     accept?: string;
     maxSize?: number;
     selectedFiles?: SelectedFile[];
@@ -26,6 +27,7 @@ interface BatchFileUploadProps {
 export default function BatchFileUpload({
     onFilesSelect,
     isLoading = false,
+    disabled = false,
     accept = '.xml',
     maxSize = 10 * 1024 * 1024, // 10MB
     selectedFiles = [],
@@ -74,16 +76,17 @@ export default function BatchFileUpload({
     const handleDrop = useCallback((e: React.DragEvent) => {
         e.preventDefault();
         setIsDragging(false);
-
+        if (disabled) return;
         if (e.dataTransfer.files.length > 0) {
             handleFiles(e.dataTransfer.files);
         }
-    }, []);
+    }, [disabled]);
 
     const handleDragOver = useCallback((e: React.DragEvent) => {
         e.preventDefault();
+        if (disabled) return;
         setIsDragging(true);
-    }, []);
+    }, [disabled]);
 
     const handleDragLeave = useCallback((e: React.DragEvent) => {
         e.preventDefault();
@@ -109,7 +112,7 @@ export default function BatchFileUpload({
     return (
         <div className="w-full">
             <div
-                onClick={() => inputRef.current?.click()}
+                onClick={() => { if (!disabled) inputRef.current?.click(); }}
                 onDrop={handleDrop}
                 onDragOver={handleDragOver}
                 onDragLeave={handleDragLeave}
@@ -118,10 +121,13 @@ export default function BatchFileUpload({
                     padding: '3rem 2rem',
                     borderRadius: 'var(--radius-xl)',
                     border: `2px dashed ${isDragging ? 'var(--accent-500)' : 'var(--border)'}`,
-                    background: isDragging
-                        ? 'linear-gradient(135deg, rgba(20, 184, 166, 0.1) 0%, rgba(6, 182, 212, 0.1) 100%)'
-                        : 'var(--card)',
-                    cursor: isLoading ? 'not-allowed' : 'pointer',
+                    background: disabled
+                        ? 'var(--muted)'
+                        : isDragging
+                            ? 'linear-gradient(135deg, rgba(20, 184, 166, 0.1) 0%, rgba(6, 182, 212, 0.1) 100%)'
+                            : 'var(--card)',
+                    cursor: disabled || isLoading ? 'not-allowed' : 'pointer',
+                    opacity: disabled ? 0.6 : 1,
                     transition: 'all var(--transition-base)',
                     textAlign: 'center',
                     boxShadow: isDragging ? '0 0 20px rgba(20, 184, 166, 0.3)' : 'var(--shadow-md)',
@@ -133,7 +139,7 @@ export default function BatchFileUpload({
                     accept={accept}
                     multiple
                     onChange={handleChange}
-                    disabled={isLoading}
+                    disabled={isLoading || disabled}
                     style={{ display: 'none' }}
                 />
 
@@ -181,9 +187,11 @@ export default function BatchFileUpload({
                 </h3>
 
                 <p style={{ color: 'var(--muted-foreground)', marginBottom: '1rem' }}>
-                    {isDragging
-                        ? 'Drop your batch files here'
-                        : 'Drag and drop multiple Batch Registry XML files here, or click to browse'}
+                    {disabled
+                        ? 'Upload is not available for your role'
+                        : isDragging
+                            ? 'Drop your batch files here'
+                            : 'Drag and drop multiple Batch Registry XML files here, or click to browse'}
                 </p>
 
                 <div style={{

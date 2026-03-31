@@ -10,6 +10,7 @@ import React, { useState, useRef, useCallback } from 'react';
 interface FileUploadProps {
     onFileSelect: (file: File) => void;
     isLoading?: boolean;
+    disabled?: boolean;
     accept?: string;
     maxSize?: number;
 }
@@ -17,6 +18,7 @@ interface FileUploadProps {
 export default function FileUpload({
     onFileSelect,
     isLoading = false,
+    disabled = false,
     accept = '.xml',
     maxSize = 10 * 1024 * 1024, // 10MB
 }: FileUploadProps) {
@@ -49,15 +51,16 @@ export default function FileUpload({
     const handleDrop = useCallback((e: React.DragEvent) => {
         e.preventDefault();
         setIsDragging(false);
-
+        if (disabled) return;
         const file = e.dataTransfer.files[0];
         if (file) handleFile(file);
-    }, []);
+    }, [disabled]);
 
     const handleDragOver = useCallback((e: React.DragEvent) => {
         e.preventDefault();
+        if (disabled) return;
         setIsDragging(true);
-    }, []);
+    }, [disabled]);
 
     const handleDragLeave = useCallback((e: React.DragEvent) => {
         e.preventDefault();
@@ -72,7 +75,7 @@ export default function FileUpload({
     return (
         <div className="w-full">
             <div
-                onClick={() => inputRef.current?.click()}
+                onClick={() => { if (!disabled) inputRef.current?.click(); }}
                 onDrop={handleDrop}
                 onDragOver={handleDragOver}
                 onDragLeave={handleDragLeave}
@@ -81,10 +84,13 @@ export default function FileUpload({
                     padding: '3rem 2rem',
                     borderRadius: 'var(--radius-xl)',
                     border: `2px dashed ${isDragging ? 'var(--primary-500)' : 'var(--border)'}`,
-                    background: isDragging
-                        ? 'linear-gradient(135deg, rgba(139, 92, 246, 0.1) 0%, rgba(20, 184, 166, 0.1) 100%)'
-                        : 'var(--card)',
-                    cursor: isLoading ? 'not-allowed' : 'pointer',
+                    background: disabled
+                        ? 'var(--muted)'
+                        : isDragging
+                            ? 'linear-gradient(135deg, rgba(139, 92, 246, 0.1) 0%, rgba(20, 184, 166, 0.1) 100%)'
+                            : 'var(--card)',
+                    cursor: disabled || isLoading ? 'not-allowed' : 'pointer',
+                    opacity: disabled ? 0.6 : 1,
                     transition: 'all var(--transition-base)',
                     textAlign: 'center',
                     boxShadow: isDragging ? 'var(--shadow-glow)' : 'var(--shadow-md)',
@@ -95,7 +101,7 @@ export default function FileUpload({
                     type="file"
                     accept={accept}
                     onChange={handleChange}
-                    disabled={isLoading}
+                    disabled={isLoading || disabled}
                     style={{ display: 'none' }}
                 />
 
@@ -142,9 +148,11 @@ export default function FileUpload({
                 </h3>
 
                 <p style={{ color: 'var(--muted-foreground)', marginBottom: '1rem' }}>
-                    {isDragging
-                        ? 'Drop your file here'
-                        : 'Drag and drop your XML file here, or click to browse'}
+                    {disabled
+                        ? 'Upload is not available for your role'
+                        : isDragging
+                            ? 'Drop your file here'
+                            : 'Drag and drop your XML file here, or click to browse'}
                 </p>
 
                 <div style={{

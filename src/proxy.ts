@@ -61,8 +61,10 @@ export async function proxy(request: NextRequest) {
     const data = await res.json().catch(() => null);
     if (!res.ok || !data?.allowed) {
       // User is authenticated but not allowed to view this page.
-      // For employees, redirect to home (where nav is filtered by permissions).
-      return NextResponse.redirect(new URL('/', request.url));
+      // Never redirect to the same path to avoid infinite loops.
+      if (pathname !== '/') {
+        return NextResponse.redirect(new URL('/', request.url));
+      }
     }
   }
 

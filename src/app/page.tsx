@@ -46,6 +46,7 @@ interface SelectedFile {
 export default function Home() {
   const router = useRouter();
   const { user: currentUser, logout } = useAuth();
+  const isEmployee = currentUser?.role === 'employee';
   const [allowedRoutes, setAllowedRoutes] = useState<Set<string> | null>(null);
   // State
   const [view, setView] = useState<View>('upload');
@@ -897,6 +898,7 @@ export default function Home() {
                 <BatchFileUpload
                   onFilesSelect={handleBatchFilesSelect}
                   isLoading={batchFiles.some(f => f.status === 'parsing')}
+                  disabled={isEmployee}
                   selectedFiles={batchFiles}
                   onRemoveFile={handleRemoveBatchFile}
                 />
@@ -947,6 +949,7 @@ export default function Home() {
                 <FileUpload
                   onFileSelect={handleFormulaFileSelect}
                   isLoading={isUploading && uploadType === 'formula'}
+                  disabled={isEmployee}
                 />
               </div>
             </div>
@@ -1112,15 +1115,16 @@ export default function Home() {
 
               <button
                 onClick={handleLoadFromFolder}
-                disabled={isIngesting}
+                disabled={isIngesting || isEmployee}
                 style={{
                   width: '100%',
                   padding: '1rem 1.5rem',
-                  background: isIngesting ? 'var(--muted)' : 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)',
+                  background: isIngesting || isEmployee ? 'var(--muted)' : 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)',
                   border: 'none',
                   borderRadius: 'var(--radius-md)',
                   color: 'white',
-                  cursor: isIngesting ? 'not-allowed' : 'pointer',
+                  cursor: isIngesting || isEmployee ? 'not-allowed' : 'pointer',
+                  opacity: isEmployee ? 0.6 : 1,
                   fontSize: '1rem',
                   fontWeight: '600',
                   display: 'flex',
