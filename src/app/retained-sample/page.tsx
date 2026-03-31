@@ -128,7 +128,7 @@ function isPhOutOfRange(value: string, limit: string): boolean {
 function computeYearStats(
   groups: MFCGroup[],
   saved: EditState,
-  year: number | null   // null = all years
+  mfgYear: number | null
 ): { fullyCompleted: number; pending: number; overdue: number } {
   let fullyCompleted = 0, pending = 0, overdue = 0;
   const today = new Date();
@@ -137,17 +137,13 @@ function computeYearStats(
     const requiredMonths = STABILITY_MONTHS.filter(m => isNaN(sl) || m <= sl);
     for (const batch of group.batches) {
       const mfgD = parseMfgDate(batch.mfgDate);
-      if (year !== null) {
-        const hasIntervalInYear = mfgD && STABILITY_MONTHS.some(m => dueDate(mfgD, m).getFullYear() === year);
-        if (!hasIntervalInYear) continue;
-      }
+      if (mfgYear !== null && (!mfgD || mfgD.getFullYear() !== mfgYear)) continue;
       if (requiredMonths.length > 0 && requiredMonths.every(m =>
         cellIsFilled(saved[cellKey(batch.batchNumber, batch.itemCode, m)])
       )) fullyCompleted++;
       if (!mfgD) continue;
       for (const m of STABILITY_MONTHS) {
         const due = dueDate(mfgD, m);
-        if (year !== null && due.getFullYear() !== year) continue;
         if (cellIsFilled(saved[cellKey(batch.batchNumber, batch.itemCode, m)])) continue;
         if (due < today) overdue++;
         else pending++;
@@ -161,7 +157,7 @@ function computeMonthStats(
   groups: MFCGroup[],
   saved: EditState,
   refDate: Date,
-  filterYear: number | null,
+  mfgYear: number | null,
   filterMonth: number | null,
 ): { done: number; pending: number; overdue: number; fullyCompleted: number } {
   let done = 0, pending = 0, overdue = 0, fullyCompleted = 0;
@@ -170,6 +166,7 @@ function computeMonthStats(
     const requiredMonths = STABILITY_MONTHS.filter(m => isNaN(sl) || m <= sl);
     for (const batch of group.batches) {
       const mfgD = parseMfgDate(batch.mfgDate);
+      if (mfgYear !== null && (!mfgD || mfgD.getFullYear() !== mfgYear)) continue;
       if (requiredMonths.length > 0) {
         if (requiredMonths.every(m => cellIsFilled(saved[cellKey(batch.batchNumber, batch.itemCode, m)])))
           fullyCompleted++;
@@ -177,7 +174,6 @@ function computeMonthStats(
       if (!mfgD) continue;
       for (const m of STABILITY_MONTHS) {
         const due = dueDate(mfgD, m);
-        if (filterYear !== null && due.getFullYear() !== filterYear) continue;
         if (filterMonth !== null && (due.getMonth() + 1) !== filterMonth) continue;
         const key = cellKey(batch.batchNumber, batch.itemCode, m);
         const isFilled = cellIsFilled(saved[key]);
@@ -216,6 +212,57 @@ function cellKey(batchNumber: string, itemCode: string, month: number): string {
   return `${batchNumber}|${itemCode}:${month}`;
 }
 
+function searchTokensFromQuery(raw: string): string[] {
+  return raw.trim().toLowerCase().split(/\s+/).filter(Boolean);
+}
+
+function groupSearchHaystack(group: MFCGroup): string {
+  return [group.mfcNo, group.productCode, group.productName, group.genericName, group.shelfLife]
+    .filter(Boolean)
+    .join(' ');
+}
+
+function batchSearchHaystack(group: MFCGroup, batch: BatchStabilityRow): string {
+  const parts: string[] = [
+    group.mfcNo,
+    group.productCode,
+    group.productName,
+    group.genericName,
+    group.shelfLife,
+    batch.batchNumber,
+    batch.itemCode,
+    batch.mfgDate,
+    batch.expiryDate,
+    batch.zeroMonthPH,
+    batch.zeroMonthDescription,
+  ];
+  for (const p of batch.phParams) {
+    parts.push(p.label, p.result, p.limit);
+  }
+  for (const e of batch.stabilityEntries) {
+    parts.push(e.description, e.pH);
+    for (const pv of e.phValues ?? []) {
+      parts.push(pv.label, pv.value);
+    }
+  }
+  return parts.filter(Boolean).join(' ');
+}
+
+function matchesAllTokens(haystack: string, tokens: string[]): boolean {
+  const h = haystack.toLowerCase();
+  return tokens.every((t) => h.includes(t));
+}
+
+/** Returns a copy of the group with batches narrowed to matches, or null if nothing matches. */
+function narrowGroupForSearch(group: MFCGroup, tokens: string[]): MFCGroup | null {
+  if (tokens.length === 0) return group;
+  const gStack = groupSearchHaystack(group);
+  if (matchesAllTokens(gStack, tokens)) return group;
+  const batches = group.batches.filter((b) => matchesAllTokens(batchSearchHaystack(group, b), tokens));
+  if (batches.length === 0) return null;
+  return { ...group, batches };
+}
+
 export default function RetainedSamplePage() {
   const [moreThan3, setMoreThan3] = useState<MFCGroup[]>([]);
   const [lessThan3, setLessThan3] = useState<MFCGroup[]>([]);
@@ -241,6 +288,7 @@ export default function RetainedSamplePage() {
   const [selectedMonth, setSelectedMonth] = useState<{ month: number; year: number } | null>(null);
   const [selectedYear, setSelectedYear] = useState<number | null>(null);
   const [selectedStatus, setSelectedStatus] = useState<'fully-completed' | 'completed' | 'pending' | 'overdue' | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
 
   useEffect(() => {
     if (!selectedStatus) return;
@@ -254,19 +302,41 @@ export default function RetainedSamplePage() {
   // ── Derived values ───────────────────────────────────────
   const allGroups = useMemo(() => [...moreThan3, ...lessThan3], [moreThan3, lessThan3]);
 
+  const searchTokens = useMemo(() => searchTokensFromQuery(searchQuery), [searchQuery]);
+
+  const moreThan3ForList = useMemo(() => {
+    if (searchTokens.length === 0) return moreThan3;
+    return moreThan3
+      .map((g) => narrowGroupForSearch(g, searchTokens))
+      .filter((g): g is MFCGroup => g !== null);
+  }, [moreThan3, searchTokens]);
+
+  const lessThan3ForList = useMemo(() => {
+    if (searchTokens.length === 0) return lessThan3;
+    return lessThan3
+      .map((g) => narrowGroupForSearch(g, searchTokens))
+      .filter((g): g is MFCGroup => g !== null);
+  }, [lessThan3, searchTokens]);
+
+  const allGroupsForStats = useMemo(
+    () => [...moreThan3ForList, ...lessThan3ForList],
+    [moreThan3ForList, lessThan3ForList]
+  );
+
   const maxShelfLife = useMemo(() => getMaxShelfLife(allGroups), [allGroups]);
 
   const timelineMonths = useMemo(() => generateTimelineMonths(maxShelfLife), [maxShelfLife]);
 
   const uniqueYears = useMemo(() => {
-    const years = new Set(timelineMonths.map((m) => m.year));
+    const years = new Set<number>();
+    for (const group of allGroups) {
+      for (const batch of group.batches) {
+        const mfgD = parseMfgDate(batch.mfgDate);
+        if (mfgD) years.add(mfgD.getFullYear());
+      }
+    }
     return Array.from(years).sort((a, b) => b - a);
-  }, [timelineMonths]);
-
-  const visibleTimelineMonths = useMemo(() => {
-    if (!selectedYear) return timelineMonths;
-    return timelineMonths.filter((m) => m.year === selectedYear);
-  }, [timelineMonths, selectedYear]);
+  }, [allGroups]);
 
   const refDate = useMemo(() => {
     if (!selectedMonth) return new Date();
@@ -274,19 +344,19 @@ export default function RetainedSamplePage() {
   }, [selectedMonth]);
 
   const yearStats = useMemo(
-    () => computeYearStats(allGroups, savedState, selectedYear),
-    [allGroups, savedState, selectedYear]
+    () => computeYearStats(allGroupsForStats, savedState, selectedYear),
+    [allGroupsForStats, savedState, selectedYear]
   );
 
   const monthStats = useMemo(
-    () => computeMonthStats(allGroups, savedState, refDate, selectedYear, selectedMonth?.month ?? null),
-    [allGroups, savedState, refDate, selectedYear, selectedMonth]
+    () => computeMonthStats(allGroupsForStats, savedState, refDate, selectedYear, selectedMonth?.month ?? null),
+    [allGroupsForStats, savedState, refDate, selectedYear, selectedMonth]
   );
 
   // Compute batches that have out-of-range pH saved
   const outOfRangeBatchKeys = useMemo(() => {
     const keys = new Set<string>();
-    for (const group of allGroups) {
+    for (const group of allGroupsForStats) {
       for (const batch of group.batches) {
         const hasOOR = STABILITY_MONTHS.some((m) => {
           const saved = savedState[cellKey(batch.batchNumber, batch.itemCode, m)];
@@ -300,7 +370,7 @@ export default function RetainedSamplePage() {
       }
     }
     return keys;
-  }, [allGroups, savedState]);
+  }, [allGroupsForStats, savedState]);
 
   useEffect(() => {
     fetchData();
@@ -413,21 +483,11 @@ export default function RetainedSamplePage() {
       setSelectedMonth(null);
     } else {
       setSelectedMonth(m);
-      setSelectedYear(m.year);
     }
   }
 
   function handleYearClick(year: number) {
-    if (selectedYear === year && !selectedMonth) {
-      setSelectedYear(null);
-    } else {
-      setSelectedYear(year);
-    }
-  }
-
-  function clearFilter() {
-    setSelectedMonth(null);
-    setSelectedYear(null);
+    setSelectedYear((prev) => (prev === year ? null : year));
   }
 
   // ── Admin password unlock ────────────────────────────────
@@ -575,23 +635,23 @@ export default function RetainedSamplePage() {
   function renderMFCGroup(group: MFCGroup, index: number = 0) {
     const isExpanded = expandedMFCs.has(group.mfcNo);
 
-    // Filter batches by active filter (month or year)
-    const batchesByTime = selectedMonth
-      ? group.batches.filter((batch) => {
-          const mfgD = parseMfgDate(batch.mfgDate);
-          if (!mfgD) return false;
-          return STABILITY_MONTHS.some((m) => {
-            const isFilled = cellIsFilled(savedState[cellKey(batch.batchNumber, batch.itemCode, m)]);
-            return getIntervalStatus(mfgD, m, isFilled, refDate) !== 'future';
-          });
-        })
-      : selectedYear
-        ? group.batches.filter((batch) => {
-            const mfgD = parseMfgDate(batch.mfgDate);
-            if (!mfgD) return false;
-            return STABILITY_MONTHS.some((m) => dueDate(mfgD, m).getFullYear() === selectedYear);
-          })
-        : group.batches;
+    let batchesByTime = group.batches;
+    if (selectedYear) {
+      batchesByTime = batchesByTime.filter((batch) => {
+        const mfgD = parseMfgDate(batch.mfgDate);
+        return !!mfgD && mfgD.getFullYear() === selectedYear;
+      });
+    }
+    if (selectedMonth) {
+      batchesByTime = batchesByTime.filter((batch) => {
+        const mfgD = parseMfgDate(batch.mfgDate);
+        if (!mfgD) return false;
+        return STABILITY_MONTHS.some((m) => {
+          const isFilled = cellIsFilled(savedState[cellKey(batch.batchNumber, batch.itemCode, m)]);
+          return getIntervalStatus(mfgD, m, isFilled, refDate) !== 'future';
+        });
+      });
+    }
 
     // Filter by out-of-range pH
     const batchesAfterOOR = showOutOfRangeOnly
@@ -918,8 +978,8 @@ export default function RetainedSamplePage() {
     });
   }
 
-  const sortedMoreThan3 = sortGroups(moreThan3, primarySort);
-  const sortedLessThan3 = sortGroups(lessThan3, secondarySort);
+  const sortedMoreThan3 = sortGroups(moreThan3ForList, primarySort);
+  const sortedLessThan3 = sortGroups(lessThan3ForList, secondarySort);
 
   const primaryRendered = sortedMoreThan3.map((g, i) => renderMFCGroup(g, i)).filter(Boolean);
   const secondaryRendered = sortedLessThan3.map((g, i) => renderMFCGroup(g, i)).filter(Boolean);
@@ -975,6 +1035,30 @@ export default function RetainedSamplePage() {
       </div>
 
       <div className={styles.content}>
+        <div className={styles.searchBar}>
+          <span className={styles.searchIcon} aria-hidden>🔍</span>
+          <input
+            type="search"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search MFC, product / generic name, product code, batch no., item (material) code, mfg / expiry, COA & stability text…"
+            className={styles.searchInput}
+            aria-label="Search retained samples"
+            autoComplete="off"
+            spellCheck={false}
+          />
+          {searchQuery.trim() !== '' && (
+            <button
+              type="button"
+              className={styles.searchClear}
+              onClick={() => setSearchQuery('')}
+              aria-label="Clear search"
+            >
+              ✕
+            </button>
+          )}
+        </div>
+
         {/* ── Global Timeline Filter ─────────────────────── */}
         <div className={styles.timelineSection}>
           <div className={styles.timelineHeader}>
@@ -983,9 +1067,13 @@ export default function RetainedSamplePage() {
               <span className={styles.timelineTitle}>Global Stability Timeline</span>
               {(selectedMonth || selectedYear) && (
                 <span className={styles.timelineActiveBadge}>
-                  {selectedMonth
-                    ? `Month: ${formatMonthLabel(selectedMonth.month, selectedMonth.year)}`
-                    : `Year: ${String(selectedYear).slice(2)}`}
+                  {[
+                    selectedMonth &&
+                      `Month: ${formatMonthLabel(selectedMonth.month, selectedMonth.year)}`,
+                    selectedYear != null && `Mfg year: ${String(selectedYear).slice(2)}`,
+                  ]
+                    .filter(Boolean)
+                    .join(' · ')}
                 </span>
               )}
             </div>
@@ -1015,11 +1103,13 @@ export default function RetainedSamplePage() {
 
           {/* Year quick filter */}
           <div className={styles.timelineRow}>
-            <span className={styles.timelineLabel}>YEAR:</span>
+            <span className={styles.timelineLabel} title="Batch manufacturing date year">
+              MFG YEAR:
+            </span>
             <div className={styles.yearBtns}>
               <button
                 className={`${styles.yearBtn} ${!selectedYear ? styles.yearBtnActive : ''}`}
-                onClick={clearFilter}
+                onClick={() => setSelectedYear(null)}
               >
                 All
               </button>
@@ -1037,7 +1127,7 @@ export default function RetainedSamplePage() {
 
           <div className={styles.summaryRow}>
             <span className={styles.summaryLabel}>
-              {selectedYear ? `Year Summary` : `All Years`}
+              {selectedYear ? `Mfg year summary` : `All mfg years`}
             </span>
             <button
               className={`${styles.summaryChip} ${styles.summaryChipFullyCompleted} ${selectedStatus === 'fully-completed' ? styles.summaryChipActive : ''}`}
@@ -1069,7 +1159,7 @@ export default function RetainedSamplePage() {
               >
                 All
               </button>
-              {visibleTimelineMonths.map((m) => {
+              {timelineMonths.map((m) => {
                 const isActive = selectedMonth?.month === m.month && selectedMonth?.year === m.year;
                 const today = new Date();
                 const isCurrentMonth = m.month === today.getMonth() + 1 && m.year === today.getFullYear();
@@ -1133,10 +1223,13 @@ export default function RetainedSamplePage() {
             </div>
             <span className={`${styles.sectionBadge} ${styles.badgePrimary}`}>
               {primaryRendered.length} MFC{primaryRendered.length !== 1 ? 's' : ''}
-              {(selectedMonth || selectedYear) && primaryRendered.length !== moreThan3.length ? ` (of ${moreThan3.length})` : ''}
+              {(selectedMonth || selectedYear || searchTokens.length > 0) &&
+              primaryRendered.length !== moreThan3.length
+                ? ` (of ${moreThan3.length})`
+                : ''}
             </span>
             <span className={`${styles.sectionBadge} ${styles.badgeBatchCount}`}>
-              {moreThan3.reduce((s, g) => s + g.batches.length, 0)} Batches
+              {moreThan3ForList.reduce((s, g) => s + g.batches.length, 0)} Batches
             </span>
             <span className={styles.sectionChevron}>{primaryOpen ? '▲' : '▼'}</span>
           </button>
@@ -1169,11 +1262,13 @@ export default function RetainedSamplePage() {
 
               {primaryRendered.length === 0 ? (
                 <div className={styles.emptySection}>
-                  {selectedMonth
-                    ? `No stability testing scheduled for ${formatMonthLabel(selectedMonth.month, selectedMonth.year)}`
-                    : selectedYear
-                      ? `No stability testing scheduled for ${selectedYear}`
-                      : 'No MFCs with 3 or more batches'}
+                  {searchTokens.length > 0
+                    ? `No matches for "${searchQuery.trim()}" in this section`
+                    : selectedMonth
+                      ? `No stability testing scheduled for ${formatMonthLabel(selectedMonth.month, selectedMonth.year)}`
+                      : selectedYear
+                        ? `No batches with manufacturing year ${selectedYear}`
+                        : 'No MFCs with 3 or more batches'}
                 </div>
               ) : (
                 primaryRendered
@@ -1192,10 +1287,13 @@ export default function RetainedSamplePage() {
             </div>
             <span className={`${styles.sectionBadge} ${styles.badgeSecondary}`}>
               {secondaryRendered.length} MFC{secondaryRendered.length !== 1 ? 's' : ''}
-              {(selectedMonth || selectedYear) && secondaryRendered.length !== lessThan3.length ? ` (of ${lessThan3.length})` : ''}
+              {(selectedMonth || selectedYear || searchTokens.length > 0) &&
+              secondaryRendered.length !== lessThan3.length
+                ? ` (of ${lessThan3.length})`
+                : ''}
             </span>
             <span className={`${styles.sectionBadge} ${styles.badgeBatchCount}`}>
-              {lessThan3.reduce((s, g) => s + g.batches.length, 0)} Batches
+              {lessThan3ForList.reduce((s, g) => s + g.batches.length, 0)} Batches
             </span>
             <span className={styles.sectionChevron}>{secondaryOpen ? '▲' : '▼'}</span>
           </button>
@@ -1228,11 +1326,13 @@ export default function RetainedSamplePage() {
 
               {secondaryRendered.length === 0 ? (
                 <div className={styles.emptySection}>
-                  {selectedMonth
-                    ? `No stability testing scheduled for ${formatMonthLabel(selectedMonth.month, selectedMonth.year)}`
-                    : selectedYear
-                      ? `No stability testing scheduled for ${selectedYear}`
-                      : 'No MFCs with fewer than 3 batches'}
+                  {searchTokens.length > 0
+                    ? `No matches for "${searchQuery.trim()}" in this section`
+                    : selectedMonth
+                      ? `No stability testing scheduled for ${formatMonthLabel(selectedMonth.month, selectedMonth.year)}`
+                      : selectedYear
+                        ? `No batches with manufacturing year ${selectedYear}`
+                        : 'No MFCs with fewer than 3 batches'}
                 </div>
               ) : (
                 secondaryRendered
