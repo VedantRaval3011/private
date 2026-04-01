@@ -74,11 +74,12 @@ function getIntervalStatus(
   mfgDate: Date,
   stabilityMonth: number,
   isFilled: boolean,
-  refDate: Date
+  _refDate: Date // Ignored to ensure statuses are based on real 'today' for compliance
 ): IntervalStatus {
   const dueD = dueDate(mfgDate, stabilityMonth);
-  const refYear = refDate.getFullYear();
-  const refMon = refDate.getMonth();
+  const now = new Date();
+  const refYear = now.getFullYear();
+  const refMon = now.getMonth();
   const dueYear = dueD.getFullYear();
   const dueMon = dueD.getMonth();
 
@@ -129,8 +130,8 @@ function computeYearStats(
   groups: MFCGroup[],
   saved: EditState,
   year: number | null   // null = all years
-): { fullyCompleted: number; pending: number; overdue: number } {
-  let fullyCompleted = 0, pending = 0, overdue = 0;
+): { fullyCompleted: number; pending: number; overdue: number; done: number } {
+  let fullyCompleted = 0, pending = 0, overdue = 0, done = 0;
   const today = new Date();
   for (const group of groups) {
     const sl = parseInt(group.shelfLife);
@@ -138,8 +139,7 @@ function computeYearStats(
     for (const batch of group.batches) {
       const mfgD = parseMfgDate(batch.mfgDate);
       if (year !== null) {
-        const hasIntervalInYear = mfgD && STABILITY_MONTHS.some(m => dueDate(mfgD, m).getFullYear() === year);
-        if (!hasIntervalInYear) continue;
+        if (!mfgD || mfgD.getFullYear() !== year) continue;
       }
       if (requiredMonths.length > 0 && requiredMonths.every(m =>
         cellIsFilled(saved[cellKey(batch.batchNumber, batch.itemCode, m)])
@@ -147,14 +147,26 @@ function computeYearStats(
       if (!mfgD) continue;
       for (const m of STABILITY_MONTHS) {
         const due = dueDate(mfgD, m);
-        if (year !== null && due.getFullYear() !== year) continue;
-        if (cellIsFilled(saved[cellKey(batch.batchNumber, batch.itemCode, m)])) continue;
-        if (due < today) overdue++;
-        else pending++;
+        const dueYear = due.getFullYear();
+        const dueMon  = due.getMonth(); // 0-indexed
+        const todayYear = today.getFullYear();
+        const todayMon  = today.getMonth(); // 0-indexed
+        // Skip future intervals — they're scheduled, not actionable yet
+        const isFuture = dueYear > todayYear || (dueYear === todayYear && dueMon > todayMon);
+        if (isFuture) continue;
+
+        const isFilled = cellIsFilled(saved[cellKey(batch.batchNumber, batch.itemCode, m)]);
+        if (isFilled) {
+          done++;
+        } else {
+          const isDueThisMonth = dueYear === todayYear && dueMon === todayMon;
+          if (isDueThisMonth) pending++; // Due now, not yet filled
+          else overdue++;               // Past deadline, not filled
+        }
       }
     }
   }
-  return { fullyCompleted, pending, overdue };
+  return { fullyCompleted, pending, overdue, done };
 }
 
 function computeMonthStats(
@@ -165,11 +177,18 @@ function computeMonthStats(
   filterMonth: number | null,
 ): { done: number; pending: number; overdue: number; fullyCompleted: number } {
   let done = 0, pending = 0, overdue = 0, fullyCompleted = 0;
+  const today = new Date();
+  const refYear = refDate.getFullYear();
+  const refMon  = refDate.getMonth(); // 0-indexed
+
   for (const group of groups) {
     const sl = parseInt(group.shelfLife);
     const requiredMonths = STABILITY_MONTHS.filter(m => isNaN(sl) || m <= sl);
     for (const batch of group.batches) {
       const mfgD = parseMfgDate(batch.mfgDate);
+      if (filterYear !== null) {
+        if (!mfgD || mfgD.getFullYear() !== filterYear) continue;
+      }
       if (requiredMonths.length > 0) {
         if (requiredMonths.every(m => cellIsFilled(saved[cellKey(batch.batchNumber, batch.itemCode, m)])))
           fullyCompleted++;
@@ -177,14 +196,41 @@ function computeMonthStats(
       if (!mfgD) continue;
       for (const m of STABILITY_MONTHS) {
         const due = dueDate(mfgD, m);
-        if (filterYear !== null && due.getFullYear() !== filterYear) continue;
-        if (filterMonth !== null && (due.getMonth() + 1) !== filterMonth) continue;
         const key = cellKey(batch.batchNumber, batch.itemCode, m);
         const isFilled = cellIsFilled(saved[key]);
-        const status = getIntervalStatus(mfgD, m, isFilled, refDate);
-        if (status === 'completed') done++;
-        else if (status === 'due-this-month') pending++;
-        else if (status === 'overdue') overdue++;
+
+        if (filterMonth === null) {
+          // All months: compare against real today — same semantics as Year Summary
+          const dueYear = due.getFullYear();
+          const dueMon  = due.getMonth();
+          const todayYear = today.getFullYear();
+          const todayMon  = today.getMonth();
+          // Skip intervals not yet due; they're scheduled, not actionable
+          const isFuture = dueYear > todayYear || (dueYear === todayYear && dueMon > todayMon);
+          if (isFuture) continue;
+          if (isFilled) done++;
+          else if (dueYear === todayYear && dueMon === todayMon) pending++; // due this month
+          else overdue++; // past due
+        } else {
+          // A specific month is selected — use it as the ceiling date.
+          // Skip intervals that are not yet due as of the selected month.
+          const dueYear = due.getFullYear();
+          const dueMon  = due.getMonth(); // 0-indexed
+          const isFuture = dueYear > refYear || (dueYear === refYear && dueMon > refMon);
+          if (isFuture) continue;
+
+          const isDueThisMonth = dueYear === refYear && dueMon === refMon;
+
+          if (isFilled) {
+            done++;
+          } else if (isDueThisMonth) {
+            // Due in the selected month, not yet filled → pending
+            pending++;
+          } else {
+            // Due before the selected month and still not filled → overdue backlog
+            overdue++;
+          }
+        }
       }
     }
   }
@@ -233,9 +279,10 @@ export default function RetainedSamplePage() {
   const [pwInput, setPwInput] = useState('');
   const [pwError, setPwError] = useState(false);
   type SortKey = 'mfc-asc' | 'mfc-desc' | 'batches-desc' | 'batches-asc' | 'intervals-desc' | 'intervals-asc' | 'shelf-life-desc' | 'shelf-life-asc';
-  const [primarySort, setPrimarySort] = useState<SortKey>('mfc-asc');
-  const [secondarySort, setSecondarySort] = useState<SortKey>('mfc-asc');
+  const [primarySort, setPrimarySort] = useState<SortKey | null>(null);
+  const [secondarySort, setSecondarySort] = useState<SortKey | null>(null);
   const [showOutOfRangeOnly, setShowOutOfRangeOnly] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
 
   // ── Timeline Filter State ────────────────────────────────
   const [selectedMonth, setSelectedMonth] = useState<{ month: number; year: number } | null>(null);
@@ -252,21 +299,56 @@ export default function RetainedSamplePage() {
   }, [selectedStatus]);
 
   // ── Derived values ───────────────────────────────────────
-  const allGroups = useMemo(() => [...moreThan3, ...lessThan3], [moreThan3, lessThan3]);
+  const { filteredMoreThan3, filteredLessThan3 } = useMemo(() => {
+    const q = searchQuery.toLowerCase().trim();
+    if (!q) return { filteredMoreThan3: moreThan3, filteredLessThan3: lessThan3 };
+
+    const filterGroup = (group: MFCGroup) => {
+      const groupMatches = 
+        group.mfcNo.toLowerCase().includes(q) ||
+        (group.productName || '').toLowerCase().includes(q) ||
+        (group.productCode || '').toLowerCase().includes(q) ||
+        (group.genericName || '').toLowerCase().includes(q);
+
+      if (groupMatches) return group;
+
+      const matchingBatches = group.batches.filter(b => 
+        b.batchNumber.toLowerCase().includes(q) ||
+        (b.itemCode || '').toLowerCase().includes(q)
+      );
+
+      if (matchingBatches.length > 0) {
+        return { ...group, batches: matchingBatches };
+      }
+      return null;
+    };
+
+    return {
+      filteredMoreThan3: moreThan3.map(filterGroup).filter(Boolean) as MFCGroup[],
+      filteredLessThan3: lessThan3.map(filterGroup).filter(Boolean) as MFCGroup[],
+    };
+  }, [moreThan3, lessThan3, searchQuery]);
+
+  const allGroups = useMemo(() => [...filteredMoreThan3, ...filteredLessThan3], [filteredMoreThan3, filteredLessThan3]);
 
   const maxShelfLife = useMemo(() => getMaxShelfLife(allGroups), [allGroups]);
 
   const timelineMonths = useMemo(() => generateTimelineMonths(maxShelfLife), [maxShelfLife]);
 
   const uniqueYears = useMemo(() => {
-    const years = new Set(timelineMonths.map((m) => m.year));
+    const years = new Set<number>();
+    for (const group of allGroups) {
+      for (const batch of group.batches) {
+        const d = parseMfgDate(batch.mfgDate);
+        if (d) years.add(d.getFullYear());
+      }
+    }
     return Array.from(years).sort((a, b) => b - a);
-  }, [timelineMonths]);
+  }, [allGroups]);
 
   const visibleTimelineMonths = useMemo(() => {
-    if (!selectedYear) return timelineMonths;
-    return timelineMonths.filter((m) => m.year === selectedYear);
-  }, [timelineMonths, selectedYear]);
+    return timelineMonths;
+  }, [timelineMonths]);
 
   const refDate = useMemo(() => {
     if (!selectedMonth) return new Date();
@@ -413,15 +495,16 @@ export default function RetainedSamplePage() {
       setSelectedMonth(null);
     } else {
       setSelectedMonth(m);
-      setSelectedYear(m.year);
+      setSelectedYear(null);
     }
   }
 
   function handleYearClick(year: number) {
-    if (selectedYear === year && !selectedMonth) {
+    if (selectedYear === year) {
       setSelectedYear(null);
     } else {
       setSelectedYear(year);
+      setSelectedMonth(null);
     }
   }
 
@@ -589,7 +672,7 @@ export default function RetainedSamplePage() {
         ? group.batches.filter((batch) => {
             const mfgD = parseMfgDate(batch.mfgDate);
             if (!mfgD) return false;
-            return STABILITY_MONTHS.some((m) => dueDate(mfgD, m).getFullYear() === selectedYear);
+            return mfgD.getFullYear() === selectedYear;
           })
         : group.batches;
 
@@ -904,7 +987,8 @@ export default function RetainedSamplePage() {
     return pending;
   }
 
-  function sortGroups(groups: MFCGroup[], key: SortKey): MFCGroup[] {
+  function sortGroups(groups: MFCGroup[], key: SortKey | null): MFCGroup[] {
+    if (!key) return groups;
     return [...groups].sort((a, b) => {
       if (key === 'mfc-asc') return a.mfcNo.localeCompare(b.mfcNo);
       if (key === 'mfc-desc') return b.mfcNo.localeCompare(a.mfcNo);
@@ -918,8 +1002,8 @@ export default function RetainedSamplePage() {
     });
   }
 
-  const sortedMoreThan3 = sortGroups(moreThan3, primarySort);
-  const sortedLessThan3 = sortGroups(lessThan3, secondarySort);
+  const sortedMoreThan3 = sortGroups(filteredMoreThan3, primarySort);
+  const sortedLessThan3 = sortGroups(filteredLessThan3, secondarySort);
 
   const primaryRendered = sortedMoreThan3.map((g, i) => renderMFCGroup(g, i)).filter(Boolean);
   const secondaryRendered = sortedLessThan3.map((g, i) => renderMFCGroup(g, i)).filter(Boolean);
@@ -989,6 +1073,18 @@ export default function RetainedSamplePage() {
                 </span>
               )}
             </div>
+            
+            <div className={styles.timelineSearchWrap}>
+              <span className={styles.timelineSearchIcon}>🔍</span>
+              <input 
+                type="text" 
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search by Batch, MFC, Item Code..."
+                className={styles.timelineSearchInput}
+              />
+            </div>
+
             <div className={styles.timelineActions}>
               {(
                 [
@@ -1044,6 +1140,12 @@ export default function RetainedSamplePage() {
               onClick={() => setSelectedStatus(p => p === 'fully-completed' ? null : 'fully-completed')}
             >
               ✅ Fully Completed: <strong>{yearStats.fullyCompleted}</strong>
+            </button>
+            <button
+              className={`${styles.summaryChip} ${styles.summaryChipGreen} ${selectedStatus === 'completed' ? styles.summaryChipActive : ''}`}
+              onClick={() => setSelectedStatus(p => p === 'completed' ? null : 'completed')}
+            >
+              🟢 Done: <strong>{yearStats.done}</strong>
             </button>
             <button
               className={`${styles.summaryChip} ${styles.summaryChipOrange} ${selectedStatus === 'pending' ? styles.summaryChipActive : ''}`}
@@ -1133,10 +1235,10 @@ export default function RetainedSamplePage() {
             </div>
             <span className={`${styles.sectionBadge} ${styles.badgePrimary}`}>
               {primaryRendered.length} MFC{primaryRendered.length !== 1 ? 's' : ''}
-              {(selectedMonth || selectedYear) && primaryRendered.length !== moreThan3.length ? ` (of ${moreThan3.length})` : ''}
+              {(selectedMonth || selectedYear || searchQuery) && primaryRendered.length !== moreThan3.length ? ` (of ${moreThan3.length})` : ''}
             </span>
             <span className={`${styles.sectionBadge} ${styles.badgeBatchCount}`}>
-              {moreThan3.reduce((s, g) => s + g.batches.length, 0)} Batches
+              {filteredMoreThan3.reduce((s, g) => s + g.batches.length, 0)} Batches
             </span>
             <span className={styles.sectionChevron}>{primaryOpen ? '▲' : '▼'}</span>
           </button>
@@ -1147,24 +1249,41 @@ export default function RetainedSamplePage() {
                 <span className={styles.sortLabel}>Sort by:</span>
                 {(
                   [
-                    { key: 'mfc-asc', label: 'MFC A→Z' },
-                    { key: 'mfc-desc', label: 'MFC Z→A' },
-                    { key: 'batches-desc', label: 'Batches ↓' },
-                    { key: 'batches-asc', label: 'Batches ↑' },
-                    { key: 'intervals-desc', label: 'Intervals ↓' },
-                    { key: 'intervals-asc', label: 'Intervals ↑' },
-                    { key: 'shelf-life-desc', label: 'Shelf Life ↓' },
-                    { key: 'shelf-life-asc', label: 'Shelf Life ↑' },
-                  ] as { key: SortKey; label: string }[]
-                ).map(({ key, label }) => (
-                  <button
-                    key={key}
-                    className={`${styles.sortBtn} ${primarySort === key ? styles.sortBtnActive : ''}`}
-                    onClick={() => setPrimarySort(prev => prev === key ? 'mfc-asc' : key)}
-                  >
-                    {label}
-                  </button>
-                ))}
+                    { id: 'mfc', label: 'MFC' },
+                    { id: 'batches', label: 'Batches' },
+                    { id: 'intervals', label: 'Intervals' },
+                    { id: 'shelf-life', label: 'Shelf Life' },
+                  ] as const
+                ).map(({ id, label }) => {
+                  const isAsc = primarySort === `${id}-asc`;
+                  const isDesc = primarySort === `${id}-desc`;
+                  const isActive = isAsc || isDesc;
+                  
+                  let icon = '';
+                  if (id === 'mfc') {
+                    if (isAsc) icon = ' A→Z';
+                    if (isDesc) icon = ' Z→A';
+                  } else {
+                    if (isAsc) icon = ' ↑';
+                    if (isDesc) icon = ' ↓';
+                  }
+
+                  const handleClick = () => {
+                    if (isAsc) setPrimarySort(`${id}-desc` as SortKey);
+                    else if (isDesc) setPrimarySort(null);
+                    else setPrimarySort(`${id}-asc` as SortKey);
+                  };
+
+                  return (
+                    <button
+                      key={id}
+                      className={`${styles.sortBtn} ${isActive ? styles.sortBtnActive : ''}`}
+                      onClick={handleClick}
+                    >
+                      {label}{icon}
+                    </button>
+                  );
+                })}
               </div>
 
               {primaryRendered.length === 0 ? (
@@ -1192,10 +1311,10 @@ export default function RetainedSamplePage() {
             </div>
             <span className={`${styles.sectionBadge} ${styles.badgeSecondary}`}>
               {secondaryRendered.length} MFC{secondaryRendered.length !== 1 ? 's' : ''}
-              {(selectedMonth || selectedYear) && secondaryRendered.length !== lessThan3.length ? ` (of ${lessThan3.length})` : ''}
+              {(selectedMonth || selectedYear || searchQuery) && secondaryRendered.length !== lessThan3.length ? ` (of ${lessThan3.length})` : ''}
             </span>
             <span className={`${styles.sectionBadge} ${styles.badgeBatchCount}`}>
-              {lessThan3.reduce((s, g) => s + g.batches.length, 0)} Batches
+              {filteredLessThan3.reduce((s, g) => s + g.batches.length, 0)} Batches
             </span>
             <span className={styles.sectionChevron}>{secondaryOpen ? '▲' : '▼'}</span>
           </button>
@@ -1206,24 +1325,41 @@ export default function RetainedSamplePage() {
                 <span className={styles.sortLabel}>Sort by:</span>
                 {(
                   [
-                    { key: 'mfc-asc', label: 'MFC A→Z' },
-                    { key: 'mfc-desc', label: 'MFC Z→A' },
-                    { key: 'batches-desc', label: 'Batches ↓' },
-                    { key: 'batches-asc', label: 'Batches ↑' },
-                    { key: 'intervals-desc', label: 'Intervals ↓' },
-                    { key: 'intervals-asc', label: 'Intervals ↑' },
-                    { key: 'shelf-life-desc', label: 'Shelf Life ↓' },
-                    { key: 'shelf-life-asc', label: 'Shelf Life ↑' },
-                  ] as { key: SortKey; label: string }[]
-                ).map(({ key, label }) => (
-                  <button
-                    key={key}
-                    className={`${styles.sortBtn} ${secondarySort === key ? styles.sortBtnActive : ''}`}
-                    onClick={() => setSecondarySort(prev => prev === key ? 'mfc-asc' : key)}
-                  >
-                    {label}
-                  </button>
-                ))}
+                    { id: 'mfc', label: 'MFC' },
+                    { id: 'batches', label: 'Batches' },
+                    { id: 'intervals', label: 'Intervals' },
+                    { id: 'shelf-life', label: 'Shelf Life' },
+                  ] as const
+                ).map(({ id, label }) => {
+                  const isAsc = secondarySort === `${id}-asc`;
+                  const isDesc = secondarySort === `${id}-desc`;
+                  const isActive = isAsc || isDesc;
+                  
+                  let icon = '';
+                  if (id === 'mfc') {
+                    if (isAsc) icon = ' A→Z';
+                    if (isDesc) icon = ' Z→A';
+                  } else {
+                    if (isAsc) icon = ' ↑';
+                    if (isDesc) icon = ' ↓';
+                  }
+
+                  const handleClick = () => {
+                    if (isAsc) setSecondarySort(`${id}-desc` as SortKey);
+                    else if (isDesc) setSecondarySort(null);
+                    else setSecondarySort(`${id}-asc` as SortKey);
+                  };
+
+                  return (
+                    <button
+                      key={id}
+                      className={`${styles.sortBtn} ${isActive ? styles.sortBtnActive : ''}`}
+                      onClick={handleClick}
+                    >
+                      {label}{icon}
+                    </button>
+                  );
+                })}
               </div>
 
               {secondaryRendered.length === 0 ? (

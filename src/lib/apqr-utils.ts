@@ -13,6 +13,8 @@ import JSZip from 'jszip';
 import fs from 'fs';
 import path from 'path';
 
+
+
 // Month names for parsing and display
 const MONTHS = [
   'JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN',
@@ -175,8 +177,9 @@ interface RMTestMaterial512 {
   materialName: string;
   phLimit: string;
   waterLimit: string;
-  assaySpecs: { specName: string; limit: string }[]; // dynamic: [{ specName:"IP", limit:"..." }, ...]
+  assaySpecs: { specName: string; limit: string }[];
   rows: RMTestRow512[];
+  graphs?: any[];
 }
 
 interface BulkInProcessRow {
@@ -195,6 +198,7 @@ interface FinishInProcessColumn {
   name: string;
   limit: string;
   isQuantifiable: boolean;
+  specs: string[]; // pharmacopoeias this column appears in (e.g. ['IP', 'USP'])
 }
 
 interface FinishInProcessRow {
@@ -202,6 +206,7 @@ interface FinishInProcessRow {
   batchSize: string;
   arNumber: string;
   results: Record<string, string>;
+  specs: string[]; // pharmacopoeias this row/COA applies to (e.g. ['IP', 'USP'])
 }
 
 const KNOWN_SPECS = [
@@ -1383,6 +1388,7 @@ export async function getApqrData(productCode: string, year: number) {
       assaySpecs,
       rows: rows512
     });
+
   }
   console.log(`✅ Section 5.1.2: ${activeRMTestDetails.length} material(s), ${activeRMTestDetails.reduce((s, m) => s + m.rows.length, 0)} AR rows`);
 
@@ -1732,6 +1738,16 @@ export async function getApqrData(productCode: string, year: number) {
         const arNumber = coa.arNumber || fd.arNumber || '';
         const batchResults: Record<string, string> = {};
 
+        // Parse pharmacopoeias from fd.specification (e.g. "IP/USP" → ['IP', 'USP'])
+        const specStr = (fd.specification || '').toUpperCase();
+        const knownPharmac = ['IP', 'USP', 'BP', 'EP', 'JP', 'NF'];
+        const coaSpecs = knownPharmac.filter(p => {
+          // Match whole word: surrounded by non-alpha or start/end
+          const rx = new RegExp(`(^|[^A-Z])${p}($|[^A-Z])`);
+          return rx.test(specStr);
+        });
+        const rowSpecs = coaSpecs.length > 0 ? coaSpecs : [''];
+
         // Helper to process a parameter and update columns
         const processParam = (category: string, name: string, limit: string, result: string, forceNonQuantifiable = false, isMissingCompliesFallback = false) => {
           name = name.trim();
@@ -1745,10 +1761,14 @@ export async function getApqrData(productCode: string, year: number) {
           const colKey = `${category}|||${name}`; // Removed limit from colKey to group by test
 
           if (!finishColumnsMap.has(colKey)) {
-            finishColumnsMap.set(colKey, { key: colKey, type: category, name, limit: cleanedLimit, isQuantifiable: false });
+            finishColumnsMap.set(colKey, { key: colKey, type: category, name, limit: cleanedLimit, isQuantifiable: false, specs: [] });
           }
 
           const colDef = finishColumnsMap.get(colKey)!;
+          // Track which pharmacopoeias use this column
+          for (const sp of rowSpecs) {
+            if (!colDef.specs.includes(sp)) colDef.specs.push(sp);
+          }
 
           let finalResult = result.trim();
           if (!finalResult && isMissingCompliesFallback) finalResult = 'Complies';
@@ -1813,7 +1833,8 @@ export async function getApqrData(productCode: string, year: number) {
           batchNumber: batch.batchNumber,
           batchSize: batch.batchSize || 'N/A',
           arNumber,
-          results: batchResults
+          results: batchResults,
+          specs: rowSpecs,
         });
       }
     }
@@ -3976,10 +3997,11 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
       const toNum512 = (s: string) => { const n = parseFloat(s); return isNaN(n) ? null : n; };
       const calcStats512 = (vals: number[]) => {
         if (vals.length === 0) return { min: 'N/A', max: 'N/A', avg: 'N/A', sd: 'N/A' };
+        if (vals.length === 1) return { min: vals[0].toFixed(2), max: vals[0].toFixed(2), avg: vals[0].toFixed(2), sd: '0.00' };
         const min = Math.min(...vals);
         const max = Math.max(...vals);
         const avg = vals.reduce((s, v) => s + v, 0) / vals.length;
-        const sd = Math.sqrt(vals.reduce((s, v) => s + Math.pow(v - avg, 2), 0) / vals.length);
+        const sd = Math.sqrt(vals.reduce((s, v) => s + Math.pow(v - avg, 2), 0) / (vals.length - 1));
         return { min: min.toFixed(2), max: max.toFixed(2), avg: avg.toFixed(2), sd: sd.toFixed(2) };
       };
       const phS = calcStats512(mat.rows.map(r => toNum512(r.ph)).filter((v): v is number => v !== null));
@@ -4045,7 +4067,7 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
       // Each entry: { name, values (number[]) }; arNumbers is shared X-axis
       const updateChartXml = (chartXml: string, series: { name: string; values: number[] }[]): string => {
         let idx = 0;
-        return chartXml.replace(/<c:ser>([\s\S]*?)<\/c:ser>/g, (match, content) => {
+        let res = chartXml.replace(/<c:ser>([\s\S]*?)<\/c:ser>/g, (match, content) => {
           if (idx >= series.length) return match;
           const sd = series[idx++];
           let updated = content;
@@ -4066,6 +4088,14 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
           );
           return `<c:ser>${updated}</c:ser>`;
         });
+
+        // Remove hardcoded min/max limits from Value Axis to enable auto-scaling
+        res = res.replace(/<c:scaling>([\s\S]*?)<\/c:scaling>/g, (match, content) => {
+          const stripped = content.replace(/<c:min[^>]*\/>/g, '').replace(/<c:max[^>]*\/>/g, '');
+          return `<c:scaling>${stripped}</c:scaling>`;
+        });
+
+        return res;
       };
 
       const limitLine = (limit: number | undefined, n: number): number[] =>
@@ -4090,13 +4120,16 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
       ];
       zip.file('word/charts/chart1.xml', updateChartXml(chart1Xml, phSeries));
 
-      // chart2.xml → LOD (2 series: actual, NMT only)
+      // chart2.xml → Water (2 series: actual, NMT only)
       const chart2Xml = await zip.file('word/charts/chart2.xml')!.async('string');
-      const lodSeries: { name: string; values: number[] }[] = [
+      const waterSeries: { name: string; values: number[] }[] = [
         { name: '% Water', values: waterVals },
         ...(waterLims.nmt !== undefined ? [{ name: `NMT ${waterLims.nmt}%`, values: limitLine(waterLims.nmt, n) }] : []),
       ];
-      zip.file('word/charts/chart2.xml', updateChartXml(chart2Xml, lodSeries));
+      // Fix Y-axis label: template has "LOD OF API" but this chart tracks % Water
+      const chart2Updated = updateChartXml(chart2Xml, waterSeries)
+        .replace(/LOD OF API/g, '% WATER OF API');
+      zip.file('word/charts/chart2.xml', chart2Updated);
 
       // chart3.xml → Assay (3 series: actual, NLT, NMT)
       const chart3Xml = await zip.file('word/charts/chart3.xml')!.async('string');
@@ -4110,6 +4143,107 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
       // ── Update all "Sodium Hyaluronate" placeholders in docXml ──
       // (chart titles, body paragraphs, table headers — 21 occurrences total)
       docXml = docXml.split('Sodium Hyaluronate').join(xmlEscape(mat.materialName));
+
+      // ── Strip ALL "(As per BP):" parenthetical suffixes from document text ──
+      // Uses a two-tier approach:
+      //   Tier 1 – paragraph-scoped: for "Trend Analysis" paragraphs, aggressively strip all
+      //            "(As per XYZ):" fragments even when they span 3+ separate <w:t> runs.
+      //   Tier 2 – global single-node passes: catch any remaining occurrences elsewhere.
+
+      // ── Tier 1: paragraph-level strip for "Trend Analysis" chart title paragraphs ──
+      docXml = docXml.replace(
+        /(<w:p\b[^>]*>)((?:(?!<\/w:p>)[\s\S])*?)(<\/w:p>)/g,
+        (full: string, pOpen: string, body: string, pClose: string) => {
+          // Combined visible text of this paragraph
+          const combinedText = (body.match(/<w:t[^>]*>([^<]*)<\/w:t>/g) || [])
+            .map(t => t.replace(/<[^>]+>/g, '')).join('');
+          // Only process chart-title paragraphs
+          if (!combinedText.trim().startsWith('Trend Analysis')) return full;
+
+          let b = body;
+
+          // (a) Strip full "(As per XYZ):" sitting within a single <w:t> (with text before/after)
+          b = b.replace(
+            /(<w:t[^>]*>)([^<]*?)\s*:?\s*\(?\s*As per\s+[A-Z][A-Z/]*\s*\)?\s*:?\s*([^<]*?)(<\/w:t>)/g,
+            (_: string, wOpen: string, before: string, after: string, wClose: string) => {
+              const text = (before + after).replace(/\s*:\s*$/, '').trimEnd();
+              return `${wOpen}${text ? text + ':' : ''}${wClose}`;
+            }
+          );
+
+          // (b) Entire <w:t> is "(As per XYZ):"
+          b = b.replace(
+            /(<w:t[^>]*>)\s*:?\s*\(?\s*As per\s+[A-Z][A-Z/]*\s*\)?\s*:?\s*(<\/w:t>)/g,
+            '$1$2'
+          );
+
+          // (c) <w:t> ends with "(As per " (pharmacopoeia in the next run)
+          b = b.replace(
+            /(<w:t[^>]*>)([^<]*?)\s*:?\s*\(\s*As per\s*(<\/w:t>)/g,
+            (_: string, wOpen: string, before: string, wClose: string) => `${wOpen}${before.trimEnd()}${wClose}`
+          );
+
+          // (d) Entire <w:t> is "As per " (stripped of its surrounding parens by a prior pass)
+          b = b.replace(/(<w:t[^>]*>)\s*As per\s*(<\/w:t>)/g, '$1$2');
+
+          // (e) Orphaned pharmacopoeia codes: "BP):", "BP)", "BP", "IP/USP):", "IP/USP" etc.
+          //     Safe here because scope is limited to "Trend Analysis" paragraphs.
+          b = b.replace(
+            /(<w:t[^>]*>)\s*(?:IP|BP|USP|NF|EP|IH|JP|CP)(?:\/(?:IP|BP|USP|NF|EP|IH|JP|CP))*\s*\)?\s*:?\s*(<\/w:t>)/g,
+            '$1$2'
+          );
+
+          // (f) Orphaned "):" or ")" nodes
+          b = b.replace(/(<w:t[^>]*>)\s*\)\s*:?\s*(<\/w:t>)/g, '$1$2');
+
+          // (g) Trailing dangling "(" left in a <w:t>: "...text: (" → "...text:"
+          b = b.replace(
+            /(<w:t[^>]*>)([^<]*?)\s*:\s*\(\s*(<\/w:t>)/g,
+            (_: string, wOpen: string, before: string, wClose: string) => `${wOpen}${before.trimEnd()}:${wClose}`
+          );
+
+          // (h) <w:t> that is ONLY "("
+          b = b.replace(/(<w:t[^>]*>)\s*\(\s*(<\/w:t>)/g, '$1$2');
+
+          return pOpen + b + pClose;
+        }
+      );
+
+      // ── Tier 2: global single-node passes for any remaining "(As per XYZ):" elsewhere ──
+
+      // Pass 1: strip when full "(As per XYZ):" sits inside one <w:t> node
+      docXml = docXml.replace(
+        /(<w:t[^>]*>)([^<]*)\s*:?\s*\(?\s*As per\s+[A-Z][A-Z/]*\s*\)?\s*:?\s*([^<]*)(<\/w:t>)/g,
+        (_: string, open: string, before: string, after: string, close: string) => {
+          const cleaned = (before + after).replace(/\s*:\s*$/, '').trimEnd();
+          return `${open}${cleaned ? cleaned + ':' : ''}${close}`;
+        }
+      );
+
+      // Pass 2: strip <w:t> nodes whose SOLE content is an "As per XYZ" fragment
+      docXml = docXml.replace(
+        /(<w:t[^>]*>)\s*:?\s*\(?\s*As per\s+[A-Z][A-Z/]*\s*\)?\s*:?\s*(<\/w:t>)/g,
+        '$1$2'
+      );
+
+      // Pass 3: strip dangling "(As per " (pharmacopoeia in next run)
+      docXml = docXml.replace(
+        /(<w:t[^>]*>)([^<]*)\s*:?\s*\(\s*As per\s*(<\/w:t>)/g,
+        '$1$2$3'
+      );
+
+      // Pass 4: strip orphaned "BP):" / "IP/USP):" closing fragments left by Pass 3
+      docXml = docXml.replace(
+        /(<w:t[^>]*>)\s*(?:IP|BP|USP|NF|EP|IH|JP|CP)(?:\/(?:IP|BP|USP|NF|EP|IH|JP|CP))*\s*\)\s*:?\s*(<\/w:t>)/g,
+        '$1$2'
+      );
+
+      // Pass 5: strip lone "):" nodes
+      docXml = docXml.replace(
+        /(<w:t[^>]*>)\s*\)\s*:?\s*(<\/w:t>)/g,
+        '$1$2'
+      );
+
 
       console.log(`  ✅ Section 5.1.2 charts updated for "${mat.materialName}" (${n} AR points)`);
     }
@@ -4778,16 +4912,16 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
             ...assayStatsArray.map(s => bulkUclFmt(s?.average)),
           ];
           const stdDevs = [
-            bulkUclFmt(phStats?.sigmaEstimated),
-            ...assayStatsArray.map(s => bulkUclFmt(s?.sigmaEstimated)),
+            bulkUclFmt(phStats?.sigmaSample),
+            ...assayStatsArray.map(s => bulkUclFmt(s?.sigmaSample)),
           ];
           const ucls = [
-            bulkUclFmt(phStats ? phStats.average + 3 * phStats.sigmaEstimated : undefined),
-            ...assayStatsArray.map(s => bulkUclFmt(s ? s.average + 3 * s.sigmaEstimated : undefined)),
+            bulkUclFmt(phStats ? phStats.average + 3 * phStats.sigmaSample : undefined),
+            ...assayStatsArray.map(s => bulkUclFmt(s ? s.average + 3 * s.sigmaSample : undefined)),
           ];
           const lcls = [
-            bulkUclFmt(phStats ? phStats.average - 3 * phStats.sigmaEstimated : undefined),
-            ...assayStatsArray.map(s => bulkUclFmt(s ? s.average - 3 * s.sigmaEstimated : undefined)),
+            bulkUclFmt(phStats ? phStats.average - 3 * phStats.sigmaSample : undefined),
+            ...assayStatsArray.map(s => bulkUclFmt(s ? s.average - 3 * s.sigmaSample : undefined)),
           ];
 
           // Row 0 = column headers (cell 0 blank, cells 1..N = pH / assay names)
@@ -4880,8 +5014,8 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
     const phVals531 = data.bulkInProcessData.map((r: any) => parseNum531(r.ph));
     const phLims531 = parseLimit531(bulkHdr531.phLimit || '');
     const phStats531 = calculateProcessCapability(phVals531.filter((v: number) => !isNaN(v)), bulkHdr531.phLimit || '');
-    const phUcl531 = phStats531 ? phStats531.average + 3 * phStats531.sigmaEstimated : undefined;
-    const phLcl531 = phStats531 ? phStats531.average - 3 * phStats531.sigmaEstimated : undefined;
+    const phUcl531 = phStats531 ? phStats531.average + 3 * phStats531.sigmaSample : undefined;
+    const phLcl531 = phStats531 ? phStats531.average - 3 * phStats531.sigmaSample : undefined;
 
     const chart4Xml = await zip.file('word/charts/chart4.xml')!.async('string');
     const phSeries531: { name: string; values: number[] }[] = [
@@ -4904,8 +5038,8 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
       });
       const assayLims531 = parseLimit531(assayCol531.limit || '');
       const assayStats531 = calculateProcessCapability(assayVals531.filter((v: number) => !isNaN(v)), assayCol531.limit || '');
-      const assayUcl531 = assayStats531 ? assayStats531.average + 3 * assayStats531.sigmaEstimated : undefined;
-      const assayLcl531 = assayStats531 ? assayStats531.average - 3 * assayStats531.sigmaEstimated : undefined;
+      const assayUcl531 = assayStats531 ? assayStats531.average + 3 * assayStats531.sigmaSample : undefined;
+      const assayLcl531 = assayStats531 ? assayStats531.average - 3 * assayStats531.sigmaSample : undefined;
 
       const chart5Xml = await zip.file('word/charts/chart5.xml')!.async('string');
       const assaySeries531: { name: string; values: number[] }[] = [
@@ -5036,31 +5170,6 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
         }
       }
 
-      // Generate Table 1 (Non-Quantifiable) and Table 2 (Quantifiable)
-      const finishCols = data.finishInProcessColumns || [];
-      const nonQuantCols = finishCols.filter((c: any) => !c.isQuantifiable);
-      const quantCols = finishCols.filter((c: any) => c.isQuantifiable);
-
-      const typeWeight: Record<string, number> = {
-        'ph': 1,
-        'critical': 2,
-        'assay': 3,
-        'related_substance': 4,
-        'identification': 5,
-      };
-
-      const sortCols = (a: any, b: any) => {
-        const wA = typeWeight[a.type] || 99;
-        const wB = typeWeight[b.type] || 99;
-        if (wA !== wB) return wA - wB;
-        const nameCmp = (a.name || '').localeCompare(b.name || '');
-        if (nameCmp !== 0) return nameCmp;
-        return (a.limit || '').localeCompare(b.limit || '');
-      };
-
-      nonQuantCols.sort(sortCols);
-      quantCols.sort(sortCols);
-
       // ── Helpers ──
       const hCell = (text: string, opts?: { vMerge?: 'restart' | 'continue'; gridSpan?: number }) => {
         let tcPr = '<w:shd w:val="clear" w:color="auto" w:fill="D9D9D9"/><w:vAlign w:val="center"/>';
@@ -5089,7 +5198,26 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
           + '</w:r></w:p></w:tc>';
       };
 
-      const buildTable = (cols: any[], tableIndex: number) => {
+      const typeWeight: Record<string, number> = {
+        'ph': 1,
+        'critical': 2,
+        'assay': 3,
+        'related_substance': 4,
+        'identification': 5,
+      };
+
+      const sortCols = (a: any, b: any) => {
+        const wA = typeWeight[a.type] || 99;
+        const wB = typeWeight[b.type] || 99;
+        if (wA !== wB) return wA - wB;
+        const nameCmp = (a.name || '').localeCompare(b.name || '');
+        if (nameCmp !== 0) return nameCmp;
+        return (a.limit || '').localeCompare(b.limit || '');
+      };
+
+      // Build a single table for a given column chunk and row subset
+      // tableIndex: 1 = non-quant, 2 = quant
+      const buildTable = (cols: any[], tableIndex: number, specRows: any[]) => {
         const totalTblCols = 2 + cols.length;
         const colWidth = Math.round(9000 / totalTblCols);
         const gridCols = Array(totalTblCols).fill(`<w:gridCol w:w="${colWidth}"/>`).join('');
@@ -5118,7 +5246,6 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
           }
           rowsXml += '</w:tr>';
 
-          // Limit row (Row 2) - Note: standard APQR merged Limit cell across Batch & AR
           rowsXml += '<w:tr><w:trPr><w:trHeight w:val="432"/><w:jc w:val="center"/></w:trPr>';
           rowsXml += hCell('Limit \u2192', { gridSpan: 2 });
           for (const c of cols) {
@@ -5155,8 +5282,7 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
         }
 
         // Data Rows
-        const rows = data.finishInProcessData || [];
-        if (rows.length === 0) {
+        if (specRows.length === 0) {
           rowsXml += '<w:tr><w:trPr><w:jc w:val="center"/></w:trPr>'
             + `<w:tc><w:tcPr><w:gridSpan w:val="${totalTblCols}"/><w:vAlign w:val="center"/></w:tcPr>`
             + '<w:p><w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/>'
@@ -5166,7 +5292,7 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
             + '</w:r></w:p></w:tc></w:tr>';
         } else {
           let prevBatch = '';
-          for (const row of rows) {
+          for (const row of specRows) {
             rowsXml += '<w:tr><w:trPr><w:jc w:val="center"/></w:trPr>';
             if (row.batchNumber !== prevBatch) {
               rowsXml += dCell(row.batchNumber || '', { vMerge: 'restart' });
@@ -5177,9 +5303,7 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
 
             rowsXml += dCell(row.arNumber || '');
             for (const c of cols) {
-              const colKey = c.key;
-              // If we were using `row.results[`${colKey}|||result`]`, we'll restore to use it here:
-              rowsXml += dCell(row.results[`${colKey}|||result`] || '--');
+              rowsXml += dCell(row.results[`${c.key}|||result`] || '--');
             }
             rowsXml += '</w:tr>';
           }
@@ -5188,27 +5312,90 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
         return '<w:tbl>' + origTblPr532 + tblGrid + rowsXml + '</w:tbl>';
       };
 
+      // Bold underlined "AS PER X:" heading paragraph
+      const specHeadingPara = (label: string) => {
+        const rPr = '<w:rPr><w:b/><w:u w:val="single"/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>';
+        return '<w:p><w:pPr><w:spacing w:before="160" w:after="80"/>'
+          + rPr + '</w:pPr>'
+          + '<w:r>' + rPr + `<w:t xml:space="preserve">${xmlEscape(label)}</w:t></w:r></w:p>`;
+      };
+
+      // ── Determine unique pharmacopoeias in preferred order ──
+      const allFinishCols = (data.finishInProcessColumns || []).filter((c: any) =>
+        !c.name.toLowerCase().includes('sterility') && !c.name.toLowerCase().includes('sterile')
+      );
+      const allFinishRows: any[] = data.finishInProcessData || [];
+
+      // Collect all specs that appear in rows, preserving preferred order
+      const specOrder = ['IP', 'USP', 'BP', 'EP', 'JP', 'NF', ''];
+      const usedSpecsSet = new Set<string>();
+      for (const row of allFinishRows) {
+        for (const sp of (row.specs || [''])) usedSpecsSet.add(sp);
+      }
+      const usedSpecs = specOrder.filter(sp => usedSpecsSet.has(sp));
+      // If no spec info at all, treat as single group with no heading
+      const multipleSpecs = usedSpecs.length > 1 || (usedSpecs.length === 1 && usedSpecs[0] !== '');
+
       let newXmlContent = '';
-
-      // Separator paragraph to keep tables from merging
-      // Empty paragraph structure with some spacing
       const pSeparator = '<w:p><w:pPr><w:spacing w:before="120" w:after="120"/></w:pPr></w:p>';
+      let maxColsAnyTable = 1;
 
-      if (nonQuantCols.length > 0) {
-        newXmlContent += buildTable(nonQuantCols, 1) + pSeparator;
+      for (const spec of usedSpecs) {
+        // Rows for this spec
+        const specRows = allFinishRows.filter((r: any) =>
+          spec === '' ? (r.specs || ['']).includes('') : (r.specs || []).includes(spec)
+        );
+
+        // Columns for this spec (col must have this spec AND not be sterility)
+        const specCols = allFinishCols.filter((c: any) => {
+          const colSpecs: string[] = c.specs || [''];
+          return spec === '' ? colSpecs.includes('') : colSpecs.includes(spec);
+        });
+
+        const nonQuantCols = specCols.filter((c: any) => !c.isQuantifiable);
+        const quantCols = specCols.filter((c: any) => c.isQuantifiable);
+        nonQuantCols.sort(sortCols);
+        quantCols.sort(sortCols);
+
+        const MAX_COLS = 3;
+
+        // Chunk helper: split an array into groups of at most MAX_COLS
+        const chunkCols = (arr: any[]) => {
+          const chunks: any[][] = [];
+          for (let i = 0; i < arr.length; i += MAX_COLS) chunks.push(arr.slice(i, i + MAX_COLS));
+          return chunks.length > 0 ? chunks : [[]];
+        };
+
+        if (multipleSpecs) {
+          const label = spec !== '' ? `AS PER ${spec}:` : 'AS PER SPECIFICATION:';
+          newXmlContent += specHeadingPara(label);
+        }
+
+        const nonQuantChunks = nonQuantCols.length > 0 ? chunkCols(nonQuantCols) : [];
+        const quantChunks = quantCols.length > 0 ? chunkCols(quantCols) : [];
+
+        if (nonQuantChunks.length === 0 && quantChunks.length === 0) {
+          newXmlContent += buildTable([], 1, specRows) + pSeparator;
+        } else {
+          for (const chunk of nonQuantChunks) {
+            newXmlContent += buildTable(chunk, 1, specRows) + pSeparator;
+            maxColsAnyTable = Math.max(maxColsAnyTable, chunk.length);
+          }
+          for (const chunk of quantChunks) {
+            newXmlContent += buildTable(chunk, 2, specRows) + pSeparator;
+            maxColsAnyTable = Math.max(maxColsAnyTable, chunk.length);
+          }
+        }
       }
-      if (quantCols.length > 0) {
-        newXmlContent += buildTable(quantCols, 2) + pSeparator;
-      }
-      if (nonQuantCols.length === 0 && quantCols.length === 0) {
-        // Fallback if no columns
-        newXmlContent += buildTable([], 1) + pSeparator;
+
+      if (usedSpecs.length === 0) {
+        // No rows at all — emit one empty table
+        newXmlContent += buildTable([], 1, []) + pSeparator;
       }
 
       // ── Remark Table ──
       const remarkText532 = `Finished product parameters for ${xmlEscape(data.product_name)} found (Satisfactory) within the limit as per specification during the review period.`;
-      // Remark table spans the max columns of any table generated
-      const finalTotalCols = 2 + Math.max(nonQuantCols.length, Math.max(quantCols.length, 1));
+      const finalTotalCols = 2 + maxColsAnyTable;
 
       const remarkContentRow532 = '<w:tr><w:tc><w:tcPr><w:gridSpan w:val="' + finalTotalCols + '"/>'
         + '<w:shd w:val="clear" w:color="auto" w:fill="D9D9D9"/>'
@@ -5236,14 +5423,9 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
         newXmlContent += pSeparator;
 
         // ── Data extraction: gather all numeric values per column ──
-        // For FP, each batch can have multiple AR rows — all individual numeric values are used
-        // for Uniformity-style parameters. For per-batch parameters (pH, Osmolality, Assay),
-        // each unique batch value is used once.
-
         for (const col of fpQuantCols) {
           const rawValues: number[] = [];
           for (const row of (data.finishInProcessData || [])) {
-            // Now we need to look for the result value specifically
             const cell = row.results[`${col.key}|||result`];
             if (cell && cell !== '--' && cell !== '') {
               const num = parseFloat(cell);
@@ -5258,9 +5440,7 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
         }
 
         // ── Layout helpers ──
-        // Total data cols: vMerge(811) + label(1661) + N FP quant cols
-        const fpTotalCols = 2 + fpQuantCols.length; // vMerge + label + each quant col
-        const fpColW = 1200; // approx width per parameter column
+        const fpColW = 1200;
 
         const fp_fmt5 = (num: number | undefined) => num !== undefined && !isNaN(num) ? num.toFixed(5) : 'N/A';
         const fp_fmt2 = (num: number | undefined) => num !== undefined && !isNaN(num) ? num.toFixed(2) : 'N/A';
@@ -5271,7 +5451,6 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
           + `<w:r><w:rPr><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>`
           + `<w:t xml:space="preserve">${xmlEscape(text)}</w:t></w:r></w:p>`;
 
-        // Data value cell
         const fp_valCell = (val: string, shade = '') =>
           `<w:tc><w:tcPr>${shade}<w:vAlign w:val="center"/></w:tcPr>`
           + `<w:p><w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/>`
@@ -5279,11 +5458,9 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
           + `<w:r><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>`
           + `<w:t>${xmlEscape(val)}</w:t></w:r></w:p></w:tc>`;
 
-        // vMerge continue cell
         const fp_vMergeCont =
           `<w:tc><w:tcPr><w:vMerge w:val="continue"/><w:vAlign w:val="center"/></w:tcPr><w:p/></w:tc>`;
 
-        // Row with a label cell spanning cols 1+2 (gridSpan=2) and one value cell per quant col
         const fp_buildSimpleRow = (labelXml: string, vals: string[], shaded = false) => {
           const shade = shaded ? `<w:shd w:val="clear" w:color="auto" w:fill="D9D9D9"/>` : '';
           let row = `<w:tr><w:trPr><w:trHeight w:val="350"/><w:jc w:val="center"/></w:trPr>`
@@ -5293,7 +5470,6 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
           return row;
         };
 
-        // Row within Short-Term or Long-Term block (vMerge continue in col 0, label in col 1)
         const fp_buildBlockRow = (label: string, vals: string[], shaded = false) => {
           const shade = shaded ? `<w:shd w:val="clear" w:color="auto" w:fill="D9D9D9"/>` : '';
           let row = `<w:tr><w:trPr><w:trHeight w:val="350"/><w:jc w:val="center"/></w:trPr>`
@@ -5308,140 +5484,212 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
           return row;
         };
 
-        // Helper: get formatted values for each FP quantile column
-        const fp_fmt5All = (getter: (s: ProcessCapabilityResults | null) => number | undefined) =>
-          fpQuantCols.map(c => fp_fmt5(getter(fpColStats.get(c.key) ?? null)));
-        const fp_fmt2All = (getter: (s: ProcessCapabilityResults | null) => number | undefined) =>
-          fpQuantCols.map(c => fp_fmt2(getter(fpColStats.get(c.key) ?? null)));
+        // ── CPK table builder for a column subset ──
+        const buildFpCpkTable = (cols: any[]) => {
+          const totalCols = 2 + cols.length;
+          const fmt5All = (getter: (s: ProcessCapabilityResults | null) => number | undefined) =>
+            cols.map((c: any) => fp_fmt5(getter(fpColStats.get(c.key) ?? null)));
+          const fmt2All = (getter: (s: ProcessCapabilityResults | null) => number | undefined) =>
+            cols.map((c: any) => fp_fmt2(getter(fpColStats.get(c.key) ?? null)));
 
-        // Build column display names for header row
-        const fp_colHeaders = fpQuantCols.map((c: any) => {
-          if (c.type === 'ph') return 'pH';
-          if (c.type === 'assay') return `Assay (%)\n${c.name}`;
-          if (c.type === 'critical' && (c.name || '').toUpperCase().includes('UNIFORMITY')) {
-            return `Uniformity of Volume\n(${c.limit})`;
-          }
-          if (c.type === 'critical' && (c.name || '').toUpperCase().includes('OSMOLALITY')) {
-            return `Osmolality\n(${c.limit})`;
-          }
-          return c.name || c.type;
-        });
+          const colHeaders = cols.map((c: any) => {
+            if (c.type === 'ph') return 'pH';
+            if (c.type === 'assay') return `Assay (%)\n${c.name}`;
+            if (c.type === 'critical' && (c.name || '').toUpperCase().includes('UNIFORMITY')) return `Uniformity of Volume\n(${c.limit})`;
+            if (c.type === 'critical' && (c.name || '').toUpperCase().includes('OSMOLALITY')) return `Osmolality\n(${c.limit})`;
+            return c.name || c.type;
+          });
 
-        // Grid: vMerge col (811) + label col (1661) + N quant cols (fpColW each)
-        let fpCpkGrid = `<w:tblGrid><w:gridCol w:w="811"/><w:gridCol w:w="1661"/>`;
-        for (let i = 0; i < fpQuantCols.length; i++) fpCpkGrid += `<w:gridCol w:w="${fpColW}"/>`;
-        fpCpkGrid += `</w:tblGrid>`;
+          let grid = `<w:tblGrid><w:gridCol w:w="811"/><w:gridCol w:w="1661"/>`;
+          for (let i = 0; i < cols.length; i++) grid += `<w:gridCol w:w="${fpColW}"/>`;
+          grid += `</w:tblGrid>`;
 
-        let fpCpkRows = '';
+          let rows = '';
 
-        // ── ROW 1: Title row spanning all columns ──
-        fpCpkRows +=
-          `<w:tr><w:trPr><w:trHeight w:val="397"/><w:jc w:val="center"/></w:trPr>`
-          + `<w:tc><w:tcPr><w:gridSpan w:val="${fpTotalCols}"/>`
-          + `<w:shd w:val="clear" w:color="auto" w:fill="D9D9D9"/><w:vAlign w:val="center"/></w:tcPr>`
-          + `<w:p><w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/>`
-          + `<w:rPr><w:b/><w:color w:val="7F6000"/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:pPr>`
-          + `<w:r><w:rPr><w:b/><w:color w:val="7F6000"/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>`
-          + `<w:t>Process Capability &amp; Performance parameters (Cp, Cpk, and Pp, Ppk)</w:t>`
-          + `</w:r></w:p></w:tc>`
-          + `</w:tr>`;
-
-        // ── ROW 2: Column headers (empty label area + one header per quant col) ──
-        {
-          let hdrRow = `<w:tr><w:trPr><w:trHeight w:val="397"/><w:jc w:val="center"/></w:trPr>`
-            + `<w:tc><w:tcPr><w:gridSpan w:val="2"/>`
+          // Title row
+          rows += `<w:tr><w:trPr><w:trHeight w:val="397"/><w:jc w:val="center"/></w:trPr>`
+            + `<w:tc><w:tcPr><w:gridSpan w:val="${totalCols}"/>`
             + `<w:shd w:val="clear" w:color="auto" w:fill="D9D9D9"/><w:vAlign w:val="center"/></w:tcPr>`
-            + `<w:p/></w:tc>`;
-          for (const hdr of fp_colHeaders) {
-            // Build multi-line header (split on \n)
-            const lines = hdr.split('\n');
-            let hdrCellContent = '';
-            for (const line of lines) {
-              hdrCellContent += fp_boldP(line);
-            }
-            hdrRow += `<w:tc><w:tcPr>`
+            + `<w:p><w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/>`
+            + `<w:rPr><w:b/><w:color w:val="7F6000"/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:pPr>`
+            + `<w:r><w:rPr><w:b/><w:color w:val="7F6000"/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>`
+            + `<w:t>Process Capability &amp; Performance parameters (Cp, Cpk, and Pp, Ppk)</w:t>`
+            + `</w:r></w:p></w:tc></w:tr>`;
+
+          // Header row
+          {
+            let hdrRow = `<w:tr><w:trPr><w:trHeight w:val="397"/><w:jc w:val="center"/></w:trPr>`
+              + `<w:tc><w:tcPr><w:gridSpan w:val="2"/>`
               + `<w:shd w:val="clear" w:color="auto" w:fill="D9D9D9"/><w:vAlign w:val="center"/></w:tcPr>`
-              + hdrCellContent + `</w:tc>`;
+              + `<w:p/></w:tc>`;
+            for (const hdr of colHeaders) {
+              const lines = hdr.split('\n');
+              let cellContent = '';
+              for (const line of lines) cellContent += fp_boldP(line);
+              hdrRow += `<w:tc><w:tcPr>`
+                + `<w:shd w:val="clear" w:color="auto" w:fill="D9D9D9"/><w:vAlign w:val="center"/></w:tcPr>`
+                + cellContent + `</w:tc>`;
+            }
+            hdrRow += `</w:tr>`;
+            rows += hdrRow;
           }
-          hdrRow += `</w:tr>`;
-          fpCpkRows += hdrRow;
-        }
 
-        // Derived intermediates
-        const fp_uslLsl = fpQuantCols.map((c: any) => {
-          const s = fpColStats.get(c.key);
-          return s ? s.usl - s.lsl : NaN;
-        });
-        const fp_uslAvg = fpQuantCols.map((c: any) => {
-          const s = fpColStats.get(c.key);
-          return s ? s.usl - s.average : NaN;
-        });
-        const fp_avgLsl = fpQuantCols.map((c: any) => {
-          const s = fpColStats.get(c.key);
-          return s ? s.average - s.lsl : NaN;
-        });
+          const uslLsl = cols.map((c: any) => { const s = fpColStats.get(c.key); return s ? s.usl - s.lsl : NaN; });
+          const uslAvg = cols.map((c: any) => { const s = fpColStats.get(c.key); return s ? s.usl - s.average : NaN; });
+          const avgLsl = cols.map((c: any) => { const s = fpColStats.get(c.key); return s ? s.average - s.lsl : NaN; });
 
-        // ── ROWS 3–8: Basic statistics ──
-        fpCpkRows += fp_buildSimpleRow(fp_boldP('Average'), fp_fmt5All(s => s?.average));
-        fpCpkRows += fp_buildSimpleRow(fp_boldP('Maximum'), fp_fmt5All(s => s?.max));
-        fpCpkRows += fp_buildSimpleRow(fp_boldP('Minimum'), fp_fmt5All(s => s?.min));
-        fpCpkRows += fp_buildSimpleRow(fp_boldP('Upper Specification Limit \u2013 Lower Specification Limit (USL \u2013 LSL)'), fp_uslLsl.map(v => fp_fmt5(v)));
-        fpCpkRows += fp_buildSimpleRow(fp_boldP('Upper Specification Limit (USL) \u2013 Average'), fp_uslAvg.map(v => fp_fmt5(v)));
-        fpCpkRows += fp_buildSimpleRow(fp_boldP('Average \u2013 Lower Specification Limit (LSL)'), fp_avgLsl.map(v => fp_fmt5(v)));
+          rows += fp_buildSimpleRow(fp_boldP('Average'), fmt5All(s => s?.average));
+          rows += fp_buildSimpleRow(fp_boldP('Maximum'), fmt5All(s => s?.max));
+          rows += fp_buildSimpleRow(fp_boldP('Minimum'), fmt5All(s => s?.min));
+          rows += fp_buildSimpleRow(fp_boldP('Upper Specification Limit \u2013 Lower Specification Limit (USL \u2013 LSL)'), uslLsl.map(v => fp_fmt5(v)));
+          rows += fp_buildSimpleRow(fp_boldP('Upper Specification Limit (USL) \u2013 Average'), uslAvg.map(v => fp_fmt5(v)));
+          rows += fp_buildSimpleRow(fp_boldP('Average \u2013 Lower Specification Limit (LSL)'), avgLsl.map(v => fp_fmt5(v)));
 
-        // ── ROW 9: Short-Term header + Estimated Std Dev (σ) ──
-        {
-          let stRow = `<w:tr><w:trPr><w:trHeight w:val="350"/><w:jc w:val="center"/></w:trPr>`
-            + `<w:tc><w:tcPr><w:vMerge w:val="restart"/><w:vAlign w:val="center"/></w:tcPr>`
-            + fp_boldP('Process Capability parameters Short-Term Statistics') + `</w:tc>`
-            + `<w:tc><w:tcPr><w:vAlign w:val="center"/></w:tcPr>`
+          // Short-Term block
+          {
+            let stRow = `<w:tr><w:trPr><w:trHeight w:val="350"/><w:jc w:val="center"/></w:trPr>`
+              + `<w:tc><w:tcPr><w:vMerge w:val="restart"/><w:vAlign w:val="center"/></w:tcPr>`
+              + fp_boldP('Process Capability parameters Short-Term Statistics') + `</w:tc>`
+              + `<w:tc><w:tcPr><w:vAlign w:val="center"/></w:tcPr>`
+              + `<w:p><w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/>`
+              + `<w:rPr><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:pPr>`
+              + `<w:r><w:rPr><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>`
+              + `<w:t xml:space="preserve">Estimated Std Deviation (</w:t></w:r>`
+              + `<w:r><w:rPr><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/><w:rFonts w:ascii="Symbol" w:hAnsi="Symbol" w:cs="Symbol"/></w:rPr>`
+              + `<w:t>s</w:t></w:r>`
+              + `<w:r><w:rPr><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr><w:t xml:space="preserve">)</w:t></w:r></w:p></w:tc>`;
+            for (const c of cols) stRow += fp_valCell(fp_fmt5(fpColStats.get(c.key)?.sigmaEstimated));
+            stRow += `</w:tr>`;
+            rows += stRow;
+          }
+
+          rows += fp_buildBlockRow('3\u03c3 = (3 X \u03c3)', cols.map((c: any) => fp_fmt2((fpColStats.get(c.key)?.sigmaEstimated ?? NaN) * 3)));
+          rows += fp_buildBlockRow('6\u03c3 = (6 X \u03c3)', cols.map((c: any) => fp_fmt2((fpColStats.get(c.key)?.sigmaEstimated ?? NaN) * 6)));
+          rows += fp_buildBlockRow('Cpku = (USL \u2013 Average) / 3\u03c3', fmt2All(s => s?.cpku));
+          rows += fp_buildBlockRow('Cpkl = (Average \u2013 LSL) / 3\u03c3', fmt2All(s => s?.cpkl));
+          rows += fp_buildBlockRow('Cpk Value = Min (Cpkl & Cpku)', fmt2All(s => s?.cpk), true);
+          rows += fp_buildBlockRow('Cp Value = (USL \u2013 LSL) / 6\u03c3', fmt2All(s => s?.cp), true);
+
+          // Long-Term block
+          {
+            let ltRow = `<w:tr><w:trPr><w:trHeight w:val="350"/><w:jc w:val="center"/></w:trPr>`
+              + `<w:tc><w:tcPr><w:vMerge w:val="restart"/><w:vAlign w:val="center"/></w:tcPr>`
+              + fp_boldP('Process Performance parameters (Long-Term Statistics)') + `</w:tc>`
+              + `<w:tc><w:tcPr><w:vAlign w:val="center"/></w:tcPr>`
+              + fp_boldP('Std Deviation (S)') + `</w:tc>`;
+            for (const c of cols) { const s = fpColStats.get(c.key); ltRow += fp_valCell(fp_fmt5(s?.sigmaSample)); }
+            ltRow += `</w:tr>`;
+            rows += ltRow;
+          }
+
+          rows += fp_buildBlockRow('3S = (3 X Std deviation)', cols.map((c: any) => fp_fmt2((fpColStats.get(c.key)?.sigmaSample ?? NaN) * 3)));
+          rows += fp_buildBlockRow('6S = (6 X Std deviation)', cols.map((c: any) => fp_fmt2((fpColStats.get(c.key)?.sigmaSample ?? NaN) * 6)));
+          rows += fp_buildBlockRow('Ppku = (USL \u2013 Average) / 3S', fmt2All(s => s?.ppku));
+          rows += fp_buildBlockRow('Ppkl = (Average \u2013 LSL) / 3S', fmt2All(s => s?.ppkl));
+          rows += fp_buildBlockRow('Ppk Value = Min(Ppkl & Ppku)', fmt2All(s => s?.ppk));
+          rows += fp_buildBlockRow('Pp Value = (USL \u2013 LSL) / 6S', fmt2All(s => s?.pp));
+
+          return `<w:tbl>${origTblPr532}${grid}${rows}</w:tbl>`;
+        };
+
+        // ── UCL/LCL table builder for a column subset ──
+        const buildFpUclTable = (cols: any[]) => {
+          const shadeStr = '<w:shd w:val="clear" w:color="auto" w:fill="D9D9D9"/>';
+          const uclHCell = (text: string, shade = '') =>
+            `<w:tc><w:tcPr>${shade}<w:vAlign w:val="center"/></w:tcPr>`
             + `<w:p><w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/>`
             + `<w:rPr><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:pPr>`
             + `<w:r><w:rPr><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>`
-            + `<w:t xml:space="preserve">Estimated Std Deviation (</w:t></w:r>`
-            + `<w:r><w:rPr><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/><w:rFonts w:ascii="Symbol" w:hAnsi="Symbol" w:cs="Symbol"/></w:rPr>`
-            + `<w:t>s</w:t></w:r>`
-            + `<w:r><w:rPr><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr><w:t xml:space="preserve">)</w:t></w:r></w:p></w:tc>`;
-          for (const [, s] of [...fpQuantCols.map((c: any) => fpColStats.get(c.key))].entries()) stRow += fp_valCell(fp_fmt5(s?.sigmaEstimated));
-          stRow += `</w:tr>`;
-          fpCpkRows += stRow;
-        }
+            + `<w:t xml:space="preserve">${xmlEscape(text)}</w:t></w:r></w:p></w:tc>`;
+          const uclLabelCell = (text: string, bold = false) => {
+            const bTag = bold ? '<w:b/>' : '';
+            return `<w:tc><w:tcPr>${shadeStr}<w:vAlign w:val="center"/></w:tcPr>`
+              + `<w:p><w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/>`
+              + `<w:rPr>${bTag}<w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:pPr>`
+              + `<w:r><w:rPr>${bTag}<w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>`
+              + `<w:t xml:space="preserve">${xmlEscape(text)}</w:t></w:r></w:p></w:tc>`;
+          };
+          const uclValueCell = (text: string) =>
+            `<w:tc><w:tcPr><w:vAlign w:val="center"/></w:tcPr>`
+            + `<w:p><w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/>`
+            + `<w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:pPr>`
+            + `<w:r><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>`
+            + `<w:t xml:space="preserve">${xmlEscape(text)}</w:t></w:r></w:p></w:tc>`;
 
-        fpCpkRows += fp_buildBlockRow('3\u03c3 = (3 X \u03c3)', fpQuantCols.map((c: any) => fp_fmt2((fpColStats.get(c.key)?.sigmaEstimated ?? NaN) * 3)));
-        fpCpkRows += fp_buildBlockRow('6\u03c3 = (6 X \u03c3)', fpQuantCols.map((c: any) => fp_fmt2((fpColStats.get(c.key)?.sigmaEstimated ?? NaN) * 6)));
-        fpCpkRows += fp_buildBlockRow('Cpku = (USL \u2013 Average) / 3\u03c3', fp_fmt2All(s => s?.cpku));
-        fpCpkRows += fp_buildBlockRow('Cpkl = (Average \u2013 LSL) / 3\u03c3', fp_fmt2All(s => s?.cpkl));
-        fpCpkRows += fp_buildBlockRow('Cpk Value = Min (Cpkl & Cpku)', fp_fmt2All(s => s?.cpk), true);
-        fpCpkRows += fp_buildBlockRow('Cp Value = (USL \u2013 LSL) / 6\u03c3', fp_fmt2All(s => s?.cp), true);
+          let grid = `<w:tblGrid><w:gridCol w:w="2000"/>`;
+          for (let i = 0; i < cols.length; i++) grid += `<w:gridCol w:w="1200"/>`;
+          grid += `</w:tblGrid>`;
 
-        // ── ROW 16: Long-Term header + Std Dev S ──
-        {
-          let ltRow = `<w:tr><w:trPr><w:trHeight w:val="350"/><w:jc w:val="center"/></w:trPr>`
-            + `<w:tc><w:tcPr><w:vMerge w:val="restart"/><w:vAlign w:val="center"/></w:tcPr>`
-            + fp_boldP('Process Performance parameters (Long-Term Statistics)') + `</w:tc>`
-            + `<w:tc><w:tcPr><w:vAlign w:val="center"/></w:tcPr>`
-            + fp_boldP('Std Deviation (S)') + `</w:tc>`;
-          for (const c of fpQuantCols) {
-            const s = fpColStats.get(c.key);
-            ltRow += fp_valCell(fp_fmt5(s?.sigmaSample));
+          let rows = '';
+          const uclFmt = (num: number | undefined) => num !== undefined && !isNaN(num) ? num.toFixed(2) : 'N/A';
+
+          // Header row
+          rows += `<w:tr><w:trPr><w:trHeight w:val="432"/><w:jc w:val="center"/></w:trPr>`;
+          rows += uclHCell('', shadeStr);
+          for (const c of cols) {
+            let hdr = c.name;
+            if (c.type === 'ph') hdr = 'pH';
+            else if (c.type === 'assay') hdr = `Assay (%)\n${c.name}`;
+            else if (c.type === 'critical' && (c.name || '').toUpperCase().includes('UNIFORMITY')) hdr = `Uniformity of Volume\n(ml)`;
+            else if (c.type === 'critical' && (c.name || '').toUpperCase().includes('OSMOLALITY')) hdr = `Osmolality\n(mOsmol/kg)`;
+            const lines = hdr.split('\n');
+            let cellContent = '';
+            for (const line of lines) {
+              cellContent += `<w:p><w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/>`
+                + `<w:rPr><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:pPr>`
+                + `<w:r><w:rPr><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>`
+                + `<w:t xml:space="preserve">${xmlEscape(line)}</w:t></w:r></w:p>`;
+            }
+            rows += `<w:tc><w:tcPr>${shadeStr}<w:vAlign w:val="center"/></w:tcPr>${cellContent}</w:tc>`;
           }
-          ltRow += `</w:tr>`;
-          fpCpkRows += ltRow;
-        }
+          rows += `</w:tr>`;
 
-        fpCpkRows += fp_buildBlockRow('3S = (3 X Std deviation)', fpQuantCols.map((c: any) => fp_fmt2((fpColStats.get(c.key)?.sigmaSample ?? NaN) * 3)));
-        fpCpkRows += fp_buildBlockRow('6S = (6 X Std deviation)', fpQuantCols.map((c: any) => fp_fmt2((fpColStats.get(c.key)?.sigmaSample ?? NaN) * 6)));
-        fpCpkRows += fp_buildBlockRow('Ppku = (USL \u2013 Average) / 3S', fp_fmt2All(s => s?.ppku));
-        fpCpkRows += fp_buildBlockRow('Ppkl = (Average \u2013 LSL) / 3S', fp_fmt2All(s => s?.ppkl));
-        fpCpkRows += fp_buildBlockRow('Ppk Value = Min(Ppkl & Ppku)', fp_fmt2All(s => s?.ppk));
-        fpCpkRows += fp_buildBlockRow('Pp Value = (USL \u2013 LSL) / 6S', fp_fmt2All(s => s?.pp));
+          // Specification Limit
+          rows += `<w:tr><w:trPr><w:trHeight w:val="350"/><w:jc w:val="center"/></w:trPr>`;
+          rows += uclLabelCell('Specification Limit');
+          for (const c of cols) {
+            let lim = (c.limit || '').trim();
+            if (lim) { if (!lim.startsWith('(')) lim = `(${lim})`; } else { lim = '(--)'; }
+            rows += uclValueCell(lim);
+          }
+          rows += `</w:tr>`;
 
-        // Assemble FP CPK table
-        const fpCpkTblPr = origTblPr532;
-        const fpCpkTable = `<w:tbl>${fpCpkTblPr}${fpCpkGrid}${fpCpkRows}</w:tbl>`;
-        newXmlContent += fpCpkTable;
+          // Average
+          rows += `<w:tr><w:trPr><w:trHeight w:val="350"/><w:jc w:val="center"/></w:trPr>`;
+          rows += uclLabelCell('Average');
+          for (const c of cols) { const s = fpColStats.get(c.key); rows += uclValueCell(uclFmt(s?.average)); }
+          rows += `</w:tr>`;
 
-        // ── Limit Conclusion Table (Cp, Cpk, Pp, Ppk interpretation) ──
+          // Std. Dev.
+          rows += `<w:tr><w:trPr><w:trHeight w:val="350"/><w:jc w:val="center"/></w:trPr>`;
+          rows += uclLabelCell('Std. Dev.');
+          for (const c of cols) { const s = fpColStats.get(c.key); rows += uclValueCell(uclFmt(s?.sigmaSample)); }
+          rows += `</w:tr>`;
+
+          // UCL
+          rows += `<w:tr><w:trPr><w:trHeight w:val="350"/><w:jc w:val="center"/></w:trPr>`;
+          rows += uclLabelCell('Upper Control Limit (UCL)', true);
+          for (const c of cols) { const s = fpColStats.get(c.key); rows += uclValueCell(uclFmt(s ? s.average + 3 * s.sigmaSample : undefined)); }
+          rows += `</w:tr>`;
+
+          // LCL
+          rows += `<w:tr><w:trPr><w:trHeight w:val="350"/><w:jc w:val="center"/></w:trPr>`;
+          rows += uclLabelCell('Lower Control Limit (LCL)', true);
+          for (const c of cols) { const s = fpColStats.get(c.key); rows += uclValueCell(uclFmt(s ? s.average - 3 * s.sigmaSample : undefined)); }
+          rows += `</w:tr>`;
+
+          return `<w:tbl>${origTblPr532}${grid}${rows}</w:tbl>`;
+        };
+
+        // ── Spec-grouped, chunked CPK + UCL/LCL tables ──
+        const FP_MAX_COLS = 3;
+        const fpChunkCols = (arr: any[]) => {
+          const chunks: any[][] = [];
+          for (let i = 0; i < arr.length; i += FP_MAX_COLS) chunks.push(arr.slice(i, i + FP_MAX_COLS));
+          return chunks.length > 0 ? chunks : [[]];
+        };
+
+        // 1. ── Limit Conclusion Table (once, rendered FIRST) ──
         newXmlContent += pSeparator;
         {
           const limHCell = (text: string, gs?: number) => {
@@ -5452,17 +5700,14 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
               + `<w:r><w:rPr><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>`
               + `<w:t xml:space="preserve">${xmlEscape(text)}</w:t></w:r></w:p></w:tc>`;
           };
-          const limDCell = (text: string) => {
-            return `<w:tc><w:tcPr><w:vAlign w:val="center"/></w:tcPr>`
-              + `<w:p><w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/>`
-              + `<w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:pPr>`
-              + `<w:r><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>`
-              + `<w:t xml:space="preserve">${xmlEscape(text)}</w:t></w:r></w:p></w:tc>`;
-          };
+          const limDCell = (text: string) =>
+            `<w:tc><w:tcPr><w:vAlign w:val="center"/></w:tcPr>`
+            + `<w:p><w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/>`
+            + `<w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:pPr>`
+            + `<w:r><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>`
+            + `<w:t xml:space="preserve">${xmlEscape(text)}</w:t></w:r></w:p></w:tc>`;
 
           let limitRows = '';
-
-          // Row 1: "Limit for Process Capability & Performance parameters" spanning all 4 cols
           limitRows += `<w:tr><w:trPr><w:trHeight w:val="397"/><w:jc w:val="center"/></w:trPr>`
             + `<w:tc><w:tcPr><w:gridSpan w:val="4"/>`
             + `<w:shd w:val="clear" w:color="auto" w:fill="D9D9D9"/><w:vAlign w:val="center"/></w:tcPr>`
@@ -5471,154 +5716,66 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
             + `<w:r><w:rPr><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>`
             + `<w:t>Limit for Process Capability &amp; Performance parameters (Cp, Cpk, and Pp, Ppk)</w:t>`
             + `</w:r></w:p></w:tc></w:tr>`;
-
-          // Row 2: blank | "Cp, Cpk, and Pp, Ppk" spanning 3
           limitRows += `<w:tr><w:trPr><w:trHeight w:val="350"/><w:jc w:val="center"/></w:trPr>`
-            + limHCell('')
-            + limHCell('Cp, Cpk, and Pp, Ppk', 3)
-            + `</w:tr>`;
-
-          // Row 3: blank | < 1 | Between 1 to 1.33 | > 1.33
+            + limHCell('') + limHCell('Cp, Cpk, and Pp, Ppk', 3) + `</w:tr>`;
           limitRows += `<w:tr><w:trPr><w:trHeight w:val="350"/><w:jc w:val="center"/></w:trPr>`
-            + limHCell('')
-            + limHCell('< 1')
-            + limHCell('Between 1 to 1.33')
-            + limHCell('> 1.33')
-            + `</w:tr>`;
-
-          // Row 4: Conclusion | not capable | capable | very excellent / very capable
+            + limHCell('') + limHCell('< 1') + limHCell('Between 1 to 1.33') + limHCell('> 1.33') + `</w:tr>`;
           limitRows += `<w:tr><w:trPr><w:trHeight w:val="350"/><w:jc w:val="center"/></w:trPr>`
-            + limDCell('Conclusion')
-            + limDCell('Process is not capable')
-            + limDCell('Process is capable')
-            + limDCell('very excellent / very capable')
-            + `</w:tr>`;
+            + limDCell('Conclusion') + limDCell('Process is not capable') + limDCell('Process is capable') + limDCell('very excellent / very capable') + `</w:tr>`;
 
           const limitTblGrid = `<w:tblGrid><w:gridCol w:w="1500"/><w:gridCol w:w="1500"/><w:gridCol w:w="2500"/><w:gridCol w:w="2500"/></w:tblGrid>`;
-          const limitTable = `<w:tbl>${origTblPr532}${limitTblGrid}${limitRows}</w:tbl>`;
-          newXmlContent += limitTable;
+          newXmlContent += `<w:tbl>${origTblPr532}${limitTblGrid}${limitRows}</w:tbl>`;
         }
 
-        // ── UCL & LCL Table ──
-        newXmlContent += pSeparator;
-        {
-          // Title paragraph
-          newXmlContent += `<w:p><w:pPr><w:spacing w:before="240"/><w:jc w:val="left"/></w:pPr><w:r><w:rPr><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/><w:u w:val="single"/></w:rPr><w:t xml:space="preserve">Upper Control Limits (UCL) &amp; Lower Control Limits (LCL): -</w:t></w:r></w:p>`;
+        // 2. ── UCL/LCL Tables (per spec) ──
+        if (usedSpecs.length > 0 && fpQuantCols.length > 0) {
+          const uclGlobalHeading = `<w:p><w:pPr><w:spacing w:before="160" w:after="80"/><w:rPr><w:b/><w:u w:val="single"/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:pPr><w:r><w:rPr><w:b/><w:u w:val="single"/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr><w:t xml:space="preserve">Upper Control Limits (UCL) &amp; Lower Control Limits (LCL): -</w:t></w:r></w:p>`;
+          newXmlContent += uclGlobalHeading;
 
-          const uclHCell = (text: string, shade = '') => {
-            return `<w:tc><w:tcPr>${shade}<w:vAlign w:val="center"/></w:tcPr>`
-              + `<w:p><w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/>`
-              + `<w:rPr><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:pPr>`
-              + `<w:r><w:rPr><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>`
-              + `<w:t xml:space="preserve">${xmlEscape(text)}</w:t></w:r></w:p></w:tc>`;
-          };
-          const uclDCell = (text: string, bold = false) => {
-            const bTag = bold ? '<w:b/>' : '';
-            return `<w:tc><w:tcPr><w:vAlign w:val="center"/></w:tcPr>`
-              + `<w:p><w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/>`
-              + `<w:rPr>${bTag}<w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:pPr>`
-              + `<w:r><w:rPr>${bTag}<w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>`
-              + `<w:t xml:space="preserve">${xmlEscape(text)}</w:t></w:r></w:p></w:tc>`;
-          };
+          for (const spec of usedSpecs) {
+            const specFpCols = fpQuantCols.filter((c: any) =>
+              spec === '' ? (c.specs.length === 0 || c.specs.includes('')) : c.specs.includes(spec)
+            );
+            if (specFpCols.length === 0) continue;
 
-          const uclTotalCols = 1 + fpQuantCols.length;
-          let uclGrid = `<w:tblGrid><w:gridCol w:w="2000"/>`;
-          for (let i = 0; i < fpQuantCols.length; i++) uclGrid += `<w:gridCol w:w="1200"/>`;
-          uclGrid += `</w:tblGrid>`;
-
-          let uclRows = '';
-          const shadeStr = '<w:shd w:val="clear" w:color="auto" w:fill="D9D9D9"/>';
-
-          // Row 1: Headers
-          uclRows += `<w:tr><w:trPr><w:trHeight w:val="432"/><w:jc w:val="center"/></w:trPr>`;
-          uclRows += uclHCell('', shadeStr);
-          for (const c of fpQuantCols) {
-            let hdr = c.name;
-            if (c.type === 'ph') hdr = 'pH';
-            else if (c.type === 'assay') hdr = `Assay (%)\n${c.name}`;
-            else if (c.type === 'critical' && (c.name || '').toUpperCase().includes('UNIFORMITY')) {
-              hdr = `Uniformity of Volume\n(ml)`;
-            }
-            else if (c.type === 'critical' && (c.name || '').toUpperCase().includes('OSMOLALITY')) {
-              hdr = `Osmolality\n(mOsmol/kg)`;
+            if (multipleSpecs) {
+              const label = spec === '' ? 'AS PER SPECIFICATION:' : `AS PER ${spec}:`;
+              newXmlContent += specHeadingPara(label);
             }
 
-            const lines = hdr.split('\n');
-            let cellContent = '';
-            for (const line of lines) {
-              cellContent += `<w:p><w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/>`
-                + `<w:rPr><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:pPr>`
-                + `<w:r><w:rPr><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>`
-                + `<w:t xml:space="preserve">${xmlEscape(line)}</w:t></w:r></w:p>`;
+            for (const chunk of fpChunkCols(specFpCols)) {
+              newXmlContent += pSeparator + buildFpUclTable(chunk);
             }
-            uclRows += `<w:tc><w:tcPr>${shadeStr}<w:vAlign w:val="center"/></w:tcPr>${cellContent}</w:tc>`;
           }
-          uclRows += `</w:tr>`;
-
-          // Row 2: Specification Limit
-          uclRows += `<w:tr><w:trPr><w:trHeight w:val="350"/><w:jc w:val="center"/></w:trPr>`;
-          uclRows += uclHCell('Specification Limit', shadeStr);
-          for (const c of fpQuantCols) {
-            let lim = (c.limit || '').trim();
-            if (lim) {
-              if (!lim.startsWith('(')) lim = `(${lim})`;
-            } else {
-              lim = '(--)';
-            }
-            uclRows += uclHCell(lim, shadeStr);
-          }
-          uclRows += `</w:tr>`;
-
-          const uclFmt = (num: number | undefined) => num !== undefined && !isNaN(num) ? num.toFixed(2) : 'N/A';
-
-          // Row 3: Average
-          uclRows += `<w:tr><w:trPr><w:trHeight w:val="350"/><w:jc w:val="center"/></w:trPr>`;
-          uclRows += uclDCell('Average');
-          for (const c of fpQuantCols) {
-            const s = fpColStats.get(c.key);
-            uclRows += uclDCell(uclFmt(s?.average));
-          }
-          uclRows += `</w:tr>`;
-
-          // Row 4: Std. Dev.
-          uclRows += `<w:tr><w:trPr><w:trHeight w:val="350"/><w:jc w:val="center"/></w:trPr>`;
-          uclRows += uclDCell('Std. Dev.');
-          for (const c of fpQuantCols) {
-            const s = fpColStats.get(c.key);
-            uclRows += uclDCell(uclFmt(s?.sigmaSample));
-          }
-          uclRows += `</w:tr>`;
-
-          // Row 5: Upper Control Limit (UCL)
-          uclRows += `<w:tr><w:trPr><w:trHeight w:val="350"/><w:jc w:val="center"/></w:trPr>`;
-          uclRows += uclDCell('Upper Control Limit (UCL)', true);
-          for (const c of fpQuantCols) {
-            const s = fpColStats.get(c.key);
-            const ucl = s ? s.average + (3 * s.sigmaSample) : undefined;
-            uclRows += uclDCell(uclFmt(ucl), true);
-          }
-          uclRows += `</w:tr>`;
-
-          // Row 6: Lower Control Limit (LCL)
-          uclRows += `<w:tr><w:trPr><w:trHeight w:val="350"/><w:jc w:val="center"/></w:trPr>`;
-          uclRows += uclDCell('Lower Control Limit (LCL)', true);
-          for (const c of fpQuantCols) {
-            const s = fpColStats.get(c.key);
-            const lcl = s ? s.average - (3 * s.sigmaSample) : undefined;
-            uclRows += uclDCell(uclFmt(lcl), true);
-          }
-          uclRows += `</w:tr>`;
-
-          const uclTableXml = `<w:tbl>${origTblPr532}${uclGrid}${uclRows}</w:tbl>`;
-          newXmlContent += uclTableXml;
         }
 
-        console.log(`  ✅ Section 5.3.2 FP CPK table added (${fpQuantCols.length} quantifiable columns)`);
+        // 3. ── Process Capability & Performance parameters Tables (per spec) ──
+        if (usedSpecs.length > 0 && fpQuantCols.length > 0) {
+          for (const spec of usedSpecs) {
+            const specFpCols = fpQuantCols.filter((c: any) =>
+              spec === '' ? (c.specs.length === 0 || c.specs.includes('')) : c.specs.includes(spec)
+            );
+            if (specFpCols.length === 0) continue;
+
+            if (multipleSpecs) {
+              // Include the pSeparator before the specHeadingPara if we are doing multiple specs for CPK loop 
+              // (originally pSeparator was added before the table, but with heading it might be bunched up. we'll add separator here just in case)
+              const label = spec === '' ? 'AS PER SPECIFICATION:' : `AS PER ${spec}:`;
+              newXmlContent += specHeadingPara(label);
+            }
+
+            for (const chunk of fpChunkCols(specFpCols)) {
+              newXmlContent += pSeparator + buildFpCpkTable(chunk);
+            }
+          }
+        }
+
+        console.log(`  ✅ Section 5.3.2 FP CPK tables added (${fpQuantCols.length} quantifiable columns, specs: [${usedSpecs.join(', ')}])`);
       }
 
       // Replace everything between the start of the first table and the end of the remark table
       docXml = docXml.substring(0, sectionContentStart) + newXmlContent + docXml.substring(sectionContentEnd);
-      console.log(`  ✅ Section 5.3.2 tables replaced. NonQuantCols: ${nonQuantCols.length}, QuantCols: ${quantCols.length}`);
+      console.log(`  ✅ Section 5.3.2 tables replaced. Specs: [${usedSpecs.join(', ')}], MaxCols: ${maxColsAnyTable}`);
 
       // ── 11b. Dynamic Finished Stage Trend Charts ──
       // rId-based paragraph lookup (DOCX fragments text in w:t so direct string search fails).
@@ -5720,6 +5877,125 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
           // Inactive slot: delete heading + drawing paragraphs
           docXml = docXml.substring(0, prevPStart) + docXml.substring(drawPEnd);
           console.log(`  🗑️ Removed inactive chart slot chart${chartNum} (paramIdx=${i} >= ${fpQuantCols.length})`);
+        }
+      }
+
+      // ── 11b-iii. Dynamic Finished Stage Conclusion Table ──
+      if (fpQuantCols.length > 0) {
+        let concIdx = -1;
+        for (let i = sectionContentStart; i < docXml.length; i = docXml.indexOf('CONCLUSION:', i + 1)) {
+          if (i === -1) break;
+          const concTblStart = docXml.lastIndexOf('<w:tbl>', i);
+          const concTblEnd = docXml.indexOf('</w:tbl>', i);
+          if (concTblStart !== -1 && concTblEnd !== -1 && concTblStart < i && i < concTblEnd) {
+            concIdx = i;
+            break;
+          }
+        }
+
+        if (concIdx !== -1) {
+          const concTblStart = docXml.lastIndexOf('<w:tbl>', concIdx);
+          const concTblEnd = docXml.indexOf('</w:tbl>', concIdx) + 8;
+          const origConcTbl = docXml.substring(concTblStart, concTblEnd);
+
+          const origTblPr = origConcTbl.match(/<w:tblPr>[\s\S]*?<\/w:tblPr>/)?.[0] || '<w:tblPr><w:tblW w:w="5000" w:type="pct"/></w:tblPr>';
+          const tblGridMatch = origConcTbl.match(/<w:tblGrid>[\s\S]*?<\/w:tblGrid>/);
+          const tblGrid = tblGridMatch ? tblGridMatch[0] : '<w:tblGrid><w:gridCol w:w="5000"/><w:gridCol w:w="5000"/></w:tblGrid>';
+
+          const bulletPrMatch = origConcTbl.match(/<w:pPr>[\s\S]*?<w:numPr>[\s\S]*?<\/w:numPr>[\s\S]*?<\/w:pPr>/);
+          const bulletPrXml = bulletPrMatch ? bulletPrMatch[0] : '<w:pPr><w:ind w:left="400" w:hanging="200"/><w:jc w:val="both"/></w:pPr>';
+
+          let concParagraphs = `<w:p>
+              <w:pPr>
+                <w:spacing w:before="60" w:after="60"/>
+                <w:jc w:val="both"/>
+              </w:pPr>
+              <w:r><w:rPr><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr><w:t>CONCLUSION:</w:t></w:r>
+          </w:p>`;
+
+          const buildBullet = (paramName: string, cpkValue: string, cpValue: string, status: string) => {
+            return `<w:p>
+              ${bulletPrXml}
+              <w:r><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr><w:t xml:space="preserve">The value of process capability parameter (Cpk) for </w:t></w:r>
+              <w:r><w:rPr><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr><w:t xml:space="preserve">${xmlEscape(paramName)}</w:t></w:r>
+              <w:r><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr><w:t xml:space="preserve"> at finished testing stage for ${xmlEscape(data.product_name)} is observed </w:t></w:r>
+              <w:r><w:rPr><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr><w:t xml:space="preserve">${xmlEscape(cpkValue)}</w:t></w:r>
+              <w:r><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr><w:t xml:space="preserve"> &amp; </w:t></w:r>
+              <w:r><w:rPr><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr><w:t xml:space="preserve">Cp</w:t></w:r>
+              <w:r><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr><w:t xml:space="preserve"> value observed is </w:t></w:r>
+              <w:r><w:rPr><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr><w:t xml:space="preserve">${xmlEscape(cpValue)}</w:t></w:r>
+              <w:r><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr><w:t xml:space="preserve"> which indicates a ${xmlEscape(status)}. Hence, it is concluded that process is running to its specification limits.</w:t></w:r>
+            </w:p>`;
+          };
+
+          for (const col of fpQuantCols) {
+            const stat = fpColStats.get(col.key);
+            let cpValStr = (stat && !isNaN(stat.cp)) ? stat.cp.toFixed(2) : 'N/A';
+            let cpkValStr = (stat && !isNaN(stat.cpk)) ? stat.cpk.toFixed(2) : 'N/A';
+
+            let status = 'N/A';
+            if (stat && !isNaN(stat.cp) && !isNaN(stat.cpk)) {
+              const minVal = Math.min(stat.cpk, stat.cp);
+              if (minVal > 1.33) status = 'very capable process';
+              else if (minVal >= 1.0) status = 'capable process';
+              else status = 'process not capable';
+            }
+
+            let paramName = col.name;
+            if (col.type === 'ph') paramName = 'pH';
+            else if (col.type === 'assay') paramName = `Assay of ${(col as any).compound || col.name}`;
+            else if (col.type === 'critical' && (col.name || '').toUpperCase().includes('UNIFORMITY')) {
+              paramName = `Uniformity of Filled Volume`;
+              if (col.limit) {
+                const cleanLim = col.limit.replace(/^\(|\)$/g, '');
+                paramName += ` \u2013 ${cleanLim}`;
+              }
+            }
+
+            concParagraphs += buildBullet(paramName, cpkValStr, cpValStr, status);
+          }
+
+          const paramNamesList = fpQuantCols.map((c: any) => {
+            if (c.type === 'ph') return 'pH';
+            if (c.type === 'assay') return `Assay`;
+            if (c.type === 'critical' && (c.name || '').toUpperCase().includes('UNIFORMITY')) return 'Uniformity of Filled Volume';
+            if (c.type === 'critical' && (c.name || '').toUpperCase().includes('OSMOLALITY')) return 'Osmolality';
+            return c.name;
+          });
+          const uniqueParams = Array.from(new Set(paramNamesList));
+          let paramListStr = uniqueParams[0] || '';
+          if (uniqueParams.length > 1) {
+            const last = uniqueParams.pop();
+            paramListStr = uniqueParams.join(', ') + ' & ' + last;
+          }
+
+          const lastBulletText = `Upper Control Limits (UCL) & Lower Control Limits (LCL) for ${paramListStr} at Finished testing stage for ${data.product_name} are also defined.`;
+          concParagraphs += `<w:p>
+              ${bulletPrXml}
+              <w:r><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr><w:t xml:space="preserve">${xmlEscape(lastBulletText)}</w:t></w:r>
+          </w:p>`;
+
+          const concContentRow = `<w:tr>
+             <w:tc>
+                <w:tcPr><w:gridSpan w:val="2"/><w:vAlign w:val="center"/></w:tcPr>
+                ${concParagraphs}
+             </w:tc>
+          </w:tr>`;
+
+          const origConcRows = [...origConcTbl.matchAll(/<w:tr\b[\s\S]*?<\/w:tr>/g)];
+          let signatureRow = '';
+          if (origConcRows.length > 0) {
+            const lastRow = origConcRows[origConcRows.length - 1][0];
+            if (lastRow.includes('Prepared By') || lastRow.includes('Reviewed By') || lastRow.includes('Sign/Date')) {
+              signatureRow = lastRow;
+            }
+          }
+
+          const newConcTable = `<w:tbl>${origTblPr}${tblGrid}${concContentRow}${signatureRow}</w:tbl>`;
+          docXml = docXml.substring(0, concTblStart) + newConcTable + docXml.substring(concTblEnd);
+          console.log(`  ✅ Section 5.3.2 Conclusion table updated with ${fpQuantCols.length} dynamic bullets`);
+        } else {
+          console.warn(`  ⚠️ Section 5.3.2 Conclusion table not found`);
         }
       }
 
@@ -5961,7 +6237,7 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
             const minVal = Math.min(...avgYields);
             const maxVal = Math.max(...avgYields);
             const mean = avgYields.reduce((s, v) => s + v, 0) / avgYields.length;
-            const variance = avgYields.reduce((s, v) => s + Math.pow(v - mean, 2), 0) / avgYields.length;
+            const variance = avgYields.length > 1 ? avgYields.reduce((s, v) => s + Math.pow(v - mean, 2), 0) / (avgYields.length - 1) : 0;
             const stdDev = Math.sqrt(variance);
             const rsd = mean !== 0 ? (stdDev / mean) * 100 : 0;
 

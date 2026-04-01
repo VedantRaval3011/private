@@ -1035,6 +1035,46 @@
   flex-wrap: wrap;
 }
 
+.timelineSearchWrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  margin: 0 0.5rem;
+  flex: 1;
+  min-width: 200px;
+  max-width: 380px;
+}
+
+.timelineSearchIcon {
+  position: absolute;
+  left: 10px;
+  color: #8b5cf6;
+  font-size: 0.85rem;
+  pointer-events: none;
+}
+
+.timelineSearchInput {
+  background: #ffffff;
+  border: 1px solid #c4b5fd;
+  border-radius: 20px;
+  color: #1f2937;
+  padding: 0.35rem 0.75rem 0.35rem 2.25rem;
+  font-size: 0.75rem;
+  width: 100%;
+  transition: all 0.2s ease;
+  outline: none;
+  box-shadow: inset 0 1px 3px rgba(0,0,0,0.02);
+}
+
+.timelineSearchInput::placeholder {
+  color: #9ca3af;
+}
+
+.timelineSearchInput:focus {
+  border-color: #8b5cf6;
+  box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.15);
+}
+
 .timelineLegend {
   display: flex;
   align-items: center;

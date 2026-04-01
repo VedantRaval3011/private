@@ -1,0 +1,5 @@
+<w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr><w:t xml:space="preserve"> pH of Sodium Hyaluronate: (As per BP):</w:t></w:r></w:p><w:p w14:paraId="4865E424" w14:textId="77777777" w:rsidR="00F578CC" w:rsidRPr
+
+><w:r><w:rPr><w:b/><w:i/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr><w:t xml:space="preserve">: (As per </w:t></w:r><w:r w:rsidR="00F578CC"><w:rPr><w:b/><w:i/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rP
+
+:r><w:r><w:rPr><w:b/><w:i/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr><w:t xml:space="preserve">(As per </w:t></w:r><w:r w:rsidR="00F578CC"><w:rPr><w:b/><w:i/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rP

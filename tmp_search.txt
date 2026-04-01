@@ -1,0 +1,187 @@
+
+--- Line 359 ---
+352: 
+353: /**
+354:  * Calculates Sample Standard Deviation (S) for long-term variation
+355:  */
+356: function calculateSampleStdDev(data: number[], mean: number): number {
+357:   if (data.length < 2) return 0; // Need at least 2 points
+358:   const sumSq = data.reduce((acc, val) => acc + Math.pow(val - mean, 2), 0);
+359:   return Math.sqrt(sumSq / (data.length - 1));
+360: }
+361: 
+362: /**
+363:  * Calculates Estimated Standard Deviation (σ) using Moving Range (MR) for short-term variation
+364:  * Uses d2 = 1.128 for subgroup size n=2
+365:  */
+366: function calculateEstimatedStdDevMR(data: number[]): number {
+
+--- Line 3995 ---
+3988:           + mat.assaySpecs.map(s => dc512(row.assays[s.specName] || '')).join('')
+3989:           + '</w:tr>';
+3990:       }
+3991: 
+3992:       // Statistics
+3993:       const toNum512 = (s: string) => { const n = parseFloat(s); return isNaN(n) ? null : n; };
+3994:       const calcStats512 = (vals: number[]) => {
+3995:         if (vals.length === 0) return { min: 'N/A', max: 'N/A', avg: 'N/A', sd: 'N/A' };
+3996:         const min = Math.min(...vals);
+3997:         const max = Math.max(...vals);
+3998:         const avg = vals.reduce((s, v) => s + v, 0) / vals.length;
+3999:         const sd = Math.sqrt(vals.reduce((s, v) => s + Math.pow(v - avg, 2), 0) / vals.length);
+4000:         return { min: min.toFixed(2), max: max.toFixed(2), avg: avg.toFixed(2), sd: sd.toFixed(2) };
+4001:       };
+4002:       const phS = calcStats512(mat.rows.map(r => toNum512(r.ph)).filter((v): v is number => v !== null));
+
+--- Line 3999 ---
+3992:       // Statistics
+3993:       const toNum512 = (s: string) => { const n = parseFloat(s); return isNaN(n) ? null : n; };
+3994:       const calcStats512 = (vals: number[]) => {
+3995:         if (vals.length === 0) return { min: 'N/A', max: 'N/A', avg: 'N/A', sd: 'N/A' };
+3996:         const min = Math.min(...vals);
+3997:         const max = Math.max(...vals);
+3998:         const avg = vals.reduce((s, v) => s + v, 0) / vals.length;
+3999:         const sd = Math.sqrt(vals.reduce((s, v) => s + Math.pow(v - avg, 2), 0) / vals.length);
+4000:         return { min: min.toFixed(2), max: max.toFixed(2), avg: avg.toFixed(2), sd: sd.toFixed(2) };
+4001:       };
+4002:       const phS = calcStats512(mat.rows.map(r => toNum512(r.ph)).filter((v): v is number => v !== null));
+4003:       const waterS = calcStats512(mat.rows.map(r => toNum512(r.water)).filter((v): v is number => v !== null));
+4004:       const statsBySpec512 = mat.assaySpecs.map(s =>
+4005:         calcStats512(mat.rows.map(r => toNum512(r.assays[s.specName] || '')).filter((v): v is number => v !== null))
+4006:       );
+
+--- Line 4000 ---
+3993:       const toNum512 = (s: string) => { const n = parseFloat(s); return isNaN(n) ? null : n; };
+3994:       const calcStats512 = (vals: number[]) => {
+3995:         if (vals.length === 0) return { min: 'N/A', max: 'N/A', avg: 'N/A', sd: 'N/A' };
+3996:         const min = Math.min(...vals);
+3997:         const max = Math.max(...vals);
+3998:         const avg = vals.reduce((s, v) => s + v, 0) / vals.length;
+3999:         const sd = Math.sqrt(vals.reduce((s, v) => s + Math.pow(v - avg, 2), 0) / vals.length);
+4000:         return { min: min.toFixed(2), max: max.toFixed(2), avg: avg.toFixed(2), sd: sd.toFixed(2) };
+4001:       };
+4002:       const phS = calcStats512(mat.rows.map(r => toNum512(r.ph)).filter((v): v is number => v !== null));
+4003:       const waterS = calcStats512(mat.rows.map(r => toNum512(r.water)).filter((v): v is number => v !== null));
+4004:       const statsBySpec512 = mat.assaySpecs.map(s =>
+4005:         calcStats512(mat.rows.map(r => toNum512(r.assays[s.specName] || '')).filter((v): v is number => v !== null))
+4006:       );
+4007: 
+
+--- Line 4067 ---
+4060: 
+4061:       // Replace ALL caches in a chart XML for the given series list
+4062:       // Each entry: { name, values (number[]) }; arNumbers is shared X-axis
+4063:       const updateChartXml = (chartXml: string, series: { name: string; values: number[] }[]): string => {
+4064:         let idx = 0;
+4065:         return chartXml.replace(/<c:ser>([\s\S]*?)<\/c:ser>/g, (match, content) => {
+4066:           if (idx >= series.length) return match;
+4067:           const sd = series[idx++];
+4068:           let updated = content;
+4069:           // series name cache
+4070:           updated = updated.replace(
+4071:             /(<c:tx>[\s\S]*?<c:strRef>[\s\S]*?)<c:strCache>[\s\S]*?<\/c:strCache>([\s\S]*?<\/c:strRef>[\s\S]*?<\/c:tx>)/,
+4072:             `$1${buildSerNameXml(sd.name)}$2`
+4073:           );
+4074:           // category cache
+
+--- Line 4875 ---
+4868:     const buildSerName531 = (name: string) =>
+4869:       `<c:strCache><c:ptCount val="1"/><c:pt idx="0"><c:v>${xmlEscape(name)}</c:v></c:pt></c:strCache>`;
+4870: 
+4871:     const updateChart531 = (chartXml: string, series: { name: string; values: number[] }[]): string => {
+4872:       let idx = 0;
+4873:       return chartXml.replace(/<c:ser>([\s\S]*?)<\/c:ser>/g, (match, content) => {
+4874:         if (idx >= series.length) return match;
+4875:         const sd = series[idx++];
+4876:         let updated = content;
+4877:         updated = updated.replace(
+4878:           /(<c:tx>[\s\S]*?<c:strRef>[\s\S]*?)<c:strCache>[\s\S]*?<\/c:strCache>([\s\S]*?<\/c:strRef>[\s\S]*?<\/c:tx>)/,
+4879:           `$1${buildSerName531(sd.name)}$2`
+4880:         );
+4881:         updated = updated.replace(
+4882:           /(<c:cat>[\s\S]*?<c:strRef>[\s\S]*?)<c:strCache>[\s\S]*?<\/c:strCache>([\s\S]*?<\/c:strRef>[\s\S]*?<\/c:cat>)/,
+
+--- Line 5695 ---
+5688:         return {};
+5689:       };
+5690: 
+5691:       const updateChartFP = (chartXml: string, series: { name: string; values: number[] }[]): string => {
+5692:         let idx = 0;
+5693:         return chartXml.replace(/<c:ser>([\s\S]*?)<\/c:ser>/g, (match, content) => {
+5694:           if (idx >= series.length) return '';
+5695:           const sd = series[idx++];
+5696:           let updated = content;
+5697:           updated = updated.replace(
+5698:             /(<c:tx>[\s\S]*?<c:strRef>[\s\S]*?)<c:strCache>[\s\S]*?<\/c:strCache>([\s\S]*?<\/c:strRef>[\s\S]*?<\/c:tx>)/,
+5699:             `$1${buildSerNameFP(sd.name)}$2`
+5700:           );
+5701:           updated = updated.replace(
+5702:             /(<c:cat>[\s\S]*?<c:strRef>[\s\S]*?)<c:strCache>[\s\S]*?<\/c:strCache>([\s\S]*?<\/c:strRef>[\s\S]*?<\/c:cat>)/,
+
+--- Line 6124 ---
+6117: 
+6118:             // Statistics — computed from avgYield values
+6119:             const avgYields = yieldRows.map(r => r.avgYield);
+6120:             const minVal = Math.min(...avgYields);
+6121:             const maxVal = Math.max(...avgYields);
+6122:             const mean = avgYields.reduce((s, v) => s + v, 0) / avgYields.length;
+6123:             const variance = avgYields.reduce((s, v) => s + Math.pow(v - mean, 2), 0) / avgYields.length;
+6124:             const stdDev = Math.sqrt(variance);
+6125:             const rsd = mean !== 0 ? (stdDev / mean) * 100 : 0;
+6126: 
+6127:             rowsXml += statRow542('Minimum', minVal.toFixed(2));
+6128:             rowsXml += statRow542('Maximum', maxVal.toFixed(2));
+6129:             rowsXml += statRow542('Average', mean.toFixed(2));
+6130:             rowsXml += statRow542('Standard Deviation', stdDev.toFixed(2));
+6131:             rowsXml += statRow542('RSD (%)', rsd.toFixed(2));
+
+--- Line 6125 ---
+6118:             // Statistics — computed from avgYield values
+6119:             const avgYields = yieldRows.map(r => r.avgYield);
+6120:             const minVal = Math.min(...avgYields);
+6121:             const maxVal = Math.max(...avgYields);
+6122:             const mean = avgYields.reduce((s, v) => s + v, 0) / avgYields.length;
+6123:             const variance = avgYields.reduce((s, v) => s + Math.pow(v - mean, 2), 0) / avgYields.length;
+6124:             const stdDev = Math.sqrt(variance);
+6125:             const rsd = mean !== 0 ? (stdDev / mean) * 100 : 0;
+6126: 
+6127:             rowsXml += statRow542('Minimum', minVal.toFixed(2));
+6128:             rowsXml += statRow542('Maximum', maxVal.toFixed(2));
+6129:             rowsXml += statRow542('Average', mean.toFixed(2));
+6130:             rowsXml += statRow542('Standard Deviation', stdDev.toFixed(2));
+6131:             rowsXml += statRow542('RSD (%)', rsd.toFixed(2));
+6132:           }
+
+--- Line 6131 ---
+6124:             const stdDev = Math.sqrt(variance);
+6125:             const rsd = mean !== 0 ? (stdDev / mean) * 100 : 0;
+6126: 
+6127:             rowsXml += statRow542('Minimum', minVal.toFixed(2));
+6128:             rowsXml += statRow542('Maximum', maxVal.toFixed(2));
+6129:             rowsXml += statRow542('Average', mean.toFixed(2));
+6130:             rowsXml += statRow542('Standard Deviation', stdDev.toFixed(2));
+6131:             rowsXml += statRow542('RSD (%)', rsd.toFixed(2));
+6132:           }
+6133: 
+6134:           const replacementTable542 = '<w:tbl>' + origTblPr + tblGrid542 + rowsXml + '</w:tbl>';
+6135:           docXml = docXml.substring(0, nextTblIdx) + replacementTable542 + docXml.substring(tblEndFull);
+6136:           console.log(`  ✅ Section 5.4.2 yield table replaced (${yieldRows.length} batch rows)`);
+6137:         }
+6138:       } else {
+
+--- Line 6188 ---
+6181:               { name: `NLT ${nltVal}%`, values: yFlat(nltVal, nYield) },
+6182:               { name: `NMT ${nmtVal}%`, values: yFlat(nmtVal, nYield) },
+6183:             ];
+6184: 
+6185:             let yieldIdx = 0;
+6186:             const updatedYieldChart = yieldCXmlRaw.replace(/<c:ser>([\s\S]*?)<\/c:ser>/g, (match, content) => {
+6187:               if (yieldIdx >= yieldSeries.length) return '';
+6188:               const sd = yieldSeries[yieldIdx++];
+6189:               let updated = content;
+6190:               updated = updated.replace(
+6191:                 /(<c:tx>[\s\S]*?<c:strRef>[\s\S]*?)<c:strCache>[\s\S]*?<\/c:strCache>([\s\S]*?<\/c:strRef>[\s\S]*?<\/c:tx>)/,
+6192:                 `$1${yBuildSerName(sd.name)}$2`
+6193:               );
+6194:               updated = updated.replace(
+6195:                 /(<c:cat>[\s\S]*?<c:strRef>[\s\S]*?)<c:strCache>[\s\S]*?<\/c:strCache>([\s\S]*?<\/c:strRef>[\s\S]*?<\/c:cat>)/,
