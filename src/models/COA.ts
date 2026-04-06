@@ -101,6 +101,7 @@ const FinishStageDataSchema = new Schema({
   mfgDate: { type: String, default: '' },
   expDate: { type: String, default: '' },
   specification: { type: String, default: '' },
+  specDocNo: { type: String, default: '' },
   packSize: { type: String, default: '' },
   releaseQty: { type: String, default: '' },
   criticalParameters: [CriticalParameterSchema],

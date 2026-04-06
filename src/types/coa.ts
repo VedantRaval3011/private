@@ -63,12 +63,18 @@ export interface CriticalParameter {
 }
 
 /**
- * Related substances/impurity data
+ * Related substances/impurity data.
+ * `group` identifies the test sub-group the entry was parsed from
+ * (e.g. "RELATED SUBSTANCE BY HPLC", "EARLY-ELUTING RELATED COMPOUNDS").
+ * `groupLimit` preserves the full LIMITS1 text for that sub-group so the
+ * complete multi-line limits block can be rendered in APQR tables.
  */
 export interface RelatedSubstance {
-  compound: string;     // e.g., "Dorzolamide impurity B"
-  limit: string;        // e.g., "NMT 1.1%"
-  result: string;       // e.g., "ND" (Not Detected)
+  compound: string;       // e.g., "Any secondary peak", "Specified unknown impurity 1"
+  group?: string;         // parent test name, e.g. "EARLY-ELUTING RELATED COMPOUNDS"
+  groupLimit?: string;    // full LIMITS1 text for the parent test (may be multi-line)
+  limit: string;          // individual compound limit, e.g., "NMT 1.1%"
+  result: string;         // e.g., "ND" or "0.030 %"
   complies: boolean;
 }
 
@@ -148,7 +154,8 @@ export interface FinishStageData {
   batchSize: string;          // ACTUALBATCHSIZE or BATCHSIZE
   mfgDate: string;            // MFGDT
   expDate: string;            // EXPDT
-  specification: string;      // SPEC
+  specification: string;      // SPEC (pharmacopeia ref, e.g. "IH", "USP")
+  specDocNo: string;          // ITMSPEC (spec document number, e.g. "SPFHY208B1D")
   packSize: string;           // PACK or PACK1
   releaseQty: string;         // RELESEQTY with RELEASEUOM
   
@@ -249,6 +256,50 @@ export interface BatchCOAResponse {
 // ============================================
 // APQR Summary Types (for report generation)
 // ============================================
+
+// ============================================
+// Section 5.3.2 — Finished Product Analysis
+// ============================================
+
+/**
+ * One column in a Section 5.3.2 dynamic table.
+ */
+export interface Finish532Column {
+  name: string;        // e.g., "Description", "Identification", "Related Substance"
+  subHeader: string;   // compound name shown on the sub-header row, may be empty
+  limitText: string;   // full limit text (may be multi-line) shown in the Limit → row
+}
+
+/**
+ * One data row in a Section 5.3.2 table.
+ */
+export interface Finish532Row {
+  batchNumber: string;
+  arNumber: string;
+  values: string[];    // one value per column; multi-line values use '\n'
+}
+
+/**
+ * A single rendered table for Section 5.3.2.
+ *
+ * Each table is preceded by an optional specification heading paragraph
+ * ("AS PER IP:", "AS PER USP:", etc.).
+ *
+ * Header structure (3 rows + 1 limit data row):
+ *   Row 0: Batch Number [vMerge] | AR. Number [vMerge] | critParamsTitle [span=N]
+ *   Row 1: [cont] | [cont] | (hasGroupRow → groupLabel [span=N]) | (else → col.name each)
+ *   Row 2: [cont] | [cont] | (hasGroupRow → col.name each) | (else → col.subHeader each)
+ *   Limit row (data): "Limit →" [span=2] | col.limitText each
+ *   Data rows: batchNumber | arNumber | values…
+ */
+export interface Finish532Table {
+  specificationLabel: string;  // "AS PER IP:", "AS PER USP:", "" for org. impurities
+  critParamsTitle: string;     // "Critical Parameters (Limit) (As per IP)"
+  hasGroupRow: boolean;        // true → organic impurities table layout
+  groupLabel: string;          // "Organic Impurities" (when hasGroupRow is true)
+  columns: Finish532Column[];
+  dataRows: Finish532Row[];
+}
 
 /**
  * Single row in APQR Bulk Stage Summary table

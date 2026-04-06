@@ -695,6 +695,7 @@ function extractFinishData(g1Data: unknown, rootData: unknown): FinishStageData 
   const mfgDate = findValueCI(g1, ['MFGDT'], '');
   const expDate = findValueCI(g1, ['EXPDT'], '');
   const specification = findValueCI(g1, ['SPEC', 'SPEC1'], '');
+  const specDocNo = findValueCI(g1, ['ITMSPEC'], '');
   const packSize = findValueCI(g1, ['PACK', 'PACK1'], '');
   const releaseQty = findValueCI(g1, ['RELESEQTY'], '') + ' ' + findValueCI(g1, ['RELEASEUOM'], '');
   
@@ -793,85 +794,94 @@ function extractFinishData(g1Data: unknown, rootData: unknown): FinishStageData 
           criticalParameters.push({ name: testName, limit: limits, result, complies });
           break;
           
-        case 'related_substances':
-          // Handle Related Substances section - captures impurity data
-          // Test name might be a compound header (like "DORZOLAMIDE" or "TIMOLOL")
-          // or an individual impurity (like "Dorzolamide impurity B")
-          
-          // Check if result contains multiple impurity entries (multi-line format)
+        case 'related_substances': {
+          // Build a per-impurity limit lookup from the LIMITS1 text.
+          // Format: "Impurity A : NMT 0.2%\nImpurity B : NMT 0.3%\n..."
+          const limitLookup: Record<string, string> = {};
+          if (limits && limits.includes(':')) {
+            for (const ll of limits.split('\n').filter(l => l.trim())) {
+              const lm = ll.match(/(.+?)\s*:\s*(.+)/);
+              if (lm) limitLookup[lm[1].trim().toLowerCase()] = lm[2].trim();
+            }
+          }
+
           if (result.includes(':') && (result.includes('\n') || result.includes(':'))) {
-            // Multi-line impurity results format: "Impurity B : ND\nImpurity D : ND\n..."
             const lines = result.split('\n').filter(l => l.trim());
-            
-            // Add a grouping entry for the compound header
+
             if (!isRelatedSubstanceTest(testName, '')) {
-              // This is a compound header like "DORZOLAMIDE" or "TIMOLOL"
-              // We'll prefix impurities with this compound name
+              // Compound-level header (e.g. "DORZOLAMIDE"): prefix each impurity
               const compoundHeader = testName.toUpperCase().trim();
-              
               for (const line of lines) {
                 const impurityMatch = line.match(/(.+?)\s*:\s*(.+)/);
                 if (impurityMatch) {
                   const impurityName = impurityMatch[1].trim();
                   const impurityResult = impurityMatch[2].trim();
-                  
-                  // Parse limit from the limits field if present
-                  const limitForImpurity = limits.split('\n')
-                    .find(l => l.toLowerCase().includes(impurityName.toLowerCase()))
-                    || limits.split('\n')[0] 
-                    || limits;
-                  
+                  const indivLimit = limitLookup[impurityName.toLowerCase()]
+                    || limits.split('\n').find(l => l.toLowerCase().includes(impurityName.toLowerCase()))?.replace(/^[^:]+:\s*/, '')
+                    || '';
                   relatedSubstances.push({
                     compound: `${compoundHeader}: ${impurityName}`,
-                    limit: limitForImpurity.trim(), 
+                    group: testName,
+                    groupLimit: limits,
+                    limit: indivLimit,
                     result: impurityResult,
-                    complies: impurityResult.toUpperCase().includes('ND') || 
+                    complies: impurityResult.toUpperCase().includes('ND') ||
                               impurityResult.toUpperCase().includes('NOT DETECTED') ||
                               !impurityResult.toUpperCase().includes('FAIL'),
                   });
                 }
               }
             } else {
-              // Individual impurity test line
+              // Sub-group test (e.g. "RELATED SUBSTANCE BY HPLC",
+              // "EARLY-ELUTING RELATED COMPOUNDS", "LATE-ELUTING RELATED COMPOUNDS"):
+              // each result line is "ImpurityName : result_value"
               for (const line of lines) {
                 const impurityMatch = line.match(/(.+?)\s*:\s*(.+)/);
                 if (impurityMatch) {
+                  const impurityName = impurityMatch[1].trim();
+                  const impurityResult = impurityMatch[2].trim();
+                  const indivLimit = limitLookup[impurityName.toLowerCase()] || '';
                   relatedSubstances.push({
-                    compound: impurityMatch[1].trim(),
-                    limit: limits, 
-                    result: impurityMatch[2].trim(),
-                    complies: impurityMatch[2].toUpperCase().includes('ND') || 
-                              impurityMatch[2].toUpperCase().includes('NOT DETECTED') ||
-                              !impurityMatch[2].toUpperCase().includes('FAIL'),
+                    compound: impurityName,
+                    group: testName,       // e.g. "EARLY-ELUTING RELATED COMPOUNDS"
+                    groupLimit: limits,    // full LIMITS1 text for this sub-group
+                    limit: indivLimit,
+                    result: impurityResult,
+                    complies: impurityResult.toUpperCase().includes('ND') ||
+                              impurityResult.toUpperCase().includes('NOT DETECTED') ||
+                              !impurityResult.toUpperCase().includes('FAIL'),
                   });
                 }
               }
             }
           } else {
-            // Single impurity result or simple entry
             relatedSubstances.push({
               compound: testName,
+              group: testName,
+              groupLimit: limits,
               limit: limits,
-              result: result,
+              result,
               complies,
             });
           }
           break;
+        }
           
         case 'assay':
           // Handle specific compound assay - ONLY actual assay percentage data
           // Skip if this looks like impurity data
           if (isRelatedSubstanceTest(testName, result)) {
-            // This is impurity data, add to related substances instead
             relatedSubstances.push({
               compound: testName,
+              group: testName,
+              groupLimit: limits,
               limit: limits,
-              result: result,
+              result,
               complies,
             });
             break;
           }
-          
+
           if (testName !== '.' && !testName.toUpperCase().startsWith('ASSAY')) {
             // Only add if this is actual assay data (has % result)
             if (isAssayData(testName, result, groupCategory === 'assay')) {
@@ -903,13 +913,15 @@ function extractFinishData(g1Data: unknown, rootData: unknown): FinishStageData 
           if (isRelatedSubstanceTest(testName, result)) {
             relatedSubstances.push({
               compound: testName,
+              group: testName,
+              groupLimit: limits,
               limit: limits,
-              result: result,
+              result,
               complies,
             });
             break;
           }
-          
+
           // Only add to assay if it's actual assay data with % results
           if (isAssayData(testName, result, groupCategory === 'assay')) {
             const limitMatch = limits.match(/(\d+\.?\d*)\s*%?\s*to\s*(\d+\.?\d*)\s*%?/i);
@@ -952,6 +964,7 @@ function extractFinishData(g1Data: unknown, rootData: unknown): FinishStageData 
     mfgDate,
     expDate,
     specification,
+    specDocNo,
     packSize,
     releaseQty,
     criticalParameters,

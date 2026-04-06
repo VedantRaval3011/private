@@ -403,6 +403,290 @@ function calculateProcessCapability(data: number[], limitStr: string): ProcessCa
   };
 }
 
+// ============================================
+// Section 5.3.2 — Finished Product Table Builder
+// ============================================
+
+/** Normalise a specification string to a canonical label, e.g. "IH" → "IP". */
+function normaliseSpec532(raw: string): string {
+  const s = (raw || '').toUpperCase().trim();
+  if (s === 'IH' || s === 'IP' || s.startsWith('IP')) return 'IP';
+  if (s === 'USP' || s.startsWith('USP'))              return 'USP';
+  if (s === 'BP'  || s.startsWith('BP'))               return 'BP';
+  if (s === 'EP'  || s.startsWith('EP'))               return 'EP';
+  return s || 'UNSPECIFIED';
+}
+
+/**
+ * Returns the canonical specs a COA should appear in.
+ * A COA with specification "IP/USP" appears in both IP and USP tables.
+ */
+function specsForCoa532(specField: string): string[] {
+  const upper = (specField || '').toUpperCase().trim();
+  const result: string[] = [];
+  if (upper.includes('IP') || upper.includes('IH')) result.push('IP');
+  if (upper.includes('USP'))                         result.push('USP');
+  if (upper.includes('BP'))                          result.push('BP');
+  if (upper.includes('EP'))                          result.push('EP');
+  return result.length > 0 ? result : [normaliseSpec532(specField)];
+}
+
+/**
+ * Build the array of Finish532Table objects from all FINISH stage COAs.
+ *
+ * Produces:
+ *  • One or more "Critical Parameters" tables per pharmacopoeial specification
+ *    (IP, USP, BP, …), each split at a maximum of 3 parameter columns.
+ *  • One "Organic Impurities" table when Early-Eluting or Late-Eluting data
+ *    exists (placed after all spec tables).
+ */
+function buildFinish532Tables(finishCoas: any[], batchOrder: string[]): any[] {
+  if (!finishCoas || finishCoas.length === 0) return [];
+
+  const tables: any[] = [];
+
+  // ── 1. Group COAs by canonical specification ──────────────────────────
+  // A single COA (e.g. spec="IP/USP") may contribute to multiple spec groups.
+  const coasBySpec = new Map<string, any[]>();
+  for (const coa of finishCoas) {
+    const specField = (coa as any).finishData?.specification || '';
+    for (const spec of specsForCoa532(specField)) {
+      if (!coasBySpec.has(spec)) coasBySpec.set(spec, []);
+      coasBySpec.get(spec)!.push(coa);
+    }
+  }
+
+  // Sort specs canonically: IP first, USP second, then alphabetical
+  const specPriority = ['IP', 'USP', 'BP', 'EP'];
+  const sortedSpecs = [...coasBySpec.keys()].sort((a, b) => {
+    const ai = specPriority.indexOf(a); const bi = specPriority.indexOf(b);
+    if (ai !== -1 && bi !== -1) return ai - bi;
+    if (ai !== -1) return -1; if (bi !== -1) return 1;
+    return a.localeCompare(b);
+  });
+
+  // ── 2. For each specification, build one or more Critical Parameters tables ──
+  for (const spec of sortedSpecs) {
+    const specCoas = coasBySpec.get(spec)!;
+
+    // Reference COA: most complete data (most criticalParameters + assayResults)
+    const refCoa = [...specCoas].sort((a: any, b: any) => {
+      const sa = (a.finishData?.criticalParameters?.length || 0) + (a.finishData?.assayResults?.length || 0);
+      const sb = (b.finishData?.criticalParameters?.length || 0) + (b.finishData?.assayResults?.length || 0);
+      return sb - sa;
+    })[0];
+    const refFd: any = refCoa?.finishData;
+    if (!refFd) continue;
+
+    const getCritLimit = (pat: RegExp): string =>
+      ((refFd.criticalParameters || []) as any[])
+        .find((p: any) => pat.test((p.name || '').toUpperCase()))?.limit || '';
+
+    // Build ALL parameter columns for this spec (order matters)
+    type Col532 = { name: string; subHeader: string; limitText: string };
+    const allCols: Col532[] = [];
+
+    // Description
+    const descLim = getCritLimit(/^DESCRIPTION$/);
+    if (refFd.description || descLim) {
+      allCols.push({ name: 'Description', subHeader: '', limitText: descLim });
+    }
+
+    // Identification tests (one column per compound)
+    for (const idTest of (refFd.identificationTests as any[] || [])) {
+      allCols.push({
+        name: 'Identification',
+        subHeader: idTest.compound || '',
+        limitText: idTest.specification || 'Complies',
+      });
+    }
+
+    // Related Substance by HPLC (multi-line limit text)
+    const hplcEntries: any[] = ((refFd.relatedSubstances as any[]) || []).filter(
+      (rs: any) => /RELATED SUBSTANCE BY HPLC|RELATED SUBSTANCE BY HPLC/i.test(rs.group || ''),
+    );
+    if (hplcEntries.length > 0) {
+      // Build limit text: "compound: limit\n..." from groupLimit of first entry
+      const hplcGroupLimit = hplcEntries[0]?.groupLimit || '';
+      allCols.push({ name: 'Related Substance', subHeader: '', limitText: hplcGroupLimit });
+    }
+
+    // pH
+    const phLim = getCritLimit(/\bPH\b/);
+    if (phLim || ((refFd.criticalParameters as any[]) || []).some((p: any) => /\bPH\b/.test((p.name || '').toUpperCase()))) {
+      allCols.push({ name: 'pH', subHeader: '', limitText: phLim });
+    }
+
+    // Uniformity of Volume
+    const uniLim = refFd.uniformityOfVolume?.limits || getCritLimit(/UNIFORMITY/);
+    if (uniLim || refFd.uniformityOfVolume?.result) {
+      allCols.push({ name: 'Uniformity of Volume', subHeader: '', limitText: uniLim });
+    }
+
+    // Capping
+    const capLim = refFd.capping?.limits || getCritLimit(/CAPPING/);
+    if (capLim || refFd.capping?.result) {
+      allCols.push({ name: 'Capping', subHeader: '', limitText: capLim });
+    }
+
+    // Sterility
+    const sterLim = refFd.sterility?.limits || getCritLimit(/STERILITY/);
+    if (sterLim || refFd.sterility?.result) {
+      allCols.push({ name: 'Sterility', subHeader: '', limitText: sterLim });
+    }
+
+    // Assay (one column per compound)
+    for (const assay of (refFd.assayResults as any[] || [])) {
+      const assayLim = assay.specification
+        || (assay.limitMin && assay.limitMax ? `${assay.limitMin} to ${assay.limitMax}` : '');
+      allCols.push({ name: 'Assay (%)', subHeader: assay.compound || '', limitText: assayLim });
+    }
+
+    if (allCols.length === 0) continue;
+
+    // Pre-compute per-batch data values for all columns
+    interface BatchValues { batchNumber: string; arNumber: string; vals: Record<string, string> }
+    const batchValMap = new Map<string, BatchValues>();
+
+    for (const coa of specCoas) {
+      const fd: any = (coa as any).finishData;
+      if (!fd) continue;
+      const key = `${coa.batchNumber}__${fd.arNumber || ''}`;
+      if (batchValMap.has(key)) continue;
+
+      const crit: any[] = fd.criticalParameters || [];
+      const getCrit = (pat: RegExp): string =>
+        crit.find((p: any) => pat.test((p.name || '').toUpperCase()))?.result || '';
+
+      const vals: Record<string, string> = {};
+      vals['Description'] = fd.description || getCrit(/^DESCRIPTION$/);
+
+      for (const id of (fd.identificationTests as any[] || [])) {
+        vals[`Identification::${id.compound}`] = id.result || '';
+      }
+
+      const hplcBatch: any[] = ((fd.relatedSubstances as any[]) || []).filter(
+        (rs: any) => /RELATED SUBSTANCE BY HPLC/i.test(rs.group || ''),
+      );
+      vals['Related Substance'] = hplcBatch.map((rs: any) => rs.result || 'ND').join('\n');
+
+      vals['pH'] = getCrit(/\bPH\b/);
+      vals['Uniformity of Volume'] = fd.uniformityOfVolume?.result || getCrit(/UNIFORMITY/);
+      vals['Capping']  = fd.capping?.result  || getCrit(/CAPPING/);
+      vals['Sterility'] = fd.sterility?.result || getCrit(/STERILITY/);
+
+      for (const assay of (fd.assayResults as any[] || [])) {
+        vals[`Assay (%)::${assay.compound}`] = assay.result || '';
+      }
+
+      batchValMap.set(key, {
+        batchNumber: coa.batchNumber,
+        arNumber: fd.arNumber || (coa as any).arNumber || '',
+        vals,
+      });
+    }
+
+    // Order data rows by batchOrder
+    const orderedRows: any[] = [];
+    for (const bn of batchOrder) {
+      for (const [, bv] of batchValMap) {
+        if (bv.batchNumber === bn) orderedRows.push(bv);
+      }
+    }
+    // Append any batches not in the official order (shouldn't happen, but safe)
+    for (const [, bv] of batchValMap) {
+      if (!orderedRows.some(r => r.batchNumber === bv.batchNumber && r.arNumber === bv.arNumber)) {
+        orderedRows.push(bv);
+      }
+    }
+
+    // Split into groups of ≤ 3 columns → one table per group
+    for (let start = 0; start < allCols.length; start += 3) {
+      const colGroup = allCols.slice(start, start + 3);
+
+      const dataRows = orderedRows.map((bv: BatchValues) => ({
+        batchNumber: bv.batchNumber,
+        arNumber: bv.arNumber,
+        values: colGroup.map(col => {
+          if (col.name === 'Identification' && col.subHeader)
+            return bv.vals[`Identification::${col.subHeader}`] || '';
+          if (col.name === 'Assay (%)' && col.subHeader)
+            return bv.vals[`Assay (%)::${col.subHeader}`] || '';
+          return bv.vals[col.name] || '';
+        }),
+      }));
+
+      tables.push({
+        specificationLabel: `AS PER ${spec}:`,
+        critParamsTitle:    `Critical Parameters (Limit) (As per ${spec})`,
+        hasGroupRow: false,
+        groupLabel:  '',
+        columns:   colGroup,
+        dataRows,
+      });
+    }
+  }
+
+  // ── 3. Organic Impurities table ────────────────────────────────────────
+  const EARLY_KEY = 'EARLY-ELUTING RELATED COMPOUNDS';
+  const LATE_KEY  = 'LATE-ELUTING RELATED COMPOUNDS';
+
+  let earlyGroupLimit = '';
+  let lateGroupLimit  = '';
+  const orgImpRows: any[] = [];
+
+  // Deduplicate by batchNumber+arNumber, preserve batch order
+  const seenOrgKeys = new Set<string>();
+  for (const bn of batchOrder) {
+    for (const coa of finishCoas) {
+      if ((coa as any).batchNumber !== bn) continue;
+      const fd: any = (coa as any).finishData;
+      if (!fd?.relatedSubstances) continue;
+
+      const earlyEntries: any[] = ((fd.relatedSubstances as any[]) || []).filter(
+        (rs: any) => (rs.group || '').toUpperCase() === EARLY_KEY,
+      );
+      const lateEntries: any[] = ((fd.relatedSubstances as any[]) || []).filter(
+        (rs: any) => (rs.group || '').toUpperCase() === LATE_KEY,
+      );
+
+      if (earlyEntries.length === 0 && lateEntries.length === 0) continue;
+
+      const key = `${coa.batchNumber}__${fd.arNumber || ''}`;
+      if (seenOrgKeys.has(key)) continue;
+      seenOrgKeys.add(key);
+
+      if (!earlyGroupLimit && earlyEntries[0]?.groupLimit) earlyGroupLimit = earlyEntries[0].groupLimit;
+      if (!lateGroupLimit  && lateEntries[0]?.groupLimit)  lateGroupLimit  = lateEntries[0].groupLimit;
+
+      orgImpRows.push({
+        batchNumber: coa.batchNumber,
+        arNumber:    fd.arNumber || (coa as any).arNumber || '',
+        values: [
+          earlyEntries.map((rs: any) => rs.result || 'ND').join('\n'),
+          lateEntries.map((rs: any) => rs.result  || 'ND').join('\n'),
+        ],
+      });
+    }
+  }
+
+  if (orgImpRows.length > 0) {
+    tables.push({
+      specificationLabel: '',
+      critParamsTitle:    'Critical Parameters (Limit)',
+      hasGroupRow: true,
+      groupLabel:  'Organic Impurities',
+      columns: [
+        { name: 'Early-Eluting Related Compounds', subHeader: '', limitText: earlyGroupLimit },
+        { name: 'Late-Eluting Related Compounds',  subHeader: '', limitText: lateGroupLimit  },
+      ],
+      dataRows: orgImpRows,
+    });
+  }
+
+  return tables;
+}
+
 /**
  * Get APQR data for a given product code and year
  */
@@ -1685,6 +1969,35 @@ export async function getApqrData(productCode: string, year: number) {
     console.log(`✅ Section 5.3.1: ${bulkInProcessData.length} bulk in-process rows, ${bulkAssayColumns.length} assay column(s)`);
   }
 
+  // ── Section 5.3.2 — Finished Product Analysis ──
+  // Fetch all FINISH stage COAs; build spec-number heading text AND structured
+  // Finish532Table[] used for generating multiple DOCX tables.
+  const finishSpecNumbers: string[] = [];
+  let finish532Tables: any[] = [];
+
+  if (finalBatches.length > 0) {
+    const batchNumbers532 = finalBatches.map((b: any) => b.batchNumber);
+    console.log(`\n📋 Section 5.3.2: Fetching FINISH COAs (${batchNumbers532.length} batches)`);
+
+    const finishCoas532 = await COA.find({
+      batchNumber: { $in: batchNumbers532 },
+      stage: 'FINISH',
+    }).lean();
+
+    // Spec document numbers for the section heading
+    const specDocNoSet = new Set<string>();
+    for (const coa of finishCoas532) {
+      const sdn = (coa as any).finishData?.specDocNo;
+      if (sdn && sdn.trim()) specDocNoSet.add(sdn.trim());
+    }
+    finishSpecNumbers.push(...Array.from(specDocNoSet).sort());
+
+    // Build structured tables
+    const batchOrder532 = finalBatches.map((b: any) => b.batchNumber as string);
+    finish532Tables = buildFinish532Tables(finishCoas532, batchOrder532);
+
+    console.log(`✅ Section 5.3.2: ${finish532Tables.length} tables, spec numbers: ${finishSpecNumbers.join(', ') || '(none)'}`);
+  }
 
   // ── Section 5.4.2 — At Finished Stage: Yield Data ──
   interface YieldRow542 {
@@ -1782,6 +2095,8 @@ export async function getApqrData(productCode: string, year: number) {
       assayLimit: bulkAssayLimit,
       assayColumns: bulkAssayColumns,         // ALL compounds: { compound, limit }[]
     },
+    finishSpecNumbers,             // Section 5.3.2 - Unique spec doc numbers (ITMSPEC) from FINISH COAs
+    finish532Tables,               // Section 5.3.2 - Structured tables (spec + organic impurities)
     yieldData542: yieldRows542,    // Section 5.4.2 - At Finished Stage yield data
 
     // Individual month counts
@@ -2556,6 +2871,25 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
 
   for (const [find, replace] of replacements) {
     docXml = replaceTextInXml(docXml, find, replace);
+  }
+
+  // ── 2d. Section 5.3.2 heading — replace spec numbers with dynamic values from FINISH COAs ──
+  // Heading pattern: "Finished Product Analysis (Specification No: SPFHY208B1D, ...)"
+  // Source: finishSpecNumbers collected from ITMSPEC field of FINISH stage COAs
+  {
+    const finishSpecNums: string[] = (data as any).finishSpecNumbers || [];
+    if (finishSpecNums.length > 0) {
+      const newSpecStr = finishSpecNums.join(', ');
+      // Replace in both TOC and body: find <w:t> elements containing "Specification No:"
+      // and replace the spec number list that follows up to ")"
+      docXml = docXml.replace(
+        /(<w:t[^>]*>[^<]*Specification No:\s*)[^)<]+(\))/g,
+        (_, prefix, suffix) => `${prefix}${xmlEscape(newSpecStr)}${suffix}`
+      );
+      console.log(`✅ Section 5.3.2 heading: updated spec numbers → ${newSpecStr}`);
+    } else {
+      console.warn('⚠️ Section 5.3.2 heading: no FINISH COA spec numbers found — heading left as-is');
+    }
   }
 
   // ── Gap Fix: Remove empty paragraphs before BATCHES MANUFACTURED ──
@@ -5220,6 +5554,217 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
         console.warn('  ⚠️ chart12.xml not found in document rels — yield chart not updated');
       }
     }
+  }
+
+  // ── 11c. Dynamic Section 5.3.2 – Finished Product Analysis Tables ──
+  //
+  // Generates one or more tables from `data.finish532Tables`:
+  //   • One "Critical Parameters" table per pharmacopoeia (IP, USP, …),
+  //     split into sub-tables of ≤ 3 parameter columns each.
+  //   • One "Organic Impurities" table when Early/Late-Eluting data exists.
+  //
+  // The first table replaces the existing static 5.3.2 template table.
+  // Any additional tables are inserted as new paragraphs+tables in-place.
+  if (data.finish532Tables && (data.finish532Tables as any[]).length > 0) {
+    const fp532Tables: any[] = data.finish532Tables as any[];
+    console.log(`\n📋 Section 5.3.2: generating ${fp532Tables.length} table(s)`);
+
+    // ── Locate the template table after the section heading ──
+    // "Finished Product Analysis" appears once in the TOC and once in the body.
+    const fpBodyHeading = 'Finished Product Analysis';
+    let fpBodyIdx = docXml.indexOf(fpBodyHeading);
+    if (fpBodyIdx !== -1) fpBodyIdx = docXml.indexOf(fpBodyHeading, fpBodyIdx + fpBodyHeading.length);
+
+    if (fpBodyIdx === -1) {
+      console.warn('⚠️ Section 5.3.2: body heading not found — tables not replaced');
+    } else {
+      const fp532TplStart = docXml.indexOf('<w:tbl', fpBodyIdx);
+      if (fp532TplStart === -1) {
+        console.warn('⚠️ Section 5.3.2: template table not found after heading');
+      } else {
+        // Walk to end of template table
+        let fp532Depth = 0, fp532TplEnd = -1;
+        const fp532Rx = /<\/?w:tbl\b[^>]*>/g;
+        fp532Rx.lastIndex = fp532TplStart;
+        let fp532M;
+        while ((fp532M = fp532Rx.exec(docXml)) !== null) {
+          if (fp532M[0].startsWith('<w:tbl')) fp532Depth++;
+          else if (fp532M[0].startsWith('</w:tbl')) {
+            fp532Depth--;
+            if (fp532Depth === 0) { fp532TplEnd = fp532M.index + fp532M[0].length; break; }
+          }
+        }
+
+        if (fp532TplEnd === -1) {
+          console.warn('⚠️ Section 5.3.2: could not find end of template table');
+        } else {
+          // Capture the original table properties for reuse
+          const fp532OrigXml = docXml.substring(fp532TplStart, fp532TplEnd);
+          const fp532TblPr = fp532OrigXml.match(/<w:tblPr>[\s\S]*?<\/w:tblPr>/)?.[0]
+            || '<w:tblPr><w:tblW w:w="5000" w:type="pct"/><w:jc w:val="center"/>'
+            + '<w:tblBorders>'
+            + '<w:top w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
+            + '<w:left w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
+            + '<w:bottom w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
+            + '<w:right w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
+            + '<w:insideH w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
+            + '<w:insideV w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
+            + '</w:tblBorders></w:tblPr>';
+
+          // ── Per-table XML builders ──────────────────────────────────────
+
+          /** Shaded bold header cell (grey background). Supports vMerge and gridSpan. */
+          const fp532Hdr = (
+            text: string,
+            opts?: { vMerge?: 'restart' | 'continue'; gridSpan?: number },
+          ) => {
+            let tcPr = '<w:shd w:val="clear" w:color="auto" w:fill="D9D9D9"/><w:vAlign w:val="center"/>';
+            if (opts?.vMerge === 'restart') tcPr = '<w:vMerge w:val="restart"/>' + tcPr;
+            else if (opts?.vMerge === 'continue') tcPr = '<w:vMerge/>' + tcPr;
+            if (opts?.gridSpan) tcPr += `<w:gridSpan w:val="${opts.gridSpan}"/>`;
+            const rPr = '<w:rPr><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>';
+            const pPr = `<w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/>${rPr}</w:pPr>`;
+            const lines = (text || '').split('\n');
+            let body = '';
+            lines.forEach((line, li) => {
+              const para = li === 0 ? pPr : `<w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/></w:pPr>`;
+              body += `<w:p>${para}${line.trim() ? `<w:r>${rPr}<w:t xml:space="preserve">${xmlEscape(line)}</w:t></w:r>` : ''}</w:p>`;
+            });
+            return `<w:tc><w:tcPr>${tcPr}</w:tcPr>${body}</w:tc>`;
+          };
+
+          /**
+           * Normal data cell (no shading).
+           * Multi-line values (containing '\n') produce multiple <w:p> paragraphs
+           * so they render on separate lines inside the same cell.
+           */
+          const fp532Data = (text: string, opts?: { gridSpan?: number; shaded?: boolean }) => {
+            let tcPr = '<w:vAlign w:val="center"/>';
+            if (opts?.shaded) tcPr += '<w:shd w:val="clear" w:color="auto" w:fill="D9D9D9"/>';
+            if (opts?.gridSpan) tcPr += `<w:gridSpan w:val="${opts.gridSpan}"/>`;
+            const rPr = '<w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>';
+            const pPr = `<w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/>${rPr}</w:pPr>`;
+            const lines = (text || '').split('\n');
+            const body = lines.map(
+              line => `<w:p>${pPr}<w:r>${rPr}<w:t xml:space="preserve">${xmlEscape(line)}</w:t></w:r></w:p>`,
+            ).join('');
+            return `<w:tc><w:tcPr>${tcPr}</w:tcPr>${body || `<w:p>${pPr}</w:p>`}</w:tc>`;
+          };
+
+          /** Build the tblGrid for fixed (Batch, AR) + N dynamic columns. */
+          const fp532Grid = (nCols: number) => {
+            const paramW = Math.max(1200, Math.floor(7200 / Math.max(nCols, 1)));
+            return '<w:tblGrid>'
+              + '<w:gridCol w:w="1300"/>'   // Batch Number
+              + '<w:gridCol w:w="1600"/>'   // AR. Number
+              + Array.from({ length: nCols }, () => `<w:gridCol w:w="${paramW}"/>`).join('')
+              + '</w:tblGrid>';
+          };
+
+          /**
+           * Build one complete <w:tbl> XML string from a Finish532Table object.
+           *
+           * Table header (3 rows):
+           *   Row 0: Batch [vMerge] | AR [vMerge] | critParamsTitle [span=N]
+           *   Row 1: [cont] | [cont] | (hasGroupRow → groupLabel [span=N])
+           *                           (else         → col.name per col)
+           *   Row 2: [cont] | [cont] | (hasGroupRow → col.name per col)
+           *                           (else         → col.subHeader per col)
+           * Limit data row:
+           *   "Limit →" [span=2, shaded] | col.limitText per col
+           * Data rows:
+           *   batchNumber | arNumber | values per col
+           */
+          const buildFp532TableXml = (tbl: any): string => {
+            const cols: any[] = tbl.columns || [];
+            const N = cols.length;
+
+            // Row 0
+            const row0 = '<w:tr><w:trPr><w:trHeight w:val="400"/></w:trPr>'
+              + fp532Hdr('Batch\nNumber', { vMerge: 'restart' })
+              + fp532Hdr('AR.\nNumber', { vMerge: 'restart' })
+              + fp532Hdr(tbl.critParamsTitle, { gridSpan: N })
+              + '</w:tr>';
+
+            // Row 1
+            let row1 = '<w:tr><w:trPr><w:trHeight w:val="400"/></w:trPr>'
+              + fp532Hdr('', { vMerge: 'continue' })
+              + fp532Hdr('', { vMerge: 'continue' });
+            if (tbl.hasGroupRow) {
+              row1 += fp532Hdr(tbl.groupLabel, { gridSpan: N });
+            } else {
+              for (const col of cols) row1 += fp532Hdr(col.name);
+            }
+            row1 += '</w:tr>';
+
+            // Row 2
+            let row2 = '<w:tr><w:trPr><w:trHeight w:val="400"/></w:trPr>'
+              + fp532Hdr('', { vMerge: 'continue' })
+              + fp532Hdr('', { vMerge: 'continue' });
+            if (tbl.hasGroupRow) {
+              for (const col of cols) row2 += fp532Hdr(col.name);
+            } else {
+              for (const col of cols) row2 += fp532Hdr(col.subHeader || '');
+            }
+            row2 += '</w:tr>';
+
+            // Limit data row
+            const limitRow = '<w:tr>'
+              + fp532Data('Limit \u2192', { gridSpan: 2, shaded: true })
+              + cols.map((col: any) => fp532Data(col.limitText || '')).join('')
+              + '</w:tr>';
+
+            // Data rows
+            let dataRowsXml = '';
+            for (const row of (tbl.dataRows || [])) {
+              dataRowsXml += '<w:tr>';
+              dataRowsXml += fp532Data(row.batchNumber || '');
+              dataRowsXml += fp532Data(row.arNumber || '');
+              for (const val of (row.values || [])) {
+                dataRowsXml += fp532Data(val || '');
+              }
+              dataRowsXml += '</w:tr>';
+            }
+
+            return '<w:tbl>'
+              + fp532TblPr
+              + fp532Grid(N)
+              + row0 + row1 + row2
+              + limitRow
+              + dataRowsXml
+              + '</w:tbl>';
+          };
+
+          /** Render an "AS PER IP:" heading paragraph between tables. */
+          const specHeadingPara = (label: string): string => {
+            if (!label) return '';
+            const rPr = '<w:rPr><w:b/><w:u w:val="single"/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr>';
+            return '<w:p><w:pPr><w:spacing w:before="120" w:after="60"/>'
+              + `${rPr}</w:pPr>`
+              + `<w:r>${rPr}<w:t xml:space="preserve">${xmlEscape(label)}</w:t></w:r></w:p>`;
+          };
+
+          // ── Assemble all replacement XML ────────────────────────────────
+          let fp532Replacement = '';
+          for (const tbl of fp532Tables) {
+            if (tbl.specificationLabel) {
+              fp532Replacement += specHeadingPara(tbl.specificationLabel);
+            }
+            fp532Replacement += buildFp532TableXml(tbl);
+            // Spacing paragraph between tables
+            fp532Replacement += '<w:p><w:pPr><w:spacing w:before="60" w:after="60"/></w:pPr></w:p>';
+          }
+
+          docXml = docXml.substring(0, fp532TplStart)
+            + fp532Replacement
+            + docXml.substring(fp532TplEnd);
+
+          console.log(`  ✅ Section 5.3.2: replaced template table with ${fp532Tables.length} table(s)`);
+        }
+      }
+    }
+  } else {
+    console.log('ℹ️  Section 5.3.2: no finish532Tables — template table left unchanged');
   }
 
   // ── 12. Write modified XML back and generate output ─────────
