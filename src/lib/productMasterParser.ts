@@ -27,6 +27,20 @@ interface ParsedProductMaster {
   actualFilling?: string;
   exciseDutyGroup?: string;
   exciseNotification?: string;
+  // Specification & batch fields from XML
+  specification?: string;
+  effectiveBatchNo?: string;
+  effectiveDate?: string;
+  revisionNo?: string;
+  revisionRemark?: string;
+  workStatus?: string;
+  formulaMasterId?: string;
+  mfgLicenseNo?: string;
+  liveMonth?: string;
+  batchSize?: string;
+  batchUom?: string;
+  locationCode?: string;
+  isNonActive?: string;
 }
 
 // ... existing helper functions (safeGet, findValue) ...
@@ -142,6 +156,22 @@ export async function parseProductMasterXml(xmlContent: string): Promise<ParsedP
         actualFilling: findValue(item, ['ACTFILLING', 'ACTUAL_FILLING', 'FILLING']) || '',
         exciseDutyGroup: findValue(item, ['EXDGROUP', 'EXCISE_DUTY_GROUP', 'EXCISE_GROUP']) || '',
         exciseNotification: findValue(item, ['NOTIFICATION', 'NOTIF', 'EXCISE_NOTIFICATION']) || '',
+
+        // Specification & effective batch fields
+        specification: findValue(item, ['SPEC1', 'SPEC', 'SPECIFICATION']) || '',
+        // PRIZEEFF is the "Effective Batch No" field in the product master XML (price-effective batch)
+        effectiveBatchNo: findValue(item, ['PRIZEEFF', 'EFFBATCH1', 'EFFBATCH', 'EFF_BATCH', 'EFFECTIVE_BATCH']) || '',
+        effectiveDate: findValue(item, ['EFDATE', 'EFDATE1', 'EFF_DATE', 'EFFECTIVE_DATE']) || '',
+        revisionNo: findValue(item, ['REVNO', 'REV_NO', 'REVISION_NO']) || '',
+        revisionRemark: findValue(item, ['REVRMK', 'REV_RMK', 'REVISION_REMARK']) || '',
+        workStatus: findValue(item, ['WRKSTATUS', 'WORK_STATUS', 'STATUS']) || '',
+        formulaMasterId: findValue(item, ['FORMASTID', 'FORMULA_MAST_ID', 'FORMAST_ID']) || '',
+        mfgLicenseNo: findValue(item, ['MFGLICNO', 'MFG_LIC_NO', 'MFG_LICENSE']) || '',
+        liveMonth: findValue(item, ['LIVEMONTH', 'LIVE_MONTH', 'SHELF_LIFE_MONTHS']) || '',
+        batchSize: findValue(item, ['BATCHSIZE1', 'BATCHSIZE', 'BATCH_SIZE']) || '',
+        batchUom: findValue(item, ['BATCHUOM1', 'BATCHUOM', 'BATCH_UOM']) || '',
+        locationCode: findValue(item, ['LOCCODE1', 'LOCCODE', 'LOC_CODE', 'LOCATION_CODE']) || '',
+        isNonActive: findValue(item, ['NONACTIVE', 'NON_ACTIVE', 'INACTIVE']) || '',
       });
     }
 

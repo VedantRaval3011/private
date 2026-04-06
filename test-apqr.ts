@@ -29,8 +29,8 @@ async function run() {
     try {
         const data = await getApqrData(productCode, 2025);
         fs.writeFileSync('apqr-debug.json', JSON.stringify({
-            columns: data.finishInProcessColumns,
-            dataPreview: data.finishInProcessData.slice(0, 3)
+            
+            
         }, null, 2));
         console.log('Wrote output to apqr-debug.json');
     } catch (e) {

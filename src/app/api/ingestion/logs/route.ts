@@ -10,6 +10,7 @@ import ProcessingLog from '@/models/ProcessingLog';
 import Batch from '@/models/Batch';
 import Formula from '@/models/Formula';
 import { COA } from '@/models/COA';
+import ProductMaster from '@/models/ProductMaster';
 import type { ProcessingLogsResponse } from '@/types/ingestion';
 
 /**
@@ -134,11 +135,15 @@ export async function DELETE(
         }).lean();
         recordExists = !!formula;
       } else if (fileType === 'COA') {
-        // Check if the COA document (identified by contentHash) still exists
         const coa = contentHash
           ? await COA.findOne({ contentHash }).lean()
           : null;
         recordExists = !!coa;
+      } else if (fileType === 'PRODUCT_MASTER') {
+        const pm = await ProductMaster.findOne(
+          fileName ? { sourceFile: fileName } : {}
+        ).lean();
+        recordExists = !!pm;
       } else {
         // For RM_COA, REQUISITION, INWARD_REGISTER, etc. — keep the log unless explicitly deleted
         recordExists = true;

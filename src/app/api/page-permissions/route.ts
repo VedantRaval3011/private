@@ -12,7 +12,6 @@ export const ALL_PAGES = [
   { pageRoute: '/bulk-calculation', pageName: 'Bulk Calculation' },
   { pageRoute: '/coa', pageName: 'COA Management' },
   { pageRoute: '/data-validation', pageName: 'Data Validation' },
-  { pageRoute: '/finish-calculation', pageName: 'Finish Calculation' },
   { pageRoute: '/formula-data', pageName: 'Formula Data' },
   { pageRoute: '/inward-register', pageName: 'Inward Register' },
   { pageRoute: '/material-availability', pageName: 'Material Availability' },

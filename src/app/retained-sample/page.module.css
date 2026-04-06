@@ -54,7 +54,156 @@
   background: rgba(255, 255, 255, 0.3);
 }
 
+.headerLeft {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.backHomeBtn {
+  font-size: 0.75rem;
+  background: rgba(255, 255, 255, 0.15);
+  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: var(--radius-lg);
+  padding: 0.375rem 0.875rem;
+  cursor: pointer;
+  font-weight: 500;
+  white-space: nowrap;
+  transition: background var(--transition-fast);
+}
+
+.backHomeBtn:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
+
 .headerBtns {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* ── Table Controls Bar (search + filter above section 1) ── */
+
+.tableControlsBar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.tableSearchBar {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.3rem 0.625rem;
+  background: var(--card-bg, #f8fafc);
+  border: 1px solid var(--border-subtle, #e2e8f0);
+  border-radius: 10px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  width: 280px;
+  flex-shrink: 0;
+}
+
+.tableSearchInput {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  font-size: 0.8rem;
+  color: var(--foreground, #0f172a);
+  outline: none;
+}
+
+.tableSearchInput::placeholder {
+  color: #94a3b8;
+}
+
+.missingCOABtn {
+  font-size: 0.75rem;
+  background: rgba(245, 158, 11, 0.1);
+  color: #b45309;
+  border: 1px solid rgba(245, 158, 11, 0.4);
+  border-radius: 10px;
+  padding: 0.3rem 0.75rem;
+  cursor: pointer;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.missingCOABtn:hover {
+  background: rgba(245, 158, 11, 0.2);
+}
+
+.missingCOABtnActive {
+  background: #f59e0b;
+  color: #ffffff;
+  border-color: #f59e0b;
+}
+
+.missingCOABtnActive:hover {
+  background: #d97706;
+}
+
+.exportExcelBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  background: #16a34a;
+  color: #ffffff;
+  border: none;
+  border-radius: 8px;
+  padding: 0.4rem 0.875rem;
+  cursor: pointer;
+  white-space: nowrap;
+  letter-spacing: 0.01em;
+  box-shadow: 0 1px 3px rgba(22, 163, 74, 0.35), 0 1px 2px rgba(0,0,0,0.08);
+  transition: background 0.15s ease, box-shadow 0.15s ease, transform 0.1s ease;
+}
+
+.exportExcelBtn:hover {
+  background: #15803d;
+  box-shadow: 0 4px 10px rgba(22, 163, 74, 0.35), 0 2px 4px rgba(0,0,0,0.1);
+  transform: translateY(-1px);
+}
+
+.exportExcelBtn:active {
+  background: #166534;
+  box-shadow: 0 1px 2px rgba(22, 163, 74, 0.2);
+  transform: translateY(0);
+}
+
+.viewToggleBtn {
+  font-size: 0.75rem;
+  background: rgba(59, 130, 246, 0.1);
+  color: #1d4ed8;
+  border: 1px solid rgba(59, 130, 246, 0.4);
+  border-radius: 10px;
+  padding: 0.3rem 0.75rem;
+  cursor: pointer;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.viewToggleBtn:hover {
+  background: rgba(59, 130, 246, 0.2);
+}
+
+.viewToggleBtnActive {
+  background: #3b82f6;
+  color: #ffffff;
+  border-color: #3b82f6;
+}
+
+.viewToggleBtnActive:hover {
+  background: #2563eb;
+}
+
+.tableFilterBtns {
   display: flex;
   align-items: center;
   gap: 0.5rem;
@@ -62,18 +211,19 @@
 
 .outOfRangeFilterBtn {
   font-size: 0.75rem;
-  background: rgba(239, 68, 68, 0.25);
-  color: #fecaca;
-  border: 1px solid rgba(239, 68, 68, 0.5);
-  border-radius: var(--radius-lg);
-  padding: 0.375rem 0.875rem;
+  background: rgba(239, 68, 68, 0.1);
+  color: #b91c1c;
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  border-radius: 10px;
+  padding: 0.3rem 0.75rem;
   cursor: pointer;
   font-weight: 600;
-  transition: background var(--transition-fast), border-color var(--transition-fast);
+  white-space: nowrap;
+  transition: background 0.15s ease, border-color 0.15s ease;
 }
 
 .outOfRangeFilterBtn:hover {
-  background: rgba(239, 68, 68, 0.4);
+  background: rgba(239, 68, 68, 0.2);
 }
 
 .outOfRangeFilterBtnActive {
@@ -675,13 +825,13 @@
 .table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.8125rem;
+  font-size: 0.75rem;
 }
 
 .table th {
-  padding: 0.5rem 0.625rem;
+  padding: 0.375rem 0.5rem;
   background: var(--muted);
-  font-size: 0.6875rem;
+  font-size: 0.625rem;
   font-weight: 600;
   color: var(--muted-foreground);
   text-transform: uppercase;
@@ -696,33 +846,33 @@
 }
 
 .colBatchNo {
-  min-width: 120px;
+  min-width: 95px;
   position: sticky;
   left: 0;
   z-index: 2;
 }
 
 .colItemCode {
-  min-width: 110px;
+  min-width: 85px;
   white-space: nowrap;
 }
 
 .colMeta {
-  min-width: 100px;
+  min-width: 80px;
   white-space: nowrap;
 }
 
 .colProductCode {
-  min-width: 110px;
+  min-width: 85px;
   white-space: nowrap;
 }
 
 .colProductName {
-  min-width: 180px;
+  min-width: 140px;
 }
 
 .colMonth {
-  min-width: 145px;
+  min-width: 120px;
 }
 
 /* Row alternating */
@@ -737,7 +887,7 @@
 /* ── Cells ──────────────────────────────────────────────── */
 
 .tdBase {
-  padding: 0.5rem 0.625rem;
+  padding: 0.375rem 0.5rem;
   border: 1px solid var(--border);
   vertical-align: top;
 }
@@ -747,18 +897,18 @@
   left: 0;
   z-index: 1;
   background: inherit;
-  min-width: 120px;
+  min-width: 95px;
   white-space: nowrap;
 }
 
 .tdItemCode {
-  min-width: 110px;
+  min-width: 80px;
   white-space: nowrap;
 }
 
 .itemCodeChip {
   display: inline-block;
-  font-size: 0.75rem;
+  font-size: 0.6875rem;
   font-weight: 600;
   color: #5b21b6;
   background: #ede9fe;
@@ -768,16 +918,16 @@
 }
 
 .tdMeta {
-  min-width: 100px;
+  min-width: 78px;
   white-space: nowrap;
 }
 
 .tdProductName {
-  min-width: 180px;
+  min-width: 130px;
 }
 
 .metaText {
-  font-size: 0.8rem;
+  font-size: 0.7rem;
   color: #374151;
 }
 
@@ -787,14 +937,14 @@
 }
 
 .productNameText {
-  font-size: 0.8rem;
+  font-size: 0.7rem;
   color: #1e293b;
   font-weight: 500;
 }
 
 .batchNum {
   font-weight: 600;
-  font-size: 0.8125rem;
+  font-size: 0.75rem;
   color: var(--foreground);
 }
 
@@ -812,7 +962,7 @@
 
 /* 0-month COA cell */
 .tdCoa {
-  min-width: 145px;
+  min-width: 115px;
 }
 
 .coaPhRow {
@@ -906,27 +1056,27 @@
 }
 
 .phLabel {
-  font-size: 0.6875rem;
+  font-size: 0.625rem;
   font-weight: 700;
   color: var(--muted-foreground);
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  width: 1.375rem;
+  width: 1.25rem;
   flex-shrink: 0;
 }
 
 .phInput {
   flex: 1;
-  max-width: 70px;
-  font-size: 0.75rem;
+  font-size: 0.7rem;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  padding: 0.25rem 0.375rem;
+  padding: 0.2rem 0.3rem;
   background: #ffffff !important;
   color: var(--foreground);
   outline: none;
   transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
   min-width: 0;
+  width: 100%;
 }
 
 .phInputDisabled {
@@ -962,17 +1112,18 @@
 }
 
 .descInput {
-  font-size: 0.75rem;
+  font-size: 0.7rem;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  padding: 0.25rem 0.375rem;
+  padding: 0.2rem 0.3rem;
   background: #ffffff !important;
   color: var(--foreground);
   outline: none;
-  resize: none;
+  resize: vertical;
   width: 100%;
   font-family: inherit;
   line-height: 1.4;
+  min-height: 3.5rem;
   transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
 }
 
@@ -1073,6 +1224,17 @@
   font-weight: 700;
   color: #3730a3;
   letter-spacing: -0.01em;
+}
+
+.batchCountBadge {
+  font-size: 0.75rem;
+  font-weight: 600;
+  background: #f1f5f9;
+  color: #475569;
+  padding: 0.2rem 0.65rem;
+  border-radius: 20px;
+  border: 1.5px solid #cbd5e1;
+  letter-spacing: 0.01em;
 }
 
 .timelineActiveBadge {
@@ -1216,6 +1378,28 @@
   background: linear-gradient(135deg, #fef2f2, #fee2e2);
   color: #dc2626;
   border-color: #fca5a5;
+}
+
+.legendDescPending {
+  background: #a855f7;
+  border: 1.5px solid #7e22ce;
+}
+
+.legendPhPending {
+  background: #f59e0b;
+  border: 1.5px solid #b45309;
+}
+
+.statusBtnDescPending {
+  background: linear-gradient(135deg, #faf5ff, #f3e8ff);
+  color: #6b21a8;
+  border-color: #c084fc;
+}
+
+.statusBtnPhPending {
+  background: linear-gradient(135deg, #fffbeb, #fef3c7);
+  color: #92400e;
+  border-color: #fcd34d;
 }
 
 .clearFilterBtn {
@@ -1648,4 +1832,270 @@
 
 .pwConfirmBtn:hover {
   background: #7c3aed;
+}
+
+/* ── Pending Batches Panel ──────────────────────────────── */
+
+.pendingBatchesPanel {
+  margin: 0;
+  padding: 1rem 1.25rem;
+  background: linear-gradient(135deg, #fff7ed 0%, #ffedd5 100%);
+  border-bottom: 1px solid #fb923c;
+}
+
+.pendingBatchesHeader {
+  font-size: 0.8125rem;
+  font-weight: 700;
+  color: #c2410c;
+  margin-bottom: 0.75rem;
+  letter-spacing: 0.02em;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.pendingBatchesEmpty {
+  font-size: 0.8125rem;
+  color: #c2410c;
+  padding: 0.5rem;
+  font-style: italic;
+  opacity: 0.7;
+}
+
+.pendingBatchesList {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.pendingBatchRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.625rem 0.875rem;
+  background: rgba(255, 255, 255, 0.6);
+  border-radius: 6px;
+  border-left: 3px solid #fb923c;
+  font-size: 0.8125rem;
+}
+
+.pendingBatchInfo {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.pendingBatchNumber {
+  font-weight: 600;
+  color: #c2410c;
+  white-space: nowrap;
+}
+
+.pendingBatchCode {
+  background: #fef3c7;
+  padding: 0.125rem 0.375rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.pendingBatchProduct {
+  color: #92400e;
+  font-weight: 500;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pendingBatchMfg {
+  color: #a16207;
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+
+.pendingBatchIntervals {
+  color: #c2410c;
+  font-weight: 600;
+  white-space: nowrap;
+  margin-left: 1rem;
+}
+
+/* ── Cell action row (Save + Info button) ───────────────── */
+.cellActions {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  margin-top: 0.25rem;
+}
+
+.infoBtn {
+  flex-shrink: 0;
+  width: 1.625rem;
+  height: 1.625rem;
+  border: 1px solid #c4b5fd;
+  border-radius: 50%;
+  background: #f5f3ff;
+  color: #7c3aed;
+  font-size: 0.8rem;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, border-color 0.15s;
+  line-height: 1;
+}
+
+.infoBtn:hover {
+  background: #ede9fe;
+  border-color: #8b5cf6;
+}
+
+/* ── Info / audit log modal ─────────────────────────────── */
+.infoModal {
+  background: #fff;
+  border-radius: 12px;
+  padding: 1.25rem 1.5rem;
+  width: 420px;
+  max-width: 95vw;
+  max-height: 80vh;
+  overflow-y: auto;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.infoModalHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.infoModalTitle {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--foreground);
+}
+
+.infoModalClose {
+  background: none;
+  border: none;
+  font-size: 0.9rem;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  padding: 0.125rem 0.25rem;
+  border-radius: 4px;
+  line-height: 1;
+}
+
+.infoModalClose:hover {
+  background: #f3f4f6;
+  color: var(--foreground);
+}
+
+.infoModalBody {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.infoRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.75rem;
+  padding: 0.3rem 0;
+  border-bottom: 1px solid #f3f4f6;
+}
+
+.infoLabel {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+}
+
+.infoValue {
+  font-size: 0.8rem;
+  color: var(--foreground);
+  text-align: right;
+}
+
+.infoSectionTitle {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #7c3aed;
+  margin-top: 0.25rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid #ede9fe;
+}
+
+.infoHistoryList {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.infoHistoryItem {
+  background: #fafafa;
+  border: 1px solid #f0f0f0;
+  border-radius: 6px;
+  padding: 0.5rem 0.625rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.infoHistoryMeta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.infoHistoryTime {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--muted-foreground);
+}
+
+.infoHistoryBy {
+  font-size: 0.7rem;
+  color: #7c3aed;
+  font-weight: 500;
+}
+
+.infoHistoryData {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.infoHistoryPhVal {
+  font-size: 0.75rem;
+  background: #ede9fe;
+  color: #5b21b6;
+  border-radius: 4px;
+  padding: 0.1rem 0.4rem;
+  white-space: nowrap;
+}
+
+.infoHistoryDesc {
+  font-size: 0.75rem;
+  color: var(--foreground);
+  font-style: italic;
+  width: 100%;
+}
+
+.infoNoHistory {
+  font-size: 0.78rem;
+  color: var(--muted-foreground);
+  font-style: italic;
+  padding: 0.25rem 0;
 }

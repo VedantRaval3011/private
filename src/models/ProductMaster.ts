@@ -25,6 +25,20 @@ export interface IProductMaster extends Document {
   actualFilling?: string;
   exciseDutyGroup?: string;
   exciseNotification?: string;
+  // Specification & batch fields
+  specification?: string;
+  effectiveBatchNo?: string;
+  effectiveDate?: string;
+  revisionNo?: string;
+  revisionRemark?: string;
+  workStatus?: string;
+  formulaMasterId?: string;
+  mfgLicenseNo?: string;
+  liveMonth?: string;
+  batchSize?: string;
+  batchUom?: string;
+  locationCode?: string;
+  isNonActive?: string;
   sourceFile: string;
   processedAt: Date;
 }
@@ -51,7 +65,22 @@ const ProductMasterSchema = new Schema<IProductMaster>({
   actualFilling: { type: String, default: '' },
   exciseDutyGroup: { type: String, default: '' },
   exciseNotification: { type: String, default: '' },
-  
+
+  // Specification & batch fields
+  specification: { type: String, default: '' },
+  effectiveBatchNo: { type: String, default: '' },
+  effectiveDate: { type: String, default: '' },
+  revisionNo: { type: String, default: '' },
+  revisionRemark: { type: String, default: '' },
+  workStatus: { type: String, default: '' },
+  formulaMasterId: { type: String, default: '' },
+  mfgLicenseNo: { type: String, default: '' },
+  liveMonth: { type: String, default: '' },
+  batchSize: { type: String, default: '' },
+  batchUom: { type: String, default: '' },
+  locationCode: { type: String, default: '' },
+  isNonActive: { type: String, default: '' },
+
   sourceFile: { type: String, required: true },
   processedAt: { type: Date, default: Date.now },
 }, {

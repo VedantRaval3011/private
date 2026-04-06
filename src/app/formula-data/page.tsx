@@ -11860,39 +11860,7 @@ export default function FormulaDataPage() {
                                                             <span style={{ fontSize: '0.9em' }}>📊</span>
                                                             Bulk Calc
                                                         </button>
-                                                        <button
-                                                            onClick={(e) => {
-                                                                e.stopPropagation();
-                                                                window.open(`/finish-calculation?productCode=${encodeURIComponent(formula.masterFormulaDetails.productCode)}&year=${new Date().getFullYear()}`, '_blank');
-                                                            }}
-                                                            style={{
-                                                                padding: '0.2rem 0.5rem',
-                                                                borderRadius: '6px',
-                                                                background: 'linear-gradient(135deg, #059669 0%, #10b981 100%)',
-                                                                color: 'white',
-                                                                fontSize: '0.7rem',
-                                                                fontWeight: '600',
-                                                                border: 'none',
-                                                                cursor: 'pointer',
-                                                                display: 'flex',
-                                                                alignItems: 'center',
-                                                                gap: '0.25rem',
-                                                                transition: 'all 0.2s ease',
-                                                                boxShadow: '0 1px 4px rgba(16, 185, 129, 0.3)',
-                                                            }}
-                                                            onMouseEnter={(e) => {
-                                                                e.currentTarget.style.transform = 'translateY(-1px)';
-                                                                e.currentTarget.style.boxShadow = '0 2px 6px rgba(16, 185, 129, 0.4)';
-                                                            }}
-                                                            onMouseLeave={(e) => {
-                                                                e.currentTarget.style.transform = 'translateY(0)';
-                                                                e.currentTarget.style.boxShadow = '0 1px 4px rgba(16, 185, 129, 0.3)';
-                                                            }}
-                                                            title="View Finish Product Calculations for this MFC"
-                                                        >
-                                                            <span style={{ fontSize: '0.9em' }}>📈</span>
-                                                            Finish Calc
-                                                        </button>
+
                                                     </div>
                                                 </div>
 

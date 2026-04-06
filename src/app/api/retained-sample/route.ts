@@ -16,6 +16,7 @@ import Formula from '@/models/Formula';
 import Batch from '@/models/Batch';
 import COA from '@/models/COA';
 import RetainedSample from '@/models/RetainedSample';
+import { getAuthUser } from '@/lib/auth';
 import type {
   RetainedSampleResponse,
   SaveStabilityResponse,
@@ -25,6 +26,7 @@ import type {
   StabilityEntry,
   PhParam,
   PhValue,
+  EntryActor,
 } from '@/types/retained-sample';
 
 // ─── GET ─────────────────────────────────────────────────────────────────────
@@ -180,12 +182,22 @@ export async function GET(): Promise<NextResponse<RetainedSampleResponse>> {
     for (const r of retainedDocs) {
       stabilityMap.set(
         r.batchNumber,
-        r.stabilityEntries.map((e: { month: number; pH: string; phValues?: PhValue[]; description: string; recordedAt?: Date }) => ({
+        r.stabilityEntries.map((e: { month: number; pH: string; phValues?: PhValue[]; description: string; recordedAt?: Date; createdAt?: Date; createdBy?: EntryActor; updatedBy?: EntryActor; editHistory?: Array<{ pH: string; phValues?: PhValue[]; description: string; recordedAt?: Date; savedBy?: EntryActor }> }) => ({
           month: e.month as 6 | 12 | 18 | 24 | 30 | 36,
           pH: e.pH,
           phValues: e.phValues || [],
           description: e.description,
           recordedAt: e.recordedAt ? String(e.recordedAt) : undefined,
+          createdAt: e.createdAt ? String(e.createdAt) : undefined,
+          createdBy: e.createdBy,
+          updatedBy: e.updatedBy,
+          editHistory: (e.editHistory || []).map((h) => ({
+            pH: h.pH || '',
+            phValues: h.phValues || [],
+            description: h.description || '',
+            recordedAt: h.recordedAt ? String(h.recordedAt) : '',
+            savedBy: h.savedBy,
+          })),
         }))
       );
     }
@@ -271,13 +283,22 @@ export async function POST(
       );
     }
 
+    const now = new Date();
+    const authUser = await getAuthUser();
+    const actor: EntryActor | undefined = authUser
+      ? { name: authUser.name, username: authUser.username }
+      : undefined;
+
     const entryData = {
       month,
       pH: pH || '',
       phValues: phValues || [],
       description,
-      recordedAt: new Date(),
+      recordedAt: now,
     };
+
+    let recordedAtStr = now.toISOString();
+    let createdAtStr = now.toISOString();
 
     const existing = await RetainedSample.findOne({ batchNumber, mfcNo });
 
@@ -286,12 +307,31 @@ export async function POST(
         (e: { month: number }) => e.month === month
       );
       if (idx >= 0) {
+        const old = existing.stabilityEntries[idx];
+        // Preserve original createdAt
+        const originalCreatedAt: Date = old.createdAt || old.recordedAt || now;
+        createdAtStr = originalCreatedAt instanceof Date
+          ? originalCreatedAt.toISOString()
+          : String(originalCreatedAt);
+        // Push old values (with who saved them) to edit history before overwriting
+        if (!existing.stabilityEntries[idx].editHistory) {
+          existing.stabilityEntries[idx].editHistory = [];
+        }
+        existing.stabilityEntries[idx].editHistory.push({
+          pH: old.pH || '',
+          phValues: old.phValues || [],
+          description: old.description || '',
+          recordedAt: old.recordedAt || now,
+          savedBy: old.updatedBy || old.createdBy,
+        });
         existing.stabilityEntries[idx].pH = entryData.pH;
         existing.stabilityEntries[idx].phValues = entryData.phValues;
         existing.stabilityEntries[idx].description = entryData.description;
         existing.stabilityEntries[idx].recordedAt = entryData.recordedAt;
+        existing.stabilityEntries[idx].updatedBy = actor;
+        // createdAt and createdBy stay unchanged — do not overwrite
       } else {
-        existing.stabilityEntries.push(entryData);
+        existing.stabilityEntries.push({ ...entryData, createdAt: now, createdBy: actor, editHistory: [] });
       }
       await existing.save();
     } else {
@@ -300,11 +340,11 @@ export async function POST(
         productCode,
         productName,
         batchNumber,
-        stabilityEntries: [entryData],
+        stabilityEntries: [{ ...entryData, createdAt: now, createdBy: actor, editHistory: [] }],
       });
     }
 
-    return NextResponse.json({ success: true, message: 'Stability entry saved' });
+    return NextResponse.json({ success: true, message: 'Stability entry saved', recordedAt: recordedAtStr, createdAt: createdAtStr });
   } catch (error) {
     console.error('POST /api/retained-sample error:', error);
     return NextResponse.json(

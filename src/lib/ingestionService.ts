@@ -89,6 +89,16 @@ async function cleanupOrphanedLogs(): Promise<number> {
           ]
         }).lean();
         recordExists = !!formula;
+      } else if (fileType === 'PRODUCT_MASTER') {
+        // Check if any ProductMaster records from this file still exist
+        const pmRecord = await ProductMaster.findOne(
+          fileName ? { sourceFile: fileName } : {}
+        ).lean();
+        recordExists = !!pmRecord;
+      } else {
+        // For all other file types (COA, RM_COA, REQUISITION, etc.)
+        // treat the log as still valid (no data-level check)
+        recordExists = true;
       }
 
       // If record doesn't exist, mark log as orphaned
@@ -1081,9 +1091,11 @@ async function processFormulaXml(
 export async function runIngestion(): Promise<IngestionStatus> {
   await connectToDatabase();
 
-  // NOTE: We do NOT automatically clean up orphaned logs here.
-  // ProcessingLog entries are the single source of truth for "has this file been processed".
-  // When a user deletes a record from History, the DELETE handler cleans up the corresponding logs.
+  // Clean up orphaned processing logs before checking for duplicates.
+  // This ensures that if data was deleted from MongoDB (e.g., via Compass), the stale
+  // ProcessingLog entries for BATCH, FORMULA, and PRODUCT_MASTER are removed so the
+  // files can be re-processed correctly instead of being flagged as duplicates.
+  await cleanupOrphanedLogs();
 
   const status: IngestionStatus = {
     isProcessing: true,

@@ -14,12 +14,29 @@ export interface PhValue {
   value: string;   // entered stability value
 }
 
+export interface EntryActor {
+  name: string;
+  username: string;
+}
+
+export interface EditHistoryEntry {
+  pH: string;
+  phValues: PhValue[];
+  description: string;
+  recordedAt: string;
+  savedBy?: EntryActor;
+}
+
 export interface StabilityEntry {
   month: 6 | 12 | 18 | 24 | 30 | 36;
   pH: string;              // legacy single-pH (kept for backward compat)
   phValues: PhValue[];     // multi-pH (preferred); empty = fall back to pH
   description: string;
   recordedAt?: string;
+  createdAt?: string;
+  createdBy?: EntryActor;
+  updatedBy?: EntryActor;
+  editHistory?: EditHistoryEntry[];
 }
 
 export interface RetainedSampleRecord {
@@ -82,4 +99,6 @@ export interface SaveStabilityResponse {
   success: boolean;
   message?: string;
   error?: string;
+  recordedAt?: string;
+  createdAt?: string;
 }

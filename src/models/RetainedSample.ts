@@ -13,6 +13,19 @@ const PhValueSchema = new Schema({
   value: { type: String, default: '' },
 }, { _id: false });
 
+const ActorSchema = new Schema({
+  name: { type: String, default: '' },
+  username: { type: String, default: '' },
+}, { _id: false });
+
+const EditHistoryEntrySchema = new Schema({
+  pH: { type: String, default: '' },
+  phValues: { type: [PhValueSchema], default: [] },
+  description: { type: String, default: '' },
+  recordedAt: { type: Date },
+  savedBy: { type: ActorSchema },
+}, { _id: false });
+
 const StabilityEntrySchema = new Schema({
   month: {
     type: Number,
@@ -23,6 +36,10 @@ const StabilityEntrySchema = new Schema({
   phValues: { type: [PhValueSchema], default: [] }, // multi-pH (preferred)
   description: { type: String, default: '' },
   recordedAt: { type: Date, default: Date.now },
+  createdAt: { type: Date },
+  createdBy: { type: ActorSchema },
+  updatedBy: { type: ActorSchema },
+  editHistory: { type: [EditHistoryEntrySchema], default: [] },
 }, { _id: false });
 
 const RetainedSampleSchema = new Schema<IRetainedSample>({
