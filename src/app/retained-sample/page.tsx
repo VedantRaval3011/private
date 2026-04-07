@@ -9,6 +9,7 @@ import type { MFCGroup, BatchStabilityRow, StabilityEntry, PhValue, EntryActor }
 const STABILITY_MONTHS = [6, 12, 18, 24, 30, 36] as const;
 type StabilityMonth = (typeof STABILITY_MONTHS)[number];
 type IntervalStatus = 'completed' | 'overdue' | 'due-this-month' | 'future';
+type StatusKey = 'fully-completed' | 'completed' | 'pending' | 'overdue' | 'desc-pending' | 'ph-pending';
 
 // ── Date utilities ────────────────────────────────────────
 const MON_MAP: Record<string, number> = {
@@ -346,35 +347,29 @@ export default function RetainedSamplePage() {
   const [saveStatus, setSaveStatus] = useState<SaveStatusState>({});
   const [expandedMFCs, setExpandedMFCs] = useState<Set<string>>(new Set());
   const [primaryOpen, setPrimaryOpen] = useState(true);
-  const [secondaryOpen, setSecondaryOpen] = useState(true);
   const [unlockedCells, setUnlockedCells] = useState<Set<string>>(new Set());
   const [pwModal, setPwModal] = useState<{ cellKey: string } | null>(null);
   const [pwInput, setPwInput] = useState('');
   const [pwError, setPwError] = useState(false);
   type SortKey = 'mfc-asc' | 'mfc-desc' | 'batches-desc' | 'batches-asc' | 'intervals-desc' | 'intervals-asc' | 'shelf-life-desc' | 'shelf-life-asc';
   const [primarySort, setPrimarySort] = useState<SortKey>('mfc-asc');
-  const [secondarySort, setSecondarySort] = useState<SortKey>('mfc-asc');
   const [showOutOfRangeOnly, setShowOutOfRangeOnly] = useState(false);
   const [showMissingCOA, setShowMissingCOA] = useState(false);
-  const [viewMode, setViewMode] = useState<'grouped' | 'unified'>('unified');
+  // Grouped view only (no unified view toggle)
 
   // ── Timeline Filter State ────────────────────────────────
   const [selectedMonth, setSelectedMonth] = useState<{ month: number; year: number } | null>(null);
   const [selectedYear, setSelectedYear] = useState<number | null>(null);
-  const [selectedStatus, setSelectedStatus] = useState<'fully-completed' | 'completed' | 'pending' | 'overdue' | 'desc-pending' | 'ph-pending' | null>(null);
+  // Top timeline status buttons (single-select)
+  const [selectedTimelineStatus, setSelectedTimelineStatus] = useState<StatusKey | null>(null);
+  // Bottom (month/global) summary statuses (multi-select)
+  const [selectedMonthSummaryStatuses, setSelectedMonthSummaryStatuses] = useState<StatusKey[]>([]);
+  // Year summary statuses (multi-select) — independent context (does not filter global table)
+  const [selectedYearSummaryStatuses, setSelectedYearSummaryStatuses] = useState<StatusKey[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
-  const [showYearPendingBatches, setShowYearPendingBatches] = useState(false);
-  const [showMonthPendingBatches, setShowMonthPendingBatches] = useState(false);
+  const [pendingBatchesFilter, setPendingBatchesFilter] = useState<null | 'year' | 'month'>(null);
   const [infoModal, setInfoModal] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!selectedStatus) return;
-    const t = setTimeout(() => {
-      const first = document.querySelector('[data-mfc-card]') as HTMLElement | null;
-      first?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }, 60);
-    return () => clearTimeout(t);
-  }, [selectedStatus]);
+  const [notifOpen, setNotifOpen] = useState(false);
 
   // ── Derived values ───────────────────────────────────────
   const allGroups = useMemo(() => [...moreThan3, ...lessThan3], [moreThan3, lessThan3]);
@@ -411,14 +406,6 @@ export default function RetainedSamplePage() {
     [moreThan3ForList, lessThan3ForList]
   );
 
-  // When showMissingCOA is active, filter stats to only missing-COA batches
-  const statsGroups = useMemo(() => {
-    if (!showMissingCOA) return allGroupsForStats;
-    return allGroupsForStats
-      .map((g) => ({ ...g, batches: g.batches.filter((b) => !b.coaFound) }))
-      .filter((g) => g.batches.length > 0);
-  }, [allGroupsForStats, showMissingCOA]);
-
   const maxShelfLife = useMemo(() => getMaxShelfLife(allGroups), [allGroups]);
 
   const timelineMonths = useMemo(() => generateTimelineMonths(maxShelfLife), [maxShelfLife]);
@@ -439,26 +426,6 @@ export default function RetainedSamplePage() {
     return new Date(selectedMonth.year, selectedMonth.month - 1, 1);
   }, [selectedMonth]);
 
-  const yearStats = useMemo(
-    () => computeYearStats(statsGroups, savedState, selectedYear),
-    [statsGroups, savedState, selectedYear]
-  );
-
-  const monthStats = useMemo(
-    () => computeMonthStats(statsGroups, savedState, refDate, selectedYear),
-    [statsGroups, savedState, refDate, selectedYear, selectedMonth]
-  );
-
-  const pendingBatchesForYear = useMemo(
-    () => getPendingBatches(statsGroups, savedState, new Date(), selectedYear, null),
-    [statsGroups, savedState, selectedYear]
-  );
-
-  const pendingBatchesForMonth = useMemo(
-    () => getPendingBatches(statsGroups, savedState, refDate, selectedYear, null),
-    [statsGroups, savedState, refDate, selectedYear, selectedMonth]
-  );
-
   // Compute batches that have out-of-range pH saved
   const outOfRangeBatchKeys = useMemo(() => {
     const keys = new Set<string>();
@@ -478,9 +445,231 @@ export default function RetainedSamplePage() {
     return keys;
   }, [allGroupsForStats, savedState]);
 
+  // ── Independent summary datasets ─────────────────────────
+  // ALL MFG YEARS = based on MFG year filter only (independent of Month/Search/Status/etc.)
+  const yearOnlyStats = useMemo(
+    () => computeYearStats(allGroups, savedState, selectedYear),
+    [allGroups, savedState, selectedYear]
+  );
+
+  const globalBaseGroupsBeforePending = useMemo(() => {
+    // Base = everything except the pending-batches filter and status filter
+    const baseGroups = allGroupsForStats;
+
+    const afterMissing = showMissingCOA
+      ? baseGroups
+        .map((g) => ({ ...g, batches: g.batches.filter((b: BatchStabilityRow) => !b.coaFound) }))
+        .filter((g) => g.batches.length > 0)
+      : baseGroups;
+
+    const filtered = afterMissing
+      .map((group) => {
+        let batchesByTime = group.batches;
+
+        if (selectedYear) {
+          batchesByTime = batchesByTime.filter((batch) => {
+            const mfgD = parseMfgDate(batch.mfgDate);
+            return !!mfgD && mfgD.getFullYear() === selectedYear;
+          });
+        }
+
+        if (selectedMonth) {
+          batchesByTime = batchesByTime.filter((batch) => {
+            const mfgD = parseMfgDate(batch.mfgDate);
+            if (!mfgD) return false;
+            return STABILITY_MONTHS.some((m) => {
+              const isFilled = cellIsFilled(savedState[cellKey(batch.batchNumber, batch.itemCode, m)]);
+              return getIntervalStatus(mfgD, m, isFilled, refDate) !== 'future';
+            });
+          });
+        }
+
+        const batchesAfterOOR = showOutOfRangeOnly
+          ? batchesByTime.filter((b) => outOfRangeBatchKeys.has(b.batchNumber))
+          : batchesByTime;
+
+        if (batchesAfterOOR.length === 0) return null;
+        return { ...group, batches: batchesAfterOOR };
+      })
+      .filter((g): g is MFCGroup => g !== null);
+
+    return filtered;
+  }, [
+    allGroupsForStats,
+    showMissingCOA,
+    showOutOfRangeOnly,
+    selectedYear,
+    selectedMonth,
+    outOfRangeBatchKeys,
+    savedState,
+    refDate,
+  ]);
+
+  const pendingBatchKeySet = useMemo(() => {
+    if (!pendingBatchesFilter) return new Set<string>();
+
+    const keys = new Set<string>();
+    const monthConstraint = pendingBatchesFilter === 'month'
+      ? (selectedMonth ?? { month: refDate.getMonth() + 1, year: refDate.getFullYear() })
+      : null;
+    const pendingRefDate = pendingBatchesFilter === 'month' ? refDate : new Date();
+
+    for (const group of globalBaseGroupsBeforePending) {
+      const sl = parseInt(group.shelfLife);
+      const requiredMonths = STABILITY_MONTHS.filter(m => isNaN(sl) || m <= sl);
+      for (const batch of group.batches) {
+        const mfgD = parseMfgDate(batch.mfgDate);
+        if (!mfgD) continue;
+
+        const hasPending = requiredMonths.some((m) => {
+          const key = cellKey(batch.batchNumber, batch.itemCode, m);
+          const isFilled = cellIsFilled(savedState[key]);
+          const status = getIntervalStatus(mfgD, m, isFilled, pendingRefDate);
+          if (status !== 'overdue' && status !== 'due-this-month') return false;
+          if (!monthConstraint) return true;
+          const dueD = dueDate(mfgD, m);
+          return dueD.getMonth() + 1 === monthConstraint.month && dueD.getFullYear() === monthConstraint.year;
+        });
+
+        if (hasPending) keys.add(`${batch.batchNumber}:${batch.itemCode}`);
+      }
+    }
+
+    return keys;
+  }, [pendingBatchesFilter, globalBaseGroupsBeforePending, savedState, selectedMonth, refDate]);
+
+  const activeGlobalStatuses = useMemo<StatusKey[]>(() => {
+    if (selectedTimelineStatus) return [selectedTimelineStatus];
+    if (selectedMonthSummaryStatuses.length > 0) return selectedMonthSummaryStatuses;
+    return [];
+  }, [selectedTimelineStatus, selectedMonthSummaryStatuses]);
+
+  function toggleStatusInList(list: StatusKey[], key: StatusKey): StatusKey[] {
+    return list.includes(key) ? list.filter((k) => k !== key) : [...list, key];
+  }
+
+  function batchMatchesAnyStatus(
+    batch: BatchStabilityRow,
+    requiredMonths: number[],
+    statuses: StatusKey[],
+    ref: Date
+  ): boolean {
+    if (statuses.length === 0) return true;
+
+    const mfgD = parseMfgDate(batch.mfgDate);
+    if (!mfgD) return false;
+
+    const has = (key: StatusKey): boolean => {
+      if (key === 'fully-completed') {
+        return requiredMonths.length > 0 && requiredMonths.every((m) =>
+          cellIsFilled(savedState[cellKey(batch.batchNumber, batch.itemCode, m)])
+        );
+      }
+      return STABILITY_MONTHS.some((m) => {
+        const isFilled = cellIsFilled(savedState[cellKey(batch.batchNumber, batch.itemCode, m)]);
+        const s = getIntervalStatus(mfgD, m, isFilled, ref);
+        if (key === 'completed') return s === 'completed';
+        if (key === 'pending') return s === 'due-this-month';
+        if (key === 'overdue') return s === 'overdue';
+        if (key === 'desc-pending') return cellHasPhOnly(savedState[cellKey(batch.batchNumber, batch.itemCode, m)]);
+        if (key === 'ph-pending') return cellHasDescOnly(savedState[cellKey(batch.batchNumber, batch.itemCode, m)]);
+        return false;
+      });
+    };
+
+    return statuses.some(has);
+  }
+
+  const globalStatsGroups = useMemo(() => {
+    // GLOBAL SUMMARY = based on combined active filters (search, missing COA, OOR, pending filter, status, month/year)
+    const filtered = globalBaseGroupsBeforePending
+      .map((group) => {
+        const batchesAfterPendingFilter = pendingBatchesFilter
+          ? group.batches.filter((b) => pendingBatchKeySet.has(`${b.batchNumber}:${b.itemCode}`))
+          : group.batches;
+
+        const sl = parseInt(group.shelfLife);
+        const requiredMonths = STABILITY_MONTHS.filter(m => isNaN(sl) || m <= sl);
+
+        const batchesAfterStatus = activeGlobalStatuses.length > 0
+          ? batchesAfterPendingFilter.filter((batch) =>
+            batchMatchesAnyStatus(batch, requiredMonths, activeGlobalStatuses, refDate)
+          )
+          : batchesAfterPendingFilter;
+
+        if (batchesAfterStatus.length === 0) return null;
+        return { ...group, batches: batchesAfterStatus };
+      })
+      .filter((g): g is MFCGroup => g !== null);
+
+    return filtered;
+  }, [
+    pendingBatchesFilter,
+    pendingBatchKeySet,
+    activeGlobalStatuses,
+    savedState,
+    refDate,
+    globalBaseGroupsBeforePending,
+  ]);
+
+  const globalStats = useMemo(
+    () => computeMonthStats(globalStatsGroups, savedState, refDate, null),
+    [globalStatsGroups, savedState, refDate]
+  );
+
+  // Counts displayed in the Month/Global Summary row should NOT change
+  // when status chips are clicked (those should only filter the table).
+  const globalSummaryCounts = useMemo(
+    () => computeMonthStats(globalBaseGroupsBeforePending, savedState, refDate, null),
+    [globalBaseGroupsBeforePending, savedState, refDate]
+  );
+
+  const pendingBatchesForYearOnly = useMemo(
+    () => getPendingBatches(allGroups, savedState, new Date(), selectedYear, null),
+    [allGroups, savedState, selectedYear]
+  );
+
+  const pendingBatchesForGlobal = useMemo(() => {
+    // Count pending batches for the GLOBAL context, independent of status/pending-batch filter selection.
+    // (Uses the combined base filters: search/year/month/COA/OOR, but not selectedStatus or pendingBatchesFilter.)
+    return getPendingBatches(globalBaseGroupsBeforePending, savedState, refDate, null, selectedMonth);
+  }, [globalBaseGroupsBeforePending, savedState, refDate, selectedMonth]);
+
+  const missingCOABatchCount = useMemo(() => {
+    // Count missing COA batches in the current base view (before applying showMissingCOA filter).
+    // Respects search + selected year/month + out-of-range filter, but does not depend on the Missing COA toggle itself.
+    let count = 0;
+    for (const g of globalBaseGroupsBeforePending) {
+      for (const b of g.batches) {
+        if (!b.coaFound) count++;
+      }
+    }
+    return count;
+  }, [globalBaseGroupsBeforePending]);
+
   useEffect(() => {
     fetchData();
   }, []);
+
+  // Close notifications popover when clicking outside / pressing Escape
+  useEffect(() => {
+    if (!notifOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setNotifOpen(false);
+    };
+    const onMouseDown = (e: MouseEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (!el) return;
+      if (el.closest('[data-notif-wrap]')) return;
+      setNotifOpen(false);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('mousedown', onMouseDown);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('mousedown', onMouseDown);
+    };
+  }, [notifOpen]);
 
   async function fetchData() {
     setLoading(true);
@@ -625,6 +814,18 @@ export default function RetainedSamplePage() {
     setSelectedYear((prev) => (prev === year ? null : year));
   }
 
+  function clearAllFilters() {
+    setSelectedMonth(null);
+    setSelectedYear(null);
+    setSelectedTimelineStatus(null);
+    setSelectedMonthSummaryStatuses([]);
+    setSelectedYearSummaryStatuses([]);
+    setPendingBatchesFilter(null);
+    setShowOutOfRangeOnly(false);
+    setShowMissingCOA(false);
+    setSearchQuery('');
+  }
+
   // ── Admin password unlock ────────────────────────────────
   function requestUnlock(key: string) {
     setPwInput('');
@@ -644,17 +845,10 @@ export default function RetainedSamplePage() {
   // ── Export to Excel ─────────────────────────────────────
   function exportToExcel() {
     import('xlsx').then((XLSX) => {
-      // Collect filtered batches (respects showMissingCOA, selectedYear, search)
+      // Collect current-view batches (respects active filters)
       const rows: Record<string, string>[] = [];
-      for (const group of statsGroups) {
-        let batches = group.batches;
-        if (selectedYear) {
-          batches = batches.filter((b) => {
-            const d = parseMfgDate(b.mfgDate);
-            return !!d && d.getFullYear() === selectedYear;
-          });
-        }
-        for (const batch of batches) {
+      for (const group of globalStatsGroups) {
+        for (const batch of group.batches) {
           const sl = parseInt(group.shelfLife);
           const requiredMonths = STABILITY_MONTHS.filter((m) => isNaN(sl) || m <= sl);
           const row: Record<string, string> = {
@@ -862,32 +1056,21 @@ export default function RetainedSamplePage() {
       ? batchesAfterOOR.filter((b) => !b.coaFound)
       : batchesAfterOOR;
 
+    // Filter further by "Batches Pending" (no navigation; filters in-place)
+    const batchesAfterPendingFilter = pendingBatchesFilter
+      ? batchesAfterMissingCOA.filter((b) => pendingBatchKeySet.has(`${b.batchNumber}:${b.itemCode}`))
+      : batchesAfterMissingCOA;
+
     // Filter further by status
     const sl = parseInt(group.shelfLife);
     const requiredMonths = STABILITY_MONTHS.filter(m => isNaN(sl) || m <= sl);
-    const batchesToShow = selectedStatus
-      ? batchesAfterMissingCOA.filter((batch) => {
-        if (selectedStatus === 'fully-completed') {
-          return requiredMonths.length > 0 && requiredMonths.every(m =>
-            cellIsFilled(savedState[cellKey(batch.batchNumber, batch.itemCode, m)])
-          );
-        }
-        const mfgD = parseMfgDate(batch.mfgDate);
-        if (!mfgD) return false;
-        return STABILITY_MONTHS.some((m) => {
-          const isFilled = cellIsFilled(savedState[cellKey(batch.batchNumber, batch.itemCode, m)]);
-          const s = getIntervalStatus(mfgD, m, isFilled, refDate);
-          if (selectedStatus === 'completed') return s === 'completed';
-          if (selectedStatus === 'pending') return s === 'due-this-month';
-          if (selectedStatus === 'overdue') return s === 'overdue';
-          if (selectedStatus === 'desc-pending') return cellHasPhOnly(savedState[cellKey(batch.batchNumber, batch.itemCode, m)]);
-          if (selectedStatus === 'ph-pending') return cellHasDescOnly(savedState[cellKey(batch.batchNumber, batch.itemCode, m)]);
-          return false;
-        });
-      })
-      : batchesAfterMissingCOA;
+    const batchesToShow = activeGlobalStatuses.length > 0
+      ? batchesAfterPendingFilter.filter((batch) =>
+        batchMatchesAnyStatus(batch, requiredMonths, activeGlobalStatuses, refDate)
+      )
+      : batchesAfterPendingFilter;
 
-    if ((selectedMonth || selectedYear || selectedStatus || showOutOfRangeOnly || showMissingCOA) && batchesToShow.length === 0) return null;
+    if ((selectedMonth || selectedYear || activeGlobalStatuses.length > 0 || pendingBatchesFilter || showOutOfRangeOnly || showMissingCOA) && batchesToShow.length === 0) return null;
 
     const totalBatches = batchesToShow.length;
     const withCOA = batchesToShow.filter((b) => b.coaFound).length;
@@ -1184,12 +1367,8 @@ export default function RetainedSamplePage() {
     });
   }
 
-  const sortedMoreThan3 = sortGroups(moreThan3ForList, primarySort);
-  const sortedLessThan3 = sortGroups(lessThan3ForList, secondarySort);
   const sortedAllGroups = sortGroups(allGroupsForStats, primarySort);
 
-  const primaryRendered = sortedMoreThan3.map((g, i) => renderMFCGroup(g, i)).filter(Boolean);
-  const secondaryRendered = sortedLessThan3.map((g, i) => renderMFCGroup(g, i)).filter(Boolean);
   const unifiedRendered = sortedAllGroups.map((g, i) => renderMFCGroup(g, i)).filter(Boolean);
 
   return (
@@ -1317,6 +1496,49 @@ export default function RetainedSamplePage() {
             <button className={styles.refreshBtn} onClick={fetchData}>
               ↺ Refresh
             </button>
+
+            <div className={styles.notifWrap} data-notif-wrap>
+              <button
+                type="button"
+                className={styles.notifBtn}
+                onClick={() => setNotifOpen((o) => !o)}
+                aria-label="Notifications"
+                aria-expanded={notifOpen}
+              >
+                <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" className={styles.notifIcon}>
+                  <path
+                    fill="currentColor"
+                    d="M12 22a2.5 2.5 0 0 0 2.45-2h-4.9A2.5 2.5 0 0 0 12 22Zm7-6V11a7 7 0 1 0-14 0v5l-2 2v1h18v-1l-2-2Zm-2 1H7v-6a5 5 0 1 1 10 0v6Z"
+                  />
+                </svg>
+                {outOfRangeBatchKeys.size > 0 && (
+                  <span className={styles.notifBadge} aria-label={`${outOfRangeBatchKeys.size} alerts`}>
+                    {outOfRangeBatchKeys.size}
+                  </span>
+                )}
+              </button>
+
+              {notifOpen && (
+                <div className={styles.notifPopover} role="menu" aria-label="Notifications menu">
+                  <div className={styles.notifPopoverTitle}>Notifications</div>
+                  <button
+                    type="button"
+                    className={`${styles.notifItem} ${showOutOfRangeOnly ? styles.notifItemActive : ''}`}
+                    onClick={() => {
+                      setShowOutOfRangeOnly((p) => !p);
+                      setNotifOpen(false);
+                    }}
+                    role="menuitem"
+                    disabled={outOfRangeBatchKeys.size === 0}
+                    title={outOfRangeBatchKeys.size === 0 ? 'No out-of-range batches found' : ''}
+                  >
+                    <span className={styles.notifDot} aria-hidden />
+                    <span className={styles.notifItemText}>pH Out of Range</span>
+                    <span className={styles.notifItemCount}>{outOfRangeBatchKeys.size}</span>
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -1329,7 +1551,7 @@ export default function RetainedSamplePage() {
               <span className={styles.timelineIcon}>📅</span>
               <span className={styles.timelineTitle}>Global Stability Timeline</span>
               <span className={styles.batchCountBadge}>
-                📦 {yearStats.batchCount} Batch{yearStats.batchCount !== 1 ? 'es' : ''}
+                📦 {globalSummaryCounts.batchCount} Batch{globalSummaryCounts.batchCount !== 1 ? 'es' : ''}
               </span>
               {(selectedMonth || selectedYear) && (
                 <span className={styles.timelineActiveBadge}>
@@ -1346,28 +1568,112 @@ export default function RetainedSamplePage() {
             <div className={styles.timelineActions}>
               {(
                 [
-                  { key: 'fully-completed', label: 'Fully Completed', dot: styles.legendFullyCompleted, active: styles.statusBtnFullyCompleted },
-                  { key: 'completed', label: 'Done', dot: styles.legendCompleted, active: styles.statusBtnCompleted },
-                  { key: 'pending', label: 'Pending', dot: styles.legendDue, active: styles.statusBtnPending },
-                  { key: 'overdue', label: 'Overdue', dot: styles.legendOverdue, active: styles.statusBtnOverdue },
-                  { key: 'desc-pending', label: 'Desc Pending', dot: styles.legendDescPending, active: styles.statusBtnDescPending },
-                  { key: 'ph-pending', label: 'pH Pending', dot: styles.legendPhPending, active: styles.statusBtnPhPending },
+                  { key: 'desc-pending', label: 'Desc Pending', dot: styles.legendDescPending },
+                  { key: 'ph-pending', label: 'pH Pending', dot: styles.legendPhPending },
                 ] as const
-              ).map(({ key, label, dot, active }) => (
+              ).map(({ key, label, dot }) => {
+                const isActive = selectedTimelineStatus === key;
+                return (
                 <button
                   key={key}
                   className={[
                     styles.statusFilterBtn,
-                    selectedStatus === key ? active : '',
+                    isActive ? styles.statusFilterBtnActive : '',
                   ].filter(Boolean).join(' ')}
-                  onClick={() => setSelectedStatus(prev => prev === key ? null : key)}
+                  onClick={() => {
+                    setSelectedYearSummaryStatuses([]);
+                    setSelectedMonthSummaryStatuses([]);
+                    setPendingBatchesFilter(null); // status cannot co-exist with batches pending
+                    setSelectedTimelineStatus(prev => prev === key ? null : key);
+                  }}
                 >
-                  <span className={`${styles.legendDot} ${dot}`} />
+                  <span
+                    className={[
+                      styles.legendDot,
+                      isActive ? dot : styles.legendDotInactive,
+                      isActive ? styles.legendDotGlow : '',
+                    ].filter(Boolean).join(' ')}
+                  />
                   {label}
                 </button>
-              ))}
+                );
+              })}
             </div>
           </div>
+
+          {/* ── Active Filters (inside timeline) ─────────── */}
+          {(() => {
+            const activeCount =
+              (selectedMonth ? 1 : 0) +
+              (selectedYear != null ? 1 : 0) +
+              (activeGlobalStatuses.length > 0 ? 1 : 0) +
+              (pendingBatchesFilter ? 1 : 0) +
+              (showOutOfRangeOnly ? 1 : 0) +
+              (showMissingCOA ? 1 : 0) +
+              (searchQuery.trim() ? 1 : 0);
+
+            return (
+              <div className={styles.activeFiltersBar}>
+                <div className={styles.activeFiltersLeft}>
+                  <div className={styles.activeFiltersTitle}>Active filters</div>
+                  <div className={styles.activeFiltersChips}>
+                    {activeCount === 0 ? (
+                      <span className={styles.activeFiltersNone}>None</span>
+                    ) : (
+                      <>
+                        {selectedMonth && (
+                          <button className={styles.filterChip} onClick={() => setSelectedMonth(null)}>
+                            Month: {formatMonthLabel(selectedMonth.month, selectedMonth.year)} <span className={styles.filterChipX}>✕</span>
+                          </button>
+                        )}
+                        {selectedYear != null && (
+                          <button className={styles.filterChip} onClick={() => setSelectedYear(null)}>
+                            Mfg year: {String(selectedYear).slice(2)} <span className={styles.filterChipX}>✕</span>
+                          </button>
+                        )}
+                        {activeGlobalStatuses.length > 0 && (
+                          <button
+                            className={styles.filterChip}
+                            onClick={() => { setSelectedTimelineStatus(null); setSelectedMonthSummaryStatuses([]); }}
+                          >
+                            Status: {activeGlobalStatuses.join(', ')} <span className={styles.filterChipX}>✕</span>
+                          </button>
+                        )}
+                        {pendingBatchesFilter && (
+                          <button className={styles.filterChip} onClick={() => setPendingBatchesFilter(null)}>
+                            Batches Pending ({pendingBatchesFilter === 'month' ? 'month' : 'year'}) <span className={styles.filterChipX}>✕</span>
+                          </button>
+                        )}
+                        {showOutOfRangeOnly && (
+                          <button className={styles.filterChip} onClick={() => setShowOutOfRangeOnly(false)}>
+                            pH Out of Range <span className={styles.filterChipX}>✕</span>
+                          </button>
+                        )}
+                        {showMissingCOA && (
+                          <button className={styles.filterChip} onClick={() => setShowMissingCOA(false)}>
+                            Missing COA <span className={styles.filterChipX}>✕</span>
+                          </button>
+                        )}
+                        {searchQuery.trim() !== '' && (
+                          <button className={styles.filterChip} onClick={() => setSearchQuery('')}>
+                            Search: “{searchQuery.trim()}” <span className={styles.filterChipX}>✕</span>
+                          </button>
+                        )}
+                      </>
+                    )}
+                    <button
+                      className={styles.activeFiltersClearBtn}
+                      onClick={clearAllFilters}
+                      disabled={activeCount === 0}
+                      title="Clear all active filters"
+                    >
+                      Clear/Remove Filters
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
 
           {/* Year quick filter */}
           <div className={styles.timelineRow}>
@@ -1398,58 +1704,55 @@ export default function RetainedSamplePage() {
               {selectedYear ? `Mfg year summary` : `All mfg years`}
             </span>
             <button
-              className={`${styles.summaryChip} ${styles.summaryChipFullyCompleted} ${selectedStatus === 'fully-completed' ? styles.summaryChipActive : ''}`}
-              onClick={() => setSelectedStatus(p => p === 'fully-completed' ? null : 'fully-completed')}
+              className={`${styles.summaryChip} ${styles.summaryChipFullyCompleted} ${selectedYearSummaryStatuses.includes('fully-completed') ? styles.summaryChipActive : ''}`}
+              onClick={() => {
+                // Year summary context must not be combined with month/global context.
+                setSelectedTimelineStatus(null);
+                setSelectedMonthSummaryStatuses([]);
+                setPendingBatchesFilter(null);
+                setSelectedYearSummaryStatuses((prev) => toggleStatusInList(prev, 'fully-completed'));
+              }}
             >
-              ✅ Fully Completed: <strong>{yearStats.fullyCompleted}</strong>
+              <span className={[styles.legendDot, selectedYearSummaryStatuses.includes('fully-completed') ? styles.legendFullyCompleted : styles.legendDotInactive].join(' ')} />
+              Fully Completed: <strong>{yearOnlyStats.fullyCompleted}</strong>
             </button>
             <button
-              className={`${styles.summaryChip} ${styles.summaryChipOrange} ${selectedStatus === 'pending' ? styles.summaryChipActive : ''}`}
-              onClick={() => setSelectedStatus(p => p === 'pending' ? null : 'pending')}
+              className={`${styles.summaryChip} ${styles.summaryChipOrange} ${selectedYearSummaryStatuses.includes('pending') ? styles.summaryChipActive : ''}`}
+              onClick={() => {
+                setSelectedTimelineStatus(null);
+                setSelectedMonthSummaryStatuses([]);
+                setPendingBatchesFilter(null);
+                setSelectedYearSummaryStatuses((prev) => toggleStatusInList(prev, 'pending'));
+              }}
             >
-              🟠 Pending: <strong>{yearStats.pending}</strong>
+              <span className={[styles.legendDot, selectedYearSummaryStatuses.includes('pending') ? styles.legendDue : styles.legendDotInactive].join(' ')} />
+              Pending: <strong>{yearOnlyStats.pending}</strong>
             </button>
             <button
-              className={`${styles.summaryChip} ${styles.summaryChipRed} ${selectedStatus === 'overdue' ? styles.summaryChipActive : ''}`}
-              onClick={() => setSelectedStatus(p => p === 'overdue' ? null : 'overdue')}
+              className={`${styles.summaryChip} ${styles.summaryChipRed} ${selectedYearSummaryStatuses.includes('overdue') ? styles.summaryChipActive : ''}`}
+              onClick={() => {
+                setSelectedTimelineStatus(null);
+                setSelectedMonthSummaryStatuses([]);
+                setPendingBatchesFilter(null);
+                setSelectedYearSummaryStatuses((prev) => toggleStatusInList(prev, 'overdue'));
+              }}
             >
-              🔴 Overdue: <strong>{yearStats.overdue}</strong>
+              <span className={[styles.legendDot, selectedYearSummaryStatuses.includes('overdue') ? styles.legendOverdue : styles.legendDotInactive].join(' ')} />
+              Overdue: <strong>{yearOnlyStats.overdue}</strong>
             </button>
             <button
-              className={`${styles.summaryChip} ${styles.summaryChipOrange}`}
-              onClick={() => setShowYearPendingBatches(p => !p)}
+              className={`${styles.summaryChip} ${styles.summaryChipOrange} ${pendingBatchesFilter === 'year' ? styles.summaryChipActive : ''}`}
+              onClick={() => {
+                setSelectedTimelineStatus(null);
+                setSelectedMonthSummaryStatuses([]);
+                setSelectedYearSummaryStatuses([]);
+                setPendingBatchesFilter((p) => (p === 'year' ? null : 'year'));
+              }}
             >
-              🟠 Batches Pending: <strong>{pendingBatchesForYear.length}</strong>
+              <span className={[styles.legendDot, pendingBatchesFilter === 'year' ? styles.legendDue : styles.legendDotInactive].join(' ')} />
+              Batches Pending: <strong>{pendingBatchesForYearOnly.length}</strong>
             </button>
           </div>
-
-          {showYearPendingBatches && (
-            <div className={styles.pendingBatchesPanel}>
-              <div className={styles.pendingBatchesHeader}>Pending Batches</div>
-              {pendingBatchesForYear.length === 0 ? (
-                <div className={styles.pendingBatchesEmpty}>No pending batches</div>
-              ) : (
-                <div className={styles.pendingBatchesList}>
-                  {pendingBatchesForYear.map(({ group, batch, pendingIntervals }) => (
-                    <div
-                      key={`${batch.batchNumber}:${batch.itemCode}`}
-                      className={styles.pendingBatchRow}
-                    >
-                      <div className={styles.pendingBatchInfo}>
-                        <span className={styles.pendingBatchNumber}>{batch.batchNumber}</span>
-                        <span className={styles.pendingBatchCode}>{batch.itemCode}</span>
-                        <span className={styles.pendingBatchProduct}>{group.productName}</span>
-                        <span className={styles.pendingBatchMfg}>{batch.mfgDate}</span>
-                      </div>
-                      <div className={styles.pendingBatchIntervals}>
-                        {pendingIntervals.map(m => `${m}M`).join(', ')}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
 
           {/* Month buttons */}
           <div className={styles.timelineRow}>
@@ -1489,64 +1792,66 @@ export default function RetainedSamplePage() {
               {selectedMonth ? `Month Summary` : `Global Summary`}
             </span>
             <button
-              className={`${styles.summaryChip} ${styles.summaryChipFullyCompleted} ${selectedStatus === 'fully-completed' ? styles.summaryChipActive : ''}`}
-              onClick={() => setSelectedStatus(p => p === 'fully-completed' ? null : 'fully-completed')}
+              className={`${styles.summaryChip} ${styles.summaryChipFullyCompleted} ${selectedMonthSummaryStatuses.includes('fully-completed') ? styles.summaryChipActive : ''}`}
+              onClick={() => {
+                setSelectedTimelineStatus(null);
+                setSelectedYearSummaryStatuses([]);
+                setPendingBatchesFilter(null);
+                setSelectedMonthSummaryStatuses((prev) => toggleStatusInList(prev, 'fully-completed'));
+              }}
             >
-              ✅ Fully Completed: <strong>{monthStats.fullyCompleted}</strong>
+              <span className={[styles.legendDot, selectedMonthSummaryStatuses.includes('fully-completed') ? styles.legendFullyCompleted : styles.legendDotInactive].join(' ')} />
+              Fully Completed: <strong>{globalSummaryCounts.fullyCompleted}</strong>
             </button>
             <button
-              className={`${styles.summaryChip} ${styles.summaryChipGreen} ${selectedStatus === 'completed' ? styles.summaryChipActive : ''}`}
-              onClick={() => setSelectedStatus(p => p === 'completed' ? null : 'completed')}
+              className={`${styles.summaryChip} ${styles.summaryChipGreen} ${selectedMonthSummaryStatuses.includes('completed') ? styles.summaryChipActive : ''}`}
+              onClick={() => {
+                setSelectedTimelineStatus(null);
+                setSelectedYearSummaryStatuses([]);
+                setPendingBatchesFilter(null);
+                setSelectedMonthSummaryStatuses((prev) => toggleStatusInList(prev, 'completed'));
+              }}
             >
-              🟢 Done: <strong>{monthStats.done}</strong>
+              <span className={[styles.legendDot, selectedMonthSummaryStatuses.includes('completed') ? styles.legendCompleted : styles.legendDotInactive].join(' ')} />
+              Done: <strong>{globalSummaryCounts.done}</strong>
             </button>
             <button
-              className={`${styles.summaryChip} ${styles.summaryChipOrange} ${selectedStatus === 'pending' ? styles.summaryChipActive : ''}`}
-              onClick={() => setSelectedStatus(p => p === 'pending' ? null : 'pending')}
+              className={`${styles.summaryChip} ${styles.summaryChipOrange} ${selectedMonthSummaryStatuses.includes('pending') ? styles.summaryChipActive : ''}`}
+              onClick={() => {
+                setSelectedTimelineStatus(null);
+                setSelectedYearSummaryStatuses([]);
+                setPendingBatchesFilter(null);
+                setSelectedMonthSummaryStatuses((prev) => toggleStatusInList(prev, 'pending'));
+              }}
             >
-              🟠 Pending: <strong>{monthStats.pending}</strong>
+              <span className={[styles.legendDot, selectedMonthSummaryStatuses.includes('pending') ? styles.legendDue : styles.legendDotInactive].join(' ')} />
+              Pending: <strong>{globalSummaryCounts.pending}</strong>
             </button>
             <button
-              className={`${styles.summaryChip} ${styles.summaryChipRed} ${selectedStatus === 'overdue' ? styles.summaryChipActive : ''}`}
-              onClick={() => setSelectedStatus(p => p === 'overdue' ? null : 'overdue')}
+              className={`${styles.summaryChip} ${styles.summaryChipRed} ${selectedMonthSummaryStatuses.includes('overdue') ? styles.summaryChipActive : ''}`}
+              onClick={() => {
+                setSelectedTimelineStatus(null);
+                setSelectedYearSummaryStatuses([]);
+                setPendingBatchesFilter(null);
+                setSelectedMonthSummaryStatuses((prev) => toggleStatusInList(prev, 'overdue'));
+              }}
             >
-              🔴 Overdue: <strong>{monthStats.overdue}</strong>
+              <span className={[styles.legendDot, selectedMonthSummaryStatuses.includes('overdue') ? styles.legendOverdue : styles.legendDotInactive].join(' ')} />
+              Overdue: <strong>{globalSummaryCounts.overdue}</strong>
             </button>
             <button
-              className={`${styles.summaryChip} ${styles.summaryChipOrange}`}
-              onClick={() => setShowMonthPendingBatches(p => !p)}
+              className={`${styles.summaryChip} ${styles.summaryChipOrange} ${pendingBatchesFilter === 'month' ? styles.summaryChipActive : ''}`}
+              onClick={() => {
+                setSelectedTimelineStatus(null);
+                setSelectedMonthSummaryStatuses([]);
+                setSelectedYearSummaryStatuses([]);
+                setPendingBatchesFilter((p) => (p === 'month' ? null : 'month'));
+              }}
             >
-              🟠 Batches Pending: <strong>{pendingBatchesForMonth.length}</strong>
+              <span className={[styles.legendDot, pendingBatchesFilter === 'month' ? styles.legendDue : styles.legendDotInactive].join(' ')} />
+              Batches Pending: <strong>{pendingBatchesForGlobal.length}</strong>
             </button>
           </div>
-
-          {showMonthPendingBatches && (
-            <div className={styles.pendingBatchesPanel}>
-              <div className={styles.pendingBatchesHeader}>Pending Batches</div>
-              {pendingBatchesForMonth.length === 0 ? (
-                <div className={styles.pendingBatchesEmpty}>No pending batches</div>
-              ) : (
-                <div className={styles.pendingBatchesList}>
-                  {pendingBatchesForMonth.map(({ group, batch, pendingIntervals }) => (
-                    <div
-                      key={`${batch.batchNumber}:${batch.itemCode}`}
-                      className={styles.pendingBatchRow}
-                    >
-                      <div className={styles.pendingBatchInfo}>
-                        <span className={styles.pendingBatchNumber}>{batch.batchNumber}</span>
-                        <span className={styles.pendingBatchCode}>{batch.itemCode}</span>
-                        <span className={styles.pendingBatchProduct}>{group.productName}</span>
-                        <span className={styles.pendingBatchMfg}>{batch.mfgDate}</span>
-                      </div>
-                      <div className={styles.pendingBatchIntervals}>
-                        {pendingIntervals.map(m => `${m}M`).join(', ')}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
         </div>
 
         {/* ── Search + COA Filter ───────────────────────── */}
@@ -1584,16 +1889,10 @@ export default function RetainedSamplePage() {
               </button>
             )}
             <button
-              className={`${styles.viewToggleBtn} ${viewMode === 'unified' ? styles.viewToggleBtnActive : ''}`}
-              onClick={() => setViewMode(p => (p === 'grouped' ? 'unified' : 'grouped'))}
-            >
-              {viewMode === 'grouped' ? 'Show All MFCs' : 'Show Grouped View'}
-            </button>
-            <button
               className={`${styles.missingCOABtn} ${showMissingCOA ? styles.missingCOABtnActive : ''}`}
               onClick={() => setShowMissingCOA(p => !p)}
             >
-              Show Missing COA
+              Show Missing COA ({missingCOABatchCount})
             </button>
             <button
               className={styles.exportExcelBtn}
@@ -1605,206 +1904,71 @@ export default function RetainedSamplePage() {
           </div>
         </div>
 
-        {viewMode === 'unified' ? (
-          <section className={styles.section}>
-            <button className={styles.sectionHeading} onClick={() => setPrimaryOpen((o) => !o)}>
-              <div className={styles.sectionIconPrimary}>📋</div>
-              <div className={styles.sectionTitleBlock}>
-                <h2 className={styles.sectionTitle}>All MFCs</h2>
-                <p className={styles.sectionSubtitle}>Complete list of all MFC groups</p>
+        {/* ── All batches (single view) ───────────────────── */}
+        <section className={styles.section}>
+          <button className={styles.sectionHeading} onClick={() => setPrimaryOpen((o) => !o)}>
+            <div className={styles.sectionIconPrimary}>📋</div>
+            <div className={styles.sectionTitleBlock}>
+              <h2 className={styles.sectionTitle}>All MFCs</h2>
+              <p className={styles.sectionSubtitle}>All batches in one view</p>
+            </div>
+            <span className={`${styles.sectionBadge} ${styles.badgePrimary}`}>
+              {unifiedRendered.length} MFC{unifiedRendered.length !== 1 ? 's' : ''}
+              {(selectedMonth || selectedYear || searchTokens.length > 0) &&
+                unifiedRendered.length !== allGroupsForStats.length
+                ? ` (of ${allGroupsForStats.length})`
+                : ''}
+            </span>
+            <span className={`${styles.sectionBadge} ${styles.badgeBatchCount}`}>
+              {allGroupsForStats.reduce((s, g) => s + g.batches.length, 0)} Batches
+            </span>
+            <span className={styles.sectionChevron}>{primaryOpen ? '▲' : '▼'}</span>
+          </button>
+
+          {primaryOpen && (
+            <>
+              <div className={styles.sortBar}>
+                <span className={styles.sortLabel}>Sort by:</span>
+                {(
+                  [
+                    { key: 'mfc-asc', label: 'MFC A→Z' },
+                    { key: 'mfc-desc', label: 'MFC Z→A' },
+                    { key: 'batches-desc', label: 'Batches ↓' },
+                    { key: 'batches-asc', label: 'Batches ↑' },
+                    { key: 'intervals-desc', label: 'Intervals ↓' },
+                    { key: 'intervals-asc', label: 'Intervals ↑' },
+                    { key: 'shelf-life-desc', label: 'Shelf Life ↓' },
+                    { key: 'shelf-life-asc', label: 'Shelf Life ↑' },
+                  ] as { key: SortKey; label: string }[]
+                ).map(({ key, label }) => (
+                  <button
+                    key={key}
+                    className={`${styles.sortBtn} ${primarySort === key ? styles.sortBtnActive : ''}`}
+                    onClick={() => setPrimarySort(prev => prev === key ? 'mfc-asc' : key)}
+                  >
+                    {label}
+                  </button>
+                ))}
               </div>
-              <span className={`${styles.sectionBadge} ${styles.badgePrimary}`}>
-                {unifiedRendered.length} MFC{unifiedRendered.length !== 1 ? 's' : ''}
-                {(selectedMonth || selectedYear || searchTokens.length > 0) &&
-                  unifiedRendered.length !== allGroupsForStats.length
-                  ? ` (of ${allGroupsForStats.length})`
-                  : ''}
-              </span>
-              <span className={`${styles.sectionBadge} ${styles.badgeBatchCount}`}>
-                {allGroupsForStats.reduce((s, g) => s + g.batches.length, 0)} Batches
-              </span>
-              <span className={styles.sectionChevron}>{primaryOpen ? '▲' : '▼'}</span>
-            </button>
 
-            {primaryOpen && (
-              <>
-                <div className={styles.sortBar}>
-                  <span className={styles.sortLabel}>Sort by:</span>
-                  {(
-                    [
-                      { key: 'mfc-asc', label: 'MFC A→Z' },
-                      { key: 'mfc-desc', label: 'MFC Z→A' },
-                      { key: 'batches-desc', label: 'Batches ↓' },
-                      { key: 'batches-asc', label: 'Batches ↑' },
-                      { key: 'intervals-desc', label: 'Intervals ↓' },
-                      { key: 'intervals-asc', label: 'Intervals ↑' },
-                      { key: 'shelf-life-desc', label: 'Shelf Life ↓' },
-                      { key: 'shelf-life-asc', label: 'Shelf Life ↑' },
-                    ] as { key: SortKey; label: string }[]
-                  ).map(({ key, label }) => (
-                    <button
-                      key={key}
-                      className={`${styles.sortBtn} ${primarySort === key ? styles.sortBtnActive : ''}`}
-                      onClick={() => setPrimarySort(prev => prev === key ? 'mfc-asc' : key)}
-                    >
-                      {label}
-                    </button>
-                  ))}
+              {unifiedRendered.length === 0 ? (
+                <div className={styles.emptySection}>
+                  {showMissingCOA
+                    ? 'No batches with missing COA found'
+                    : searchTokens.length > 0
+                      ? `No matches for "${searchQuery.trim()}" in this section`
+                      : selectedMonth
+                        ? `No stability testing scheduled for ${formatMonthLabel(selectedMonth.month, selectedMonth.year)}`
+                        : selectedYear
+                          ? `No batches with manufacturing year ${selectedYear}`
+                          : 'No MFCs found'}
                 </div>
-
-                {unifiedRendered.length === 0 ? (
-                  <div className={styles.emptySection}>
-                    {showMissingCOA
-                      ? 'No batches with missing COA found'
-                      : searchTokens.length > 0
-                        ? `No matches for "${searchQuery.trim()}" in this section`
-                        : selectedMonth
-                          ? `No stability testing scheduled for ${formatMonthLabel(selectedMonth.month, selectedMonth.year)}`
-                          : selectedYear
-                            ? `No batches with manufacturing year ${selectedYear}`
-                            : 'No MFCs found'}
-                  </div>
-                ) : (
-                  unifiedRendered
-                )}
-              </>
-            )}
-          </section>
-        ) : (
-          <>
-            {/* ── Section 1 — 3+ batches ─────────────────────── */}
-            <section className={styles.section}>
-              <button className={styles.sectionHeading} onClick={() => setPrimaryOpen((o) => !o)}>
-                <div className={styles.sectionIconPrimary}>🔥</div>
-                <div className={styles.sectionTitleBlock}>
-                  <h2 className={styles.sectionTitle}>MFCs with 3+ Batches</h2>
-                  <p className={styles.sectionSubtitle}>Primary MFCs with significant production volume</p>
-                </div>
-                <span className={`${styles.sectionBadge} ${styles.badgePrimary}`}>
-                  {primaryRendered.length} MFC{primaryRendered.length !== 1 ? 's' : ''}
-                  {(selectedMonth || selectedYear || searchTokens.length > 0) &&
-                    primaryRendered.length !== moreThan3.length
-                    ? ` (of ${moreThan3.length})`
-                    : ''}
-                </span>
-                <span className={`${styles.sectionBadge} ${styles.badgeBatchCount}`}>
-                  {moreThan3ForList.reduce((s, g) => s + g.batches.length, 0)} Batches
-                </span>
-                <span className={styles.sectionChevron}>{primaryOpen ? '▲' : '▼'}</span>
-              </button>
-
-              {primaryOpen && (
-                <>
-                  <div className={styles.sortBar}>
-                    <span className={styles.sortLabel}>Sort by:</span>
-                    {(
-                      [
-                        { key: 'mfc-asc', label: 'MFC A→Z' },
-                        { key: 'mfc-desc', label: 'MFC Z→A' },
-                        { key: 'batches-desc', label: 'Batches ↓' },
-                        { key: 'batches-asc', label: 'Batches ↑' },
-                        { key: 'intervals-desc', label: 'Intervals ↓' },
-                        { key: 'intervals-asc', label: 'Intervals ↑' },
-                        { key: 'shelf-life-desc', label: 'Shelf Life ↓' },
-                        { key: 'shelf-life-asc', label: 'Shelf Life ↑' },
-                      ] as { key: SortKey; label: string }[]
-                    ).map(({ key, label }) => (
-                      <button
-                        key={key}
-                        className={`${styles.sortBtn} ${primarySort === key ? styles.sortBtnActive : ''}`}
-                        onClick={() => setPrimarySort(prev => prev === key ? 'mfc-asc' : key)}
-                      >
-                        {label}
-                      </button>
-                    ))}
-                  </div>
-
-                  {primaryRendered.length === 0 ? (
-                    <div className={styles.emptySection}>
-                      {showMissingCOA
-                        ? 'No batches with missing COA found'
-                        : searchTokens.length > 0
-                          ? `No matches for "${searchQuery.trim()}" in this section`
-                          : selectedMonth
-                            ? `No stability testing scheduled for ${formatMonthLabel(selectedMonth.month, selectedMonth.year)}`
-                            : selectedYear
-                              ? `No batches with manufacturing year ${selectedYear}`
-                              : 'No MFCs with 3 or more batches'}
-                    </div>
-                  ) : (
-                    primaryRendered
-                  )}
-                </>
+              ) : (
+                unifiedRendered
               )}
-            </section>
-
-            {/* ── Section 2 — 1–2 batches ────────────────────── */}
-            <section className={styles.section}>
-              <button className={styles.sectionHeading} onClick={() => setSecondaryOpen((o) => !o)}>
-                <div className={styles.sectionIconSecondary}>📋</div>
-                <div className={styles.sectionTitleBlock}>
-                  <h2 className={styles.sectionTitle}>MFCs with 1–2 Batches</h2>
-                  <p className={styles.sectionSubtitle}>MFCs with limited production batches</p>
-                </div>
-                <span className={`${styles.sectionBadge} ${styles.badgeSecondary}`}>
-                  {secondaryRendered.length} MFC{secondaryRendered.length !== 1 ? 's' : ''}
-                  {(selectedMonth || selectedYear || searchTokens.length > 0) &&
-                    secondaryRendered.length !== lessThan3.length
-                    ? ` (of ${lessThan3.length})`
-                    : ''}
-                </span>
-                <span className={`${styles.sectionBadge} ${styles.badgeBatchCount}`}>
-                  {lessThan3ForList.reduce((s, g) => s + g.batches.length, 0)} Batches
-                </span>
-                <span className={styles.sectionChevron}>{secondaryOpen ? '▲' : '▼'}</span>
-              </button>
-
-              {secondaryOpen && (
-                <>
-                  <div className={styles.sortBar}>
-                    <span className={styles.sortLabel}>Sort by:</span>
-                    {(
-                      [
-                        { key: 'mfc-asc', label: 'MFC A→Z' },
-                        { key: 'mfc-desc', label: 'MFC Z→A' },
-                        { key: 'batches-desc', label: 'Batches ↓' },
-                        { key: 'batches-asc', label: 'Batches ↑' },
-                        { key: 'intervals-desc', label: 'Intervals ↓' },
-                        { key: 'intervals-asc', label: 'Intervals ↑' },
-                        { key: 'shelf-life-desc', label: 'Shelf Life ↓' },
-                        { key: 'shelf-life-asc', label: 'Shelf Life ↑' },
-                      ] as { key: SortKey; label: string }[]
-                    ).map(({ key, label }) => (
-                      <button
-                        key={key}
-                        className={`${styles.sortBtn} ${secondarySort === key ? styles.sortBtnActive : ''}`}
-                        onClick={() => setSecondarySort(prev => prev === key ? 'mfc-asc' : key)}
-                      >
-                        {label}
-                      </button>
-                    ))}
-                  </div>
-
-                  {secondaryRendered.length === 0 ? (
-                    <div className={styles.emptySection}>
-                      {showMissingCOA
-                        ? 'No batches with missing COA found'
-                        : searchTokens.length > 0
-                          ? `No matches for "${searchQuery.trim()}" in this section`
-                          : selectedMonth
-                            ? `No stability testing scheduled for ${formatMonthLabel(selectedMonth.month, selectedMonth.year)}`
-                            : selectedYear
-                              ? `No batches with manufacturing year ${selectedYear}`
-                              : 'No MFCs with fewer than 3 batches'}
-                    </div>
-                  ) : (
-                    secondaryRendered
-                  )}
-                </>
-              )}
-            </section>
-          </>
-        )}
+            </>
+          )}
+        </section>
       </div>
     </div>
   );

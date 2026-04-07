@@ -83,6 +83,132 @@
   gap: 0.5rem;
 }
 
+/* ── Header notifications ──────────────────────────────── */
+
+.notifWrap {
+  position: relative;
+}
+
+.notifBtn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 32px;
+  border-radius: var(--radius-lg);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  background: rgba(255, 255, 255, 0.15);
+  color: #ffffff;
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.notifBtn:hover {
+  background: rgba(255, 255, 255, 0.25);
+  border-color: rgba(255, 255, 255, 0.4);
+}
+
+.notifIcon {
+  opacity: 0.95;
+}
+
+.notifBadge {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #ef4444;
+  color: #ffffff;
+  font-size: 0.6875rem;
+  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid rgba(79, 70, 229, 0.9);
+  box-shadow: 0 6px 18px rgba(239, 68, 68, 0.35);
+}
+
+.notifPopover {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 10px);
+  width: 260px;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  box-shadow: 0 16px 40px rgba(15, 23, 42, 0.18);
+  overflow: hidden;
+  z-index: 50;
+}
+
+.notifPopoverTitle {
+  padding: 0.625rem 0.75rem;
+  font-size: 0.75rem;
+  font-weight: 800;
+  color: #111827;
+  background: #f9fafb;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.notifItem {
+  width: 100%;
+  border: none;
+  background: #ffffff;
+  padding: 0.625rem 0.75rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  text-align: left;
+  transition: background 0.15s ease;
+}
+
+.notifItem:hover:not(:disabled) {
+  background: #f9fafb;
+}
+
+.notifItem:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.notifItemActive {
+  background: #fff7ed;
+}
+
+.notifDot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #ef4444;
+  border: 1.5px solid #dc2626;
+  flex-shrink: 0;
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.15);
+}
+
+.notifItemText {
+  font-size: 0.8125rem;
+  font-weight: 700;
+  color: #111827;
+  flex: 1;
+  min-width: 0;
+}
+
+.notifItemCount {
+  font-size: 0.75rem;
+  font-weight: 800;
+  color: #991b1b;
+  background: #fee2e2;
+  border: 1px solid #fecaca;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+
 /* ── Table Controls Bar (search + filter above section 1) ── */
 
 .tableControlsBar {
@@ -121,9 +247,9 @@
 
 .missingCOABtn {
   font-size: 0.75rem;
-  background: rgba(245, 158, 11, 0.1);
-  color: #b45309;
-  border: 1px solid rgba(245, 158, 11, 0.4);
+  background: #ffffff;
+  color: #4b5563;
+  border: 1px solid #e5e7eb;
   border-radius: 10px;
   padding: 0.3rem 0.75rem;
   cursor: pointer;
@@ -133,7 +259,8 @@
 }
 
 .missingCOABtn:hover {
-  background: rgba(245, 158, 11, 0.2);
+  background: #f9fafb;
+  border-color: #d1d5db;
 }
 
 .missingCOABtnActive {
@@ -253,6 +380,100 @@
   max-width: 1600px;
   margin: 0 auto;
   padding: 1.5rem;
+}
+
+/* ── Active Filters Bar ─────────────────────────────────── */
+
+.activeFiltersBar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 1.25rem;
+  border-bottom: 1px solid #e0e7ff;
+  background: rgba(255, 255, 255, 0.75);
+}
+
+.activeFiltersLeft {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+  min-width: 0;
+}
+
+.activeFiltersTitle {
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #6b7280;
+}
+
+.activeFiltersChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+  min-width: 0;
+  align-items: center;
+}
+
+.activeFiltersNone {
+  font-size: 0.8125rem;
+  color: #9ca3af;
+  font-style: italic;
+}
+
+.filterChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.25rem 0.625rem;
+  border-radius: 999px;
+  border: 1px solid #e5e7eb;
+  background: #f9fafb;
+  color: #374151;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
+  max-width: 100%;
+}
+
+.filterChip:hover {
+  background: #f3f4f6;
+  border-color: #d1d5db;
+  transform: translateY(-1px);
+}
+
+.filterChipX {
+  font-size: 0.75rem;
+  font-weight: 800;
+  color: #6b7280;
+  line-height: 1;
+}
+
+.activeFiltersClearBtn {
+  font-size: 0.75rem;
+  font-weight: 800;
+  padding: 0.45rem 0.85rem;
+  border-radius: 12px;
+  border: 1px solid #c7d2fe;
+  background: #eef2ff;
+  color: #3730a3;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.1s ease, opacity 0.15s ease;
+  white-space: nowrap;
+}
+
+.activeFiltersClearBtn:hover:not(:disabled) {
+  background: #e0e7ff;
+  border-color: #818cf8;
+  transform: translateY(-1px);
+}
+
+.activeFiltersClearBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
 }
 
 /* ── Search ───────────────────────────────────────────── */
@@ -1307,6 +1528,15 @@
   flex-shrink: 0;
 }
 
+.legendDotInactive {
+  background: #cbd5e1;
+  border: 1.5px solid #94a3b8;
+}
+
+.legendDotGlow {
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.18);
+}
+
 .legendFullyCompleted {
   background: #0ea5e9;
   border: 1.5px solid #0284c7;
@@ -1354,6 +1584,12 @@
 .statusFilterBtn:hover {
   border-color: #d1d5db;
   background: #f9fafb;
+}
+
+.statusFilterBtnActive {
+  border-color: #818cf8;
+  background: #ffffff;
+  box-shadow: 0 0 0 2px rgba(129, 140, 248, 0.15);
 }
 
 .statusBtnFullyCompleted {
@@ -1455,9 +1691,9 @@
   font-weight: 700;
   padding: 0.3125rem 0.875rem;
   border-radius: 10px;
-  border: 1.5px solid #c7d2fe;
+  border: 1.5px solid #e5e7eb;
   background: #ffffff;
-  color: #4338ca;
+  color: #4b5563;
   cursor: pointer;
   transition: all 0.15s ease;
   min-width: 2.75rem;
@@ -1465,8 +1701,8 @@
 }
 
 .yearBtn:hover {
-  background: #eef2ff;
-  border-color: #818cf8;
+  background: #f9fafb;
+  border-color: #d1d5db;
 }
 
 .yearBtnActive {
@@ -1506,9 +1742,9 @@
   font-weight: 600;
   padding: 0.3125rem 0.625rem;
   border-radius: 8px;
-  border: 1.5px solid #ddd6fe;
+  border: 1.5px solid #e5e7eb;
   background: #ffffff;
-  color: #5b21b6;
+  color: #4b5563;
   cursor: pointer;
   transition: all 0.15s ease;
   white-space: nowrap;
@@ -1517,15 +1753,15 @@
 }
 
 .monthBtn:hover:not(.monthBtnActive) {
-  background: #ede9fe;
-  border-color: #7c3aed;
-  color: #4c1d95;
+  background: #f9fafb;
+  border-color: #d1d5db;
+  color: #374151;
 }
 
 .monthBtnCurrent {
-  border-color: #818cf8;
-  background: linear-gradient(135deg, #eef2ff, #e0e7ff);
-  color: #3730a3;
+  border-color: #cbd5e1;
+  background: #f8fafc;
+  color: #374151;
 }
 
 .monthBtnActive {
@@ -1579,8 +1815,13 @@
   white-space: nowrap;
   cursor: pointer;
   transition: opacity 0.15s ease, box-shadow 0.15s ease, transform 0.1s ease;
-  background: inherit;
+  background: #ffffff;
+  border-color: #e5e7eb;
+  color: #4b5563;
   font-family: inherit;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
 }
 
 .summaryChip:hover {
@@ -1595,24 +1836,49 @@
 }
 
 .summaryChipFullyCompleted {
+  background: #ffffff;
+  color: #4b5563;
+  border-color: #e5e7eb;
+}
+
+.summaryChipGreen {
+  background: #ffffff;
+  color: #4b5563;
+  border-color: #e5e7eb;
+}
+
+.summaryChipOrange {
+  background: #ffffff;
+  color: #4b5563;
+  border-color: #e5e7eb;
+}
+
+.summaryChipRed {
+  background: #ffffff;
+  color: #4b5563;
+  border-color: #e5e7eb;
+}
+
+/* Summary chips should only show color when active */
+.summaryChipActive.summaryChipFullyCompleted {
   background: linear-gradient(135deg, #e0f2fe, #bae6fd);
   color: #0c4a6e;
   border-color: #38bdf8;
 }
 
-.summaryChipGreen {
+.summaryChipActive.summaryChipGreen {
   background: linear-gradient(135deg, #f0fdf4, #dcfce7);
   color: #15803d;
   border-color: #86efac;
 }
 
-.summaryChipOrange {
+.summaryChipActive.summaryChipOrange {
   background: linear-gradient(135deg, #fff7ed, #ffedd5);
   color: #c2410c;
   border-color: #fb923c;
 }
 
-.summaryChipRed {
+.summaryChipActive.summaryChipRed {
   background: linear-gradient(135deg, #fef2f2, #fee2e2);
   color: #dc2626;
   border-color: #fca5a5;
