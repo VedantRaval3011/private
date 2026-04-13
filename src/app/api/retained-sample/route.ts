@@ -102,21 +102,43 @@ export async function GET(): Promise<NextResponse<RetainedSampleResponse>> {
     // 2. Fetch all Batch documents for all product codes
     const batchDocs = await Batch.find(
       { 'batches.itemCode': { $in: allProductCodes } },
-      { 'batches.itemCode': 1, 'batches.batchNumber': 1, 'batches.mfgDate': 1, 'batches.expiryDate': 1, 'batches.itemName': 1 }
+      {
+        'batches.itemCode': 1,
+        'batches.batchNumber': 1,
+        'batches.mfgDate': 1,
+        'batches.expiryDate': 1,
+        'batches.itemName': 1,
+        'batches.itemDetail': 1, // Brand/Generic name (Batch Creation data)
+      }
     ).lean();
 
+    // Batch numbers to exclude (test/dummy batches)
+    const EXCLUDED_BATCH_NUMBERS = new Set<string>();
+
     // Build mfcKey → [{batchNumber, itemCode, mfgDate, expiryDate}]  (deduplicated by batchNumber+itemCode)
-    const mfcToBatches = new Map<string, Array<{ batchNumber: string; itemCode: string; mfgDate: string; expiryDate: string }>>();
+    const mfcToBatches = new Map<
+      string,
+      Array<{ batchNumber: string; itemCode: string; mfgDate: string; expiryDate: string; brandName?: string }>
+    >();
     for (const doc of batchDocs) {
       for (const b of doc.batches || []) {
         const mfcKey = codeToMfc.get(b.itemCode);
         if (!mfcKey) continue;
         const batchNumber = (b.batchNumber || '').trim();
         if (!batchNumber) continue;
+        if (EXCLUDED_BATCH_NUMBERS.has(batchNumber)) continue;
         if (!mfcToBatches.has(mfcKey)) mfcToBatches.set(mfcKey, []);
         const existing = mfcToBatches.get(mfcKey)!;
         if (!existing.some((x) => x.batchNumber === batchNumber && x.itemCode === b.itemCode)) {
-          existing.push({ batchNumber, itemCode: b.itemCode || '', mfgDate: b.mfgDate || '', expiryDate: b.expiryDate || '' });
+          const rawBrand = typeof b.itemDetail === 'string' ? b.itemDetail.trim() : '';
+          const brandName = rawBrand && rawBrand !== 'N/A' ? rawBrand : undefined;
+          existing.push({
+            batchNumber,
+            itemCode: b.itemCode || '',
+            mfgDate: b.mfgDate || '',
+            expiryDate: b.expiryDate || '',
+            brandName,
+          });
         }
       }
     }
@@ -178,35 +200,49 @@ export async function GET(): Promise<NextResponse<RetainedSampleResponse>> {
 
     // 4. Fetch all RetainedSample records
     const retainedDocs = await RetainedSample.find({}).lean();
+    // Primary key: mfcNo|batchNumber|itemCode  (new, per-item records)
+    // Legacy key:  mfcNo|batchNumber            (old records saved before itemCode was added)
+    // When looking up stability entries for a batch row we try the primary key first
+    // and fall back to the legacy key so existing data continues to display correctly.
     const stabilityMap = new Map<string, StabilityEntry[]>();
     for (const r of retainedDocs) {
-      stabilityMap.set(
-        r.batchNumber,
-        r.stabilityEntries.map((e: { month: number; pH: string; phValues?: PhValue[]; description: string; recordedAt?: Date; createdAt?: Date; createdBy?: EntryActor; updatedBy?: EntryActor; editHistory?: Array<{ pH: string; phValues?: PhValue[]; description: string; recordedAt?: Date; savedBy?: EntryActor }> }) => ({
-          month: e.month as 6 | 12 | 18 | 24 | 30 | 36,
-          pH: e.pH,
-          phValues: e.phValues || [],
-          description: e.description,
-          recordedAt: e.recordedAt ? String(e.recordedAt) : undefined,
-          createdAt: e.createdAt ? String(e.createdAt) : undefined,
-          createdBy: e.createdBy,
-          updatedBy: e.updatedBy,
-          editHistory: (e.editHistory || []).map((h) => ({
-            pH: h.pH || '',
-            phValues: h.phValues || [],
-            description: h.description || '',
-            recordedAt: h.recordedAt ? String(h.recordedAt) : '',
-            savedBy: h.savedBy,
-          })),
-        }))
-      );
+      const mapped = r.stabilityEntries.map((e: { month: number; pH: string; phValues?: PhValue[]; description: string; recordedAt?: Date; createdAt?: Date; createdBy?: EntryActor; updatedBy?: EntryActor; editHistory?: Array<{ pH: string; phValues?: PhValue[]; description: string; recordedAt?: Date; savedBy?: EntryActor }> }) => ({
+        month: e.month as 6 | 12 | 18 | 24 | 30 | 36,
+        pH: e.pH,
+        phValues: e.phValues || [],
+        description: e.description,
+        recordedAt: e.recordedAt ? String(e.recordedAt) : undefined,
+        createdAt: e.createdAt ? String(e.createdAt) : undefined,
+        createdBy: e.createdBy,
+        updatedBy: e.updatedBy,
+        editHistory: (e.editHistory || []).map((h) => ({
+          pH: h.pH || '',
+          phValues: h.phValues || [],
+          description: h.description || '',
+          recordedAt: h.recordedAt ? String(h.recordedAt) : '',
+          savedBy: h.savedBy,
+        })),
+      }));
+
+      const itemCode: string = (r as { itemCode?: string }).itemCode || '';
+      if (itemCode) {
+        // Per-item record (new format): keyed by mfcNo|batchNumber|itemCode
+        stabilityMap.set(`${r.mfcNo}|${r.batchNumber}|${itemCode}`, mapped);
+      } else {
+        // Legacy record without itemCode: also store under the old key
+        stabilityMap.set(`${r.mfcNo}|${r.batchNumber}`, mapped);
+      }
     }
 
     // 5. Build MFCGroup for every formula, split into 3+ and <3 batches
     const moreThan3: MFCGroup[] = [];
     const lessThan3: MFCGroup[] = [];
 
+    // MFC card numbers to exclude (test/dummy formulas)
+    const EXCLUDED_MFC_NOS = new Set(['MFBATC01']);
+
     for (const [mfcKey, info] of mfcInfoMap.entries()) {
+      if (EXCLUDED_MFC_NOS.has(info.mfcNo)) continue; // skip test MFCs
       const rawBatches = mfcToBatches.get(mfcKey) || [];
       if (rawBatches.length === 0) continue; // skip MFCs with no batches
 
@@ -224,16 +260,22 @@ export async function GET(): Promise<NextResponse<RetainedSampleResponse>> {
       const batchRows: BatchStabilityRow[] = rawBatches.map((b) => {
         const coa = coaMap.get(b.batchNumber);
         const phParams = coa?.phParams || [];
+        // Try per-item key first; fall back to legacy key for old records
+        const stabilityEntries =
+          stabilityMap.get(`${info.mfcNo}|${b.batchNumber}|${b.itemCode}`) ??
+          stabilityMap.get(`${info.mfcNo}|${b.batchNumber}`) ??
+          [];
         return {
           batchNumber: b.batchNumber,
           itemCode: b.itemCode,
           mfgDate: b.mfgDate,
           expiryDate: b.expiryDate,
+          brandName: b.brandName,
           coaFound: !!coa,
           phParams,
           zeroMonthPH: phParams[0]?.result || '',   // backward compat
           zeroMonthDescription: coa?.description || '',
-          stabilityEntries: stabilityMap.get(b.batchNumber) || [],
+          stabilityEntries,
         };
       });
 
@@ -274,7 +316,7 @@ export async function POST(
     await connectToDatabase();
 
     const body: SaveStabilityRequest = await request.json();
-    const { mfcNo, productCode, productName, batchNumber, month, pH, phValues, description } = body;
+    const { mfcNo, productCode, productName, batchNumber, itemCode, month, pH, phValues, description } = body;
 
     if (!mfcNo || !productCode || !batchNumber || !month) {
       return NextResponse.json(
@@ -300,7 +342,12 @@ export async function POST(
     let recordedAtStr = now.toISOString();
     let createdAtStr = now.toISOString();
 
-    const existing = await RetainedSample.findOne({ batchNumber, mfcNo });
+    // Look up by itemCode when provided (new records), fall back to legacy records
+    // that were saved before itemCode was introduced.
+    const query = itemCode
+      ? { batchNumber, mfcNo, itemCode }
+      : { batchNumber, mfcNo, $or: [{ itemCode: '' }, { itemCode: { $exists: false } }] };
+    const existing = await RetainedSample.findOne(query);
 
     if (existing) {
       const idx = existing.stabilityEntries.findIndex(
@@ -340,6 +387,7 @@ export async function POST(
         productCode,
         productName,
         batchNumber,
+        itemCode: itemCode || '',
         stabilityEntries: [{ ...entryData, createdAt: now, createdBy: actor, editHistory: [] }],
       });
     }

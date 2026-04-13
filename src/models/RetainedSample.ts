@@ -47,14 +47,19 @@ const RetainedSampleSchema = new Schema<IRetainedSample>({
   productCode: { type: String, required: true, index: true },
   productName: { type: String, required: true },
   batchNumber: { type: String, required: true, index: true },
+  // itemCode differentiates records when the same batch number appears for
+  // multiple item codes under the same MFC (e.g. different pack sizes).
+  itemCode: { type: String, default: '' },
   stabilityEntries: [StabilityEntrySchema],
 }, {
   timestamps: true,
   collection: 'retained_samples',
 });
 
-// One record per batch (one batch belongs to one MFC)
-RetainedSampleSchema.index({ batchNumber: 1, mfcNo: 1 }, { unique: true });
+// One record per batch + item code combination under an MFC.
+// NOTE: if you have existing data without itemCode, drop the old
+// { batchNumber:1, mfcNo:1 } unique index in MongoDB first.
+RetainedSampleSchema.index({ batchNumber: 1, mfcNo: 1, itemCode: 1 }, { unique: true });
 RetainedSampleSchema.index({ productCode: 1 });
 
 export const RetainedSample = mongoose.models.RetainedSample ||

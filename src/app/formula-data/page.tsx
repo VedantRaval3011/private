@@ -229,6 +229,16 @@ function toMfrKey(masterCardNo: string): string {
     return masterCardNo.replace(/^MF[A-Z]\//, '').replace(/\//g, '');
 }
 
+function splitArNumbers(raw: unknown): string[] {
+    const s = String(raw ?? '').trim();
+    if (!s || s.toUpperCase() === 'N/A') return [];
+    return s
+        .split(/[,\\n\\r]+/)
+        .map(t => t.trim())
+        .filter(Boolean)
+        .map(t => t.toUpperCase());
+}
+
 // ============================================
 // Section Component (from FormulaDisplay) - Enhanced with vibrant colors
 // ============================================
@@ -800,6 +810,8 @@ function BatchStatusCapsule({ matched, unmatched, onGreenClick, onRedClick, size
 }
 
 // ============================================
+// Mini AR Status Capsule (Unique AR Numbers)
+// ============================================
 // APQR Preview Modal Component
 // ============================================
 interface APQRPreviewModalProps {
@@ -996,8 +1008,10 @@ export default function FormulaDataPage() {
     const [expandedMfc, setExpandedMfc] = useState<string | null>(null);
     const [searchTerm, setSearchTerm] = useState('');
     const [selectedManufacturer, setSelectedManufacturer] = useState<string | null>(null);
+    const [selectedFilterYear, setSelectedFilterYear] = useState<string | null>(null);
     const [batchCounts, setBatchCounts] = useState<Record<string, number>>({});
     const [unmatchedBatches, setUnmatchedBatches] = useState<{ itemCode: string; count: number }[]>([]);
+    const [unmatchedItemDetailModal, setUnmatchedItemDetailModal] = useState<{ itemCode: string; batches: BatchItem[] } | null>(null);
     // Global RM (Raw Material) data matching for section header capsule
     const [globalRmDataMatched, setGlobalRmDataMatched] = useState<number>(0);
     const [globalRmDataUnmatched, setGlobalRmDataUnmatched] = useState<number>(0);
@@ -1203,96 +1217,6 @@ export default function FormulaDataPage() {
     // Sort by MFC Number state: 'none' | 'asc' | 'desc'
     const [mfcSortOrder, setMfcSortOrder] = useState<'none' | 'asc' | 'desc'>('none');
 
-    // Section-specific and per-formula unique AR number counts for RM COA footer
-    // These are calculated dynamically based on requisition data
-    const [sectionUniqueArCounts, setSectionUniqueArCounts] = useState<{
-        main: { found: number; missing: number };
-        lowBatch: { found: number; missing: number };
-        noBatch: { found: number; missing: number };
-        placebo: { found: number; missing: number };
-    }>({
-        main: { found: 0, missing: 0 },
-        lowBatch: { found: 0, missing: 0 },
-        noBatch: { found: 0, missing: 0 },
-        placebo: { found: 0, missing: 0 },
-    });
-    // Map of MFC number to unique AR counts
-    const [perFormulaUniqueArCounts, setPerFormulaUniqueArCounts] = useState<Map<string, { found: number; missing: number }>>(new Map());
-    // Map of MFC number to batch counts for RM COA (found/missing batches per MFC)
-    const [perFormulaRmCoaBatchCounts, setPerFormulaRmCoaBatchCounts] = useState<Map<string, { found: number; missing: number }>>(new Map());
-    // Map of MFC number to unique AR counts for PM COA
-    const [perFormulaPmUniqueArCounts, setPerFormulaPmUniqueArCounts] = useState<Map<string, { found: number; missing: number }>>(new Map());
-    // Map of MFC number to batch counts for PM COA (found/missing batches per MFC)
-    const [perFormulaPmCoaBatchCounts, setPerFormulaPmCoaBatchCounts] = useState<Map<string, { found: number; missing: number }>>(new Map());
-    // Map of MFC number to unique AR counts for PPM COA
-    const [perFormulaPpmUniqueArCounts, setPerFormulaPpmUniqueArCounts] = useState<Map<string, { found: number; missing: number }>>(new Map());
-    // Map of MFC number to batch counts for PPM COA (found/missing batches per MFC)
-    const [perFormulaPpmCoaBatchCounts, setPerFormulaPpmCoaBatchCounts] = useState<Map<string, { found: number; missing: number }>>(new Map());
-
-    const [sectionPmUniqueArCounts, setSectionPmUniqueArCounts] = useState<{
-        main: { found: number; missing: number };
-        lowBatch: { found: number; missing: number };
-        noBatch: { found: number; missing: number };
-        placebo: { found: number; missing: number };
-    }>({
-        main: { found: 0, missing: 0 },
-        lowBatch: { found: 0, missing: 0 },
-        noBatch: { found: 0, missing: 0 },
-        placebo: { found: 0, missing: 0 },
-    });
-
-    const [sectionPpmUniqueArCounts, setSectionPpmUniqueArCounts] = useState<{
-        main: { found: number; missing: number };
-        lowBatch: { found: number; missing: number };
-        noBatch: { found: number; missing: number };
-        placebo: { found: number; missing: number };
-    }>({
-        main: { found: 0, missing: 0 },
-        lowBatch: { found: 0, missing: 0 },
-        noBatch: { found: 0, missing: 0 },
-        placebo: { found: 0, missing: 0 },
-    });
-
-    // ENHANCED: Track unique batch counts per section (for capsule display)
-    // This counts batches that have at least one found/missing AR
-    const [sectionPmUniqueBatchCounts, setSectionPmUniqueBatchCounts] = useState<{
-        main: { found: number; missing: number };
-        lowBatch: { found: number; missing: number };
-        noBatch: { found: number; missing: number };
-        placebo: { found: number; missing: number };
-    }>({
-        main: { found: 0, missing: 0 },
-        lowBatch: { found: 0, missing: 0 },
-        noBatch: { found: 0, missing: 0 },
-        placebo: { found: 0, missing: 0 },
-    });
-
-    const [sectionPpmUniqueBatchCounts, setSectionPpmUniqueBatchCounts] = useState<{
-        main: { found: number; missing: number };
-        lowBatch: { found: number; missing: number };
-        noBatch: { found: number; missing: number };
-        placebo: { found: number; missing: number };
-    }>({
-        main: { found: 0, missing: 0 },
-        lowBatch: { found: 0, missing: 0 },
-        noBatch: { found: 0, missing: 0 },
-        placebo: { found: 0, missing: 0 },
-    });
-
-    // ENHANCED: Track unique RM COA batch counts per section (for capsule display)
-    // A batch is "found" if all its RM AR numbers are in RM COA, "missing" if any are not
-    const [sectionRmCoaBatchCounts, setSectionRmCoaBatchCounts] = useState<{
-        main: { found: number; missing: number };
-        lowBatch: { found: number; missing: number };
-        noBatch: { found: number; missing: number };
-        placebo: { found: number; missing: number };
-    }>({
-        main: { found: 0, missing: 0 },
-        lowBatch: { found: 0, missing: 0 },
-        noBatch: { found: 0, missing: 0 },
-        placebo: { found: 0, missing: 0 },
-    });
-
     // Inward Qualified Batches (PM/PPM)
     const [pmCoaInwardQualifiedBatchNumbers, setPmCoaInwardQualifiedBatchNumbers] = useState<Set<string>>(new Set());
     const [ppmCoaInwardQualifiedBatchNumbers, setPpmCoaInwardQualifiedBatchNumbers] = useState<Set<string>>(new Set());
@@ -1335,10 +1259,56 @@ export default function FormulaDataPage() {
         make?: string;
     }
     const [allBatches, setAllBatches] = useState<BatchItem[]>([]);
+
+    // Year-filtered view of allBatches — all section memos use this so they respond to the year filter
+    const yearFilteredBatches = useMemo(() => {
+        if (!selectedFilterYear) return allBatches as any[];
+        return (allBatches as any[]).filter(b => {
+            const parts = (b.mfgDate || '').split('-');
+            if (parts.length === 3) {
+                const y = parseInt(parts[2], 10);
+                if (!isNaN(y)) return (y < 50 ? 2000 + y : 1900 + y).toString() === selectedFilterYear;
+            }
+            return false;
+        });
+    }, [allBatches, selectedFilterYear]);
+
+    // Year-filtered unmatched batches (item codes not found in any MFC)
+    const filteredUnmatchedBatches = useMemo(() => {
+        if (!selectedFilterYear) return unmatchedBatches;
+
+        // Build set of all known MFC product codes
+        const allMfcProductCodes = new Set<string>();
+        formulas.forEach((f: any) => {
+            const mainCode = f.masterFormulaDetails?.productCode;
+            if (mainCode && mainCode !== 'N/A') allMfcProductCodes.add(mainCode);
+            f.fillingDetails?.forEach((fd: any) => {
+                if (fd.productCode && fd.productCode !== 'N/A') allMfcProductCodes.add(fd.productCode);
+            });
+            f.processes?.forEach((p: any) => {
+                p.fillingProducts?.forEach((fp: any) => {
+                    if (fp.productCode) allMfcProductCodes.add(fp.productCode);
+                });
+            });
+        });
+
+        const itemCodeCounts = new Map<string, number>();
+        yearFilteredBatches.forEach((batch: any) => {
+            if (batch.itemCode && !allMfcProductCodes.has(batch.itemCode)) {
+                itemCodeCounts.set(batch.itemCode, (itemCodeCounts.get(batch.itemCode) || 0) + 1);
+            }
+        });
+
+        return Array.from(itemCodeCounts.entries())
+            .map(([itemCode, count]) => ({ itemCode, count }))
+            .sort((a, b) => b.count - a.count);
+    }, [selectedFilterYear, unmatchedBatches, yearFilteredBatches, formulas]);
+
     const [isBatchesLoading, setIsBatchesLoading] = useState(false);
     const [batchSearchTerm, setBatchSearchTerm] = useState('');
     const [expandedBatchGroups, setExpandedBatchGroups] = useState<Set<string>>(new Set());
     const batchSectionRef = useRef<HTMLDivElement>(null);
+    const orphanedBatchesSectionRef = useRef<HTMLDivElement>(null);
     const [hideZeroBatches, setHideZeroBatches] = useState(false);
     const [batchSortColumn, setBatchSortColumn] = useState<keyof BatchItem>('batchNumber');
     const [batchSortDirection, setBatchSortDirection] = useState<'asc' | 'desc'>('asc');
@@ -1780,6 +1750,200 @@ export default function FormulaDataPage() {
         XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
         XLSX.writeFile(wb, `${fileName}.xlsx`);
     };
+    // Build map: batchNumber → manufacturing year (from allBatches raw data)
+    const batchYearMap = useMemo(() => {
+        const map = new Map<string, string>();
+        (allBatches as any[]).forEach(b => {
+            if (b.batchNumber) {
+                const parts = (b.mfgDate || '').split('-');
+                if (parts.length === 3) {
+                    const y = parseInt(parts[2], 10);
+                    if (!isNaN(y)) map.set(b.batchNumber, (y < 50 ? 2000 + y : 1900 + y).toString());
+                }
+            }
+        });
+        return map;
+    }, [allBatches]);
+
+    // Available years derived from manufacturing dates of all batches
+    const availableYears = useMemo(() => {
+        const years = new Set<string>();
+        batchYearMap.forEach(yr => years.add(yr));
+        return Array.from(years).sort((a, b) => Number(b) - Number(a));
+    }, [batchYearMap]);
+
+    // Filter formulas
+    const filteredFormulas = useMemo(() => {
+        let result = formulas;
+
+        if (selectedFilterYear) {
+            result = result.filter(f => {
+                const batchNos: string[] = (f as any).uniqueBatchNumbers || [];
+                return batchNos.some((bn: string) => batchYearMap.get(bn) === selectedFilterYear);
+            });
+        }
+
+        if (selectedManufacturer) {
+            result = result.filter(f =>
+                (f.masterFormulaDetails?.manufacturer || 'Other') === selectedManufacturer
+            );
+        }
+
+        if (searchTerm) {
+            const term = searchTerm.toLowerCase();
+
+            result = result.filter(f =>
+                f.masterFormulaDetails.masterCardNo?.toLowerCase().includes(term) ||
+                f.masterFormulaDetails.productCode?.toLowerCase().includes(term) ||
+                f.masterFormulaDetails.productName?.toLowerCase().includes(term) ||
+                f.masterFormulaDetails.genericName?.toLowerCase().includes(term)
+            );
+        }
+
+        // Sort by MFC Number if enabled
+        if (mfcSortOrder !== 'none') {
+            result = [...result].sort((a, b) => {
+                const mfcA = a.masterFormulaDetails?.masterCardNo || '';
+                const mfcB = b.masterFormulaDetails?.masterCardNo || '';
+                const comparison = mfcA.localeCompare(mfcB, undefined, { numeric: true, sensitivity: 'base' });
+                return mfcSortOrder === 'asc' ? comparison : -comparison;
+            });
+        }
+
+        return result;
+    }, [formulas, selectedFilterYear, selectedManufacturer, searchTerm, mfcSortOrder, astRstData, batchYearMap]);
+
+    // Separate formulas into categories with DEDUPLICATION by product code
+    const { mainFormulas, lowBatchFormulas, noBatchFormulas, placeboFormulas, sectionBatchTotals } = useMemo(() => {
+        const placebo: FormulaRecord[] = [];
+        const lowBatch: FormulaRecord[] = [];
+        const noBatch: FormulaRecord[] = [];
+        const main: FormulaRecord[] = [];
+
+        filteredFormulas.forEach(f => {
+            const productName = f.masterFormulaDetails.productName?.toLowerCase() || '';
+            // Include both 'placebo' and 'mediafill' in placebo section
+            const isPlaceboOrMediafill = productName.includes('placebo') || productName.includes('mediafill') || productName.includes('media fill');
+            const batchCount = f.totalBatchCount || 0;
+
+            if (isPlaceboOrMediafill) {
+                placebo.push(f);
+            } else if (batchCount === 0) {
+                // New category: MFCs with NO batches at all
+                noBatch.push(f);
+            } else if (batchCount < 3) {
+                // Low batch: 1-2 batches
+                lowBatch.push(f);
+            } else {
+                main.push(f);
+            }
+        });
+
+        // Calculate total batches for each section - DEDUPLICATED by PRODUCT CODE
+        // The key insight: batches are matched by product code (itemCode)
+        // If the same product code appears in multiple formulas, we only count it ONCE
+
+        // Track which product codes we've already counted (globally across all sections)
+        const countedProductCodes = new Set<string>();
+
+        // Helper function to get all product codes from a formula
+        const getFormulaProductCodes = (f: FormulaRecord): string[] => {
+            const codes: string[] = [];
+
+            // Main product code
+            const mainCode = f.masterFormulaDetails?.productCode;
+            if (mainCode && mainCode !== 'N/A') codes.push(mainCode);
+
+            // Filling details product codes
+            if (f.fillingDetails && Array.isArray(f.fillingDetails)) {
+                f.fillingDetails.forEach((fd: FillingDetail) => {
+                    if (fd.productCode && fd.productCode !== 'N/A' && !codes.includes(fd.productCode)) {
+                        codes.push(fd.productCode);
+                    }
+                });
+            }
+
+            // Process filling products
+            if (f.processes && Array.isArray(f.processes)) {
+                f.processes.forEach((p: ProcessData) => {
+                    if (p.fillingProducts && Array.isArray(p.fillingProducts)) {
+                        p.fillingProducts.forEach((fp: AsepticFillingProduct) => {
+                            if (fp.productCode && !codes.includes(fp.productCode)) {
+                                codes.push(fp.productCode);
+                            }
+                        });
+                    }
+                });
+            }
+
+            return codes;
+        };
+
+        let mainBatchTotal = 0;
+        let lowBatchTotal = 0;
+        let noBatchTotal = 0;
+        let placeboBatchTotal = 0;
+
+        // Calculate for main formulas (3+ batches)
+        main.forEach(f => {
+            const productCodes = getFormulaProductCodes(f);
+            productCodes.forEach(code => {
+                if (!countedProductCodes.has(code)) {
+                    countedProductCodes.add(code);
+                    mainBatchTotal += batchCounts[code] || 0;
+                }
+            });
+        });
+
+        // Calculate for low batch formulas (1-2 batches)
+        lowBatch.forEach(f => {
+            const productCodes = getFormulaProductCodes(f);
+            productCodes.forEach(code => {
+                if (!countedProductCodes.has(code)) {
+                    countedProductCodes.add(code);
+                    lowBatchTotal += batchCounts[code] || 0;
+                }
+            });
+        });
+
+        // No batch formulas always have 0
+        noBatch.forEach(f => {
+            const productCodes = getFormulaProductCodes(f);
+            productCodes.forEach(code => {
+                if (!countedProductCodes.has(code)) {
+                    countedProductCodes.add(code);
+                    noBatchTotal += batchCounts[code] || 0; // Should be 0
+                }
+            });
+        });
+
+        // Calculate for placebo formulas
+        placebo.forEach(f => {
+            const productCodes = getFormulaProductCodes(f);
+            productCodes.forEach(code => {
+                if (!countedProductCodes.has(code)) {
+                    countedProductCodes.add(code);
+                    placeboBatchTotal += batchCounts[code] || 0;
+                }
+            });
+        });
+
+        return {
+            mainFormulas: main,
+            lowBatchFormulas: lowBatch,
+            noBatchFormulas: noBatch,
+            placeboFormulas: placebo,
+            sectionBatchTotals: {
+                main: mainBatchTotal,
+                lowBatch: lowBatchTotal,
+                noBatch: noBatchTotal,
+                placebo: placeboBatchTotal,
+                // Total should now match actual batch count
+                totalCounted: mainBatchTotal + lowBatchTotal + noBatchTotal + placeboBatchTotal
+            }
+        };
+    }, [filteredFormulas, batchCounts]);
+
 
     const fetchFormulas = useCallback(async () => {
         setIsLoading(true);
@@ -1906,831 +2070,6 @@ export default function FormulaDataPage() {
             .catch(() => { /* silently ignore if unavailable */ });
     }, [fetchFormulas, fetchBatchReconciliation, fetchAllBatches]);
 
-    // Calculate unique AR counts per section and per formula for RM and PM COA footer display
-    const calculateUniqueArCounts = useCallback(async () => {
-        if (formulas.length === 0) return;
-
-        try {
-            // --- RM COA Calculation ---
-            const rmCoaResponse = await fetch('/api/rmcoa');
-            const rmCoaData = await rmCoaResponse.json();
-
-            const rmCoaArNumbers = new Set<string>();
-            if (rmCoaData.success && rmCoaData.data) {
-                rmCoaData.data.forEach((c: any) => {
-                    if (c.arNo && c.arNo.trim() !== '') {
-                        rmCoaArNumbers.add(c.arNo.trim());
-                    }
-                });
-            }
-
-            const requisitionResponse = await fetch('/api/requisition/materials?type=RM&pageSize=100000');
-            const requisitionData = await requisitionResponse.json();
-
-            // --- PM COA Data Fetching ---
-            const pmCoaResponse = await fetch('/api/coa?stage=PM');
-            const pmCoaData = await pmCoaResponse.json();
-
-            const pmCoaArNumbers = new Set<string>();
-            if (pmCoaData.success && pmCoaData.data) {
-                pmCoaData.data.forEach((c: any) => {
-                    const arNo = c.pmData?.arNumber || c.arNo;
-                    if (arNo && arNo.trim() !== '') {
-                        pmCoaArNumbers.add(arNo.trim());
-                    }
-                });
-            }
-
-            const pmRequisitionResponse = await fetch('/api/requisition/materials?type=PM&pageSize=100000');
-            const pmRequisitionData = await pmRequisitionResponse.json();
-
-            // --- PPM COA Data Fetching ---
-            const ppmCoaResponse = await fetch('/api/coa?stage=PPM');
-            const ppmCoaData = await ppmCoaResponse.json();
-
-            const ppmCoaArNumbers = new Set<string>();
-            if (ppmCoaData.success && ppmCoaData.data) {
-                ppmCoaData.data.forEach((c: any) => {
-                    const arNo = c.ppmData?.arNumber || c.arNo;
-                    if (arNo && arNo.trim() !== '') {
-                        ppmCoaArNumbers.add(arNo.trim());
-                    }
-                });
-            }
-
-            const ppmRequisitionResponse = await fetch('/api/requisition/materials?type=PPM&pageSize=100000');
-            const ppmRequisitionData = await ppmRequisitionResponse.json();
-
-            // --- ENHANCED: Fetch Inward AR Numbers and Inward Numbers for AR-level matching ---
-            const inwardArResponse = await fetch('/api/inward/ar-numbers');
-            const inwardArData = await inwardArResponse.json();
-            const inwardNumbersResponse = await fetch('/api/inward/inward-numbers');
-            const inwardNumbersData = await inwardNumbersResponse.json();
-
-            // Build case-insensitive set of all AR numbers/Inward numbers in Inward Register
-            const inwardArNumbersSet = new Set<string>();
-            if (inwardArData.success && inwardArData.arNumbers) {
-                inwardArData.arNumbers.forEach((arNumber: string) => {
-                    if (arNumber && arNumber.trim() !== '') {
-                        const trimmedAr = arNumber.trim().toUpperCase();
-                        inwardArNumbersSet.add(trimmedAr);
-                        // Also add base without version suffix
-                        const baseAr = trimmedAr.split('.')[0];
-                        if (baseAr && baseAr !== trimmedAr) {
-                            inwardArNumbersSet.add(baseAr);
-                        }
-                    }
-                });
-            }
-            if (inwardNumbersData.success && inwardNumbersData.inwardNumbers) {
-                inwardNumbersData.inwardNumbers.forEach((inwardNo: string) => {
-                    if (inwardNo && inwardNo.trim() !== '') {
-                        const trimmedInward = inwardNo.trim().toUpperCase();
-                        inwardArNumbersSet.add(trimmedInward);
-                        const baseInward = trimmedInward.split('.')[0];
-                        if (baseInward && baseInward !== trimmedInward) {
-                            inwardArNumbersSet.add(baseInward);
-                        }
-                    }
-                });
-            }
-
-
-            // --- Common Helpers & Maps ---
-
-            // Helper: Check if AR number contains a dot followed by digits (e.g., IW2AJRM2200040.2)
-            // These are internal reference data and should be excluded from missing calculations
-            const isDottedArNumber = (arNo: string): boolean => {
-                return /\.\d/.test(arNo);
-            };
-
-            const isRmArNumber = (arNo: string): boolean => {
-                const upper = arNo.toUpperCase();
-                if (upper.includes('PRM')) return false;
-                return true;
-            };
-
-            const isPmArNumber = (arNo: string): boolean => {
-                const upper = arNo.toUpperCase();
-                return upper.includes('PM') || upper.startsWith('IWPZPM') || upper.startsWith('IWPM');
-            };
-
-            const isPpmArNumber = (arNo: string): boolean => {
-                const upper = arNo.toUpperCase();
-                return upper.includes('PRM');
-            };
-
-            const isPlaceboProduct = (productName: string): boolean => {
-                const upper = (productName || '').toUpperCase();
-                return upper.includes('PLACEBO') || upper.includes('MEDIA FILL') || upper.includes('MEDIAFILL');
-            };
-
-            const mfcToCategory = new Map<string, 'main' | 'lowBatch' | 'noBatch' | 'placebo'>();
-
-            formulas.forEach((f: FormulaRecord) => {
-                const mfcNo = (f.masterFormulaDetails?.masterCardNo || '').trim().toUpperCase();
-                if (!mfcNo) return;
-
-                const productName = f.masterFormulaDetails?.productName || '';
-                const totalBatchCount = f.totalBatchCount || 0;
-
-                if (isPlaceboProduct(productName)) {
-                    mfcToCategory.set(mfcNo, 'placebo');
-                } else if (totalBatchCount >= 3) {
-                    mfcToCategory.set(mfcNo, 'main');
-                } else if (totalBatchCount >= 1) {
-                    mfcToCategory.set(mfcNo, 'lowBatch');
-                } else {
-                    mfcToCategory.set(mfcNo, 'noBatch');
-                }
-            });
-
-            // --- Helper for Batch Normalization & System Batches (Orphan Filtering) ---
-            const normalizeBatch = (b: string | null | undefined) => (b || '').trim().toUpperCase();
-            const systemBatchesNormalized = new Set<string>();
-            allBatches.forEach((batch: any) => {
-                if (batch.batchNumber) {
-                    const n = normalizeBatch(batch.batchNumber);
-                    if (n) systemBatchesNormalized.add(n);
-                }
-            });
-
-            // --- Shared: Build productCodeToCategory and batchToSection maps (used by RM & PM batch tracking) ---
-            const getFormulaProductCodesShared = (f: any): string[] => {
-                const codes: string[] = [];
-                const mainCode = f.masterFormulaDetails?.productCode;
-                if (mainCode && mainCode !== 'N/A') codes.push(mainCode);
-                if (f.fillingDetails && Array.isArray(f.fillingDetails)) {
-                    f.fillingDetails.forEach((fd: any) => {
-                        if (fd.productCode && fd.productCode !== 'N/A' && !codes.includes(fd.productCode)) {
-                            codes.push(fd.productCode);
-                        }
-                    });
-                }
-                if (f.processes && Array.isArray(f.processes)) {
-                    f.processes.forEach((p: any) => {
-                        if (p.fillingProducts && Array.isArray(p.fillingProducts)) {
-                            p.fillingProducts.forEach((fp: any) => {
-                                if (fp.productCode && !codes.includes(fp.productCode)) {
-                                    codes.push(fp.productCode);
-                                }
-                            });
-                        }
-                    });
-                }
-                return codes;
-            };
-
-            const sharedProductCodeToCategory = new Map<string, 'main' | 'lowBatch' | 'noBatch' | 'placebo'>();
-            const sharedFormulaCategories = {
-                main: formulas.filter((f: any) => {
-                    const totalBatchCount = f.totalBatchCount || 0;
-                    const pn = (f.masterFormulaDetails?.productName || '').toUpperCase();
-                    const isPlacebo = pn.includes('PLACEBO') || pn.includes('MEDIA FILL') || pn.includes('MEDIAFILL');
-                    return totalBatchCount >= 3 && !isPlacebo;
-                }),
-                lowBatch: formulas.filter((f: any) => {
-                    const totalBatchCount = f.totalBatchCount || 0;
-                    const pn = (f.masterFormulaDetails?.productName || '').toUpperCase();
-                    const isPlacebo = pn.includes('PLACEBO') || pn.includes('MEDIA FILL') || pn.includes('MEDIAFILL');
-                    return totalBatchCount >= 1 && totalBatchCount <= 2 && !isPlacebo;
-                }),
-                noBatch: formulas.filter((f: any) => {
-                    const totalBatchCount = f.totalBatchCount || 0;
-                    const pn = (f.masterFormulaDetails?.productName || '').toUpperCase();
-                    const isPlacebo = pn.includes('PLACEBO') || pn.includes('MEDIA FILL') || pn.includes('MEDIAFILL');
-                    return totalBatchCount === 0 && !isPlacebo;
-                }),
-                placebo: formulas.filter((f: any) => {
-                    const pn = (f.masterFormulaDetails?.productName || '').toUpperCase();
-                    return pn.includes('PLACEBO') || pn.includes('MEDIA FILL') || pn.includes('MEDIAFILL');
-                }),
-            };
-
-            (['main', 'lowBatch', 'noBatch', 'placebo'] as const).forEach(cat => {
-                sharedFormulaCategories[cat].forEach((f: any) => {
-                    getFormulaProductCodesShared(f).forEach(code => {
-                        if (!sharedProductCodeToCategory.has(code)) sharedProductCodeToCategory.set(code, cat);
-                    });
-                });
-            });
-
-            const batchToSectionShared = new Map<string, 'main' | 'lowBatch' | 'noBatch' | 'placebo'>();
-            allBatches.forEach((batch: any) => {
-                if (!batch.batchNumber) return;
-                const batchNoNorm = normalizeBatch(batch.batchNumber);
-                const itemCode = batch.itemCode;
-                const category = (itemCode ? sharedProductCodeToCategory.get(itemCode) : undefined) || 'main';
-                batchToSectionShared.set(batchNoNorm, category);
-            });
-
-            // --- Deduplicated unique batches (one record per batchNumber) ---
-            // This ensures each batch is counted in exactly ONE section, matching uniqueBatchReconciliation logic
-            const uniqueBatchMapShared = new Map<string, { batchNumber: string; itemCode?: string }>();
-            allBatches.forEach((batch: any) => {
-                if (batch.batchNumber && !uniqueBatchMapShared.has(batch.batchNumber)) {
-                    uniqueBatchMapShared.set(batch.batchNumber, { batchNumber: batch.batchNumber, itemCode: batch.itemCode });
-                }
-            });
-            const uniqueBatchesShared = Array.from(uniqueBatchMapShared.values());
-
-            // --- Process RM Data ---
-            if (requisitionData.success && requisitionData.materials) {
-                const sectionArSets = {
-                    main: { found: new Set<string>(), missing: new Set<string>() },
-                    lowBatch: { found: new Set<string>(), missing: new Set<string>() },
-                    noBatch: { found: new Set<string>(), missing: new Set<string>() },
-                    placebo: { found: new Set<string>(), missing: new Set<string>() },
-                };
-
-                const perMfcArSets = new Map<string, { found: Set<string>; missing: Set<string> }>();
-
-                // ENHANCED: Track which batches have found/missing RM COA ARs (for capsule batch counts)
-                const sectionRmBatchSets = {
-                    main: { found: new Set<string>(), missing: new Set<string>() },
-                    lowBatch: { found: new Set<string>(), missing: new Set<string>() },
-                    noBatch: { found: new Set<string>(), missing: new Set<string>() },
-                    placebo: { found: new Set<string>(), missing: new Set<string>() },
-                };
-
-                requisitionData.materials.forEach((m: any) => {
-                    if (!m.arNo || m.arNo.trim() === '') return;
-
-                    const arNo = m.arNo.trim();
-                    const arNoUpper = arNo.toUpperCase();
-                    const arNoBase = arNoUpper.split('.')[0];
-                    const mfcNo = (m.mfcNo || '').trim().toUpperCase();
-
-                    // Skip dotted AR numbers (internal reference data, e.g. IW2AJRM2200040.2)
-                    if (isDottedArNumber(arNo)) return;
-
-                    // Filter out orphan batches if batch number exists
-                    if (m.batchNumber) {
-                        const batchNoNorm = normalizeBatch(m.batchNumber);
-                        if (!systemBatchesNormalized.has(batchNoNorm)) return;
-                    }
-
-                    if (!isRmArNumber(arNo)) return;
-
-                    const isInCoa = rmCoaArNumbers.has(arNo);
-                    // Missing: Present in Master Data (Inward) but missing in RM Data Page
-                    const isInInward = inwardArNumbersSet.has(arNoUpper) || inwardArNumbersSet.has(arNoBase);
-                    
-                    let statusKey: 'found' | 'missing' | null = null;
-
-                    if (isInCoa) {
-                        statusKey = 'found';
-                    } else if (isInInward) {
-                        statusKey = 'missing';
-                    }
-
-                    if (statusKey) {
-                        const category = mfcToCategory.get(mfcNo);
-                        if (category) {
-                            sectionArSets[category][statusKey].add(arNo);
-                        }
-
-                        if (mfcNo) {
-                            if (!perMfcArSets.has(mfcNo)) {
-                                perMfcArSets.set(mfcNo, { found: new Set(), missing: new Set() });
-                            }
-                            perMfcArSets.get(mfcNo)![statusKey].add(arNo);
-                        }
-
-                        // ENHANCED: Track batch-level RM COA status
-                        if (m.batchNumber) {
-                            const batchNoNorm = normalizeBatch(m.batchNumber);
-                            const batchCategory = batchToSectionShared.get(batchNoNorm);
-                            if (batchCategory) {
-                                sectionRmBatchSets[batchCategory][statusKey].add(m.batchNumber);
-                            }
-                        }
-                    }
-                });
-
-
-
-                setSectionUniqueArCounts({
-                    main: { found: sectionArSets.main.found.size, missing: sectionArSets.main.missing.size },
-                    lowBatch: { found: sectionArSets.lowBatch.found.size, missing: sectionArSets.lowBatch.missing.size },
-                    noBatch: { found: sectionArSets.noBatch.found.size, missing: sectionArSets.noBatch.missing.size },
-                    placebo: { found: sectionArSets.placebo.found.size, missing: sectionArSets.placebo.missing.size },
-                });
-
-                const perMfcCounts = new Map<string, { found: number; missing: number }>();
-                perMfcArSets.forEach((sets, mfcNo) => {
-                    perMfcCounts.set(mfcNo, { found: sets.found.size, missing: sets.missing.size });
-                });
-                setPerFormulaUniqueArCounts(perMfcCounts);
-
-                // ENHANCED: Calculate per-MFC batch counts (found/missing)
-                // For each MFC, determine which of ITS batches have found/missing RM COA data
-                const perMfcBatchCounts = new Map<string, { found: number; missing: number }>();
-                
-                formulas.forEach((f: any) => {
-                    const mfcNo = (f.masterFormulaDetails?.masterCardNo || '').trim().toUpperCase();
-                    if (!mfcNo) return;
-                    
-                    // Get all product codes for this MFC
-                    const productCodes = getFormulaProductCodesShared(f);
-                    
-                    // Find all batches that belong to this MFC
-                    const mfcBatches = new Set<string>();
-                    allBatches.forEach((batch: any) => {
-                        if (batch.batchNumber && batch.itemCode && productCodes.includes(batch.itemCode)) {
-                            mfcBatches.add(batch.batchNumber);
-                        }
-                    });
-                    
-                    // Count how many of this MFC's batches have missing RM COA ARs
-                    let missingBatchCount = 0;
-                    mfcBatches.forEach(batchNo => {
-                        const batchNoNorm = normalizeBatch(batchNo);
-                        // Check if this batch has any missing RM COA ARs
-                        let hasMissingAr = false;
-                        requisitionData.materials.forEach((m: any) => {
-                            if (m.batchNumber && normalizeBatch(m.batchNumber) === batchNoNorm) {
-                                const arNo = (m.arNo || '').trim();
-                                // Skip dotted AR numbers (internal reference data)
-                                if (arNo && isRmArNumber(arNo) && !isDottedArNumber(arNo)) {
-                                    const arNoUpper = arNo.toUpperCase();
-                                    const arNoBase = arNoUpper.split('.')[0];
-                                    const isInCoa = rmCoaArNumbers.has(arNo);
-                                    const isInInward = inwardArNumbersSet.has(arNoUpper) || inwardArNumbersSet.has(arNoBase);
-                                    if (!isInCoa && isInInward) {
-                                        hasMissingAr = true;
-                                    }
-                                }
-                            }
-                        });
-                        if (hasMissingAr) {
-                            missingBatchCount++;
-                        }
-                    });
-                    
-                    const foundBatchCount = Math.max(0, mfcBatches.size - missingBatchCount);
-                    perMfcBatchCounts.set(mfcNo, { found: foundBatchCount, missing: missingBatchCount });
-                });
-                
-                setPerFormulaRmCoaBatchCounts(perMfcBatchCounts);
-
-                // ENHANCED: Compute batch-level RM COA counts per section
-                // A batch is "missing" if it has ANY missing RM COA AR
-                // Found = all batches in section MINUS those with missing ARs
-                const computeRmSectionBatchCounts = (
-                    batchSets: { found: Set<string>; missing: Set<string> },
-                    category: 'main' | 'lowBatch' | 'noBatch' | 'placebo'
-                ) => {
-                    const allBatchesInSection = new Set<string>();
-                    uniqueBatchesShared.forEach((batch) => {
-                        if (!batch.batchNumber) return;
-                        const itemCode = batch.itemCode;
-                        const batchCategory = (itemCode ? sharedProductCodeToCategory.get(itemCode) : undefined) || 'main';
-                        if (batchCategory === category) {
-                            allBatchesInSection.add(batch.batchNumber);
-                        }
-                    });
-
-                    const missingBatches = batchSets.missing;
-                    const foundCount = allBatchesInSection.size - missingBatches.size;
-                    return { found: Math.max(0, foundCount), missing: missingBatches.size };
-                };
-
-                setSectionRmCoaBatchCounts({
-                    main: computeRmSectionBatchCounts(sectionRmBatchSets.main, 'main'),
-                    lowBatch: computeRmSectionBatchCounts(sectionRmBatchSets.lowBatch, 'lowBatch'),
-                    noBatch: computeRmSectionBatchCounts(sectionRmBatchSets.noBatch, 'noBatch'),
-                    placebo: computeRmSectionBatchCounts(sectionRmBatchSets.placebo, 'placebo'),
-                });
-            }
-
-
-
-            // --- Process PM Data ---
-            // Build productCodeToCategory map to match Modal logic (uses itemCode-based section mapping)
-            const getFormulaProductCodes = (f: any): string[] => {
-                const codes: string[] = [];
-                const mainCode = f.masterFormulaDetails?.productCode;
-                if (mainCode && mainCode !== 'N/A') codes.push(mainCode);
-                if (f.fillingDetails && Array.isArray(f.fillingDetails)) {
-                    f.fillingDetails.forEach((fd: any) => {
-                        if (fd.productCode && fd.productCode !== 'N/A' && !codes.includes(fd.productCode)) {
-                            codes.push(fd.productCode);
-                        }
-                    });
-                }
-                if (f.processes && Array.isArray(f.processes)) {
-                    f.processes.forEach((p: any) => {
-                        if (p.fillingProducts && Array.isArray(p.fillingProducts)) {
-                            p.fillingProducts.forEach((fp: any) => {
-                                if (fp.productCode && !codes.includes(fp.productCode)) {
-                                    codes.push(fp.productCode);
-                                }
-                            });
-                        }
-                    });
-                }
-                return codes;
-            };
-
-            // Separate formulas into categories (same as modal - uses f.totalBatchCount)
-            const mainFormulasLocal = formulas.filter((f: any) => {
-                const totalBatchCount = f.totalBatchCount || 0;
-                const productName = (f.masterFormulaDetails?.productName || '').toUpperCase();
-                const isPlacebo = productName.includes('PLACEBO') || productName.includes('MEDIA FILL') || productName.includes('MEDIAFILL');
-                return totalBatchCount >= 3 && !isPlacebo;
-            });
-            const lowBatchFormulasLocal = formulas.filter((f: any) => {
-                const totalBatchCount = f.totalBatchCount || 0;
-                const productName = (f.masterFormulaDetails?.productName || '').toUpperCase();
-                const isPlacebo = productName.includes('PLACEBO') || productName.includes('MEDIA FILL') || productName.includes('MEDIAFILL');
-                return totalBatchCount >= 1 && totalBatchCount <= 2 && !isPlacebo;
-            });
-            const noBatchFormulasLocal = formulas.filter((f: any) => {
-                const totalBatchCount = f.totalBatchCount || 0;
-                const productName = (f.masterFormulaDetails?.productName || '').toUpperCase();
-                const isPlacebo = productName.includes('PLACEBO') || productName.includes('MEDIA FILL') || productName.includes('MEDIAFILL');
-                return totalBatchCount === 0 && !isPlacebo;
-            });
-            const placeboFormulasLocal = formulas.filter((f: any) => {
-                const productName = (f.masterFormulaDetails?.productName || '').toUpperCase();
-                return productName.includes('PLACEBO') || productName.includes('MEDIA FILL') || productName.includes('MEDIAFILL');
-            });
-
-            // Build productCodeToCategory (main first - same priority as modal)
-            const productCodeToCategory = new Map<string, 'main' | 'lowBatch' | 'noBatch' | 'placebo'>();
-            mainFormulasLocal.forEach((f: any) => {
-                getFormulaProductCodes(f).forEach(code => {
-                    if (!productCodeToCategory.has(code)) productCodeToCategory.set(code, 'main');
-                });
-            });
-            lowBatchFormulasLocal.forEach((f: any) => {
-                getFormulaProductCodes(f).forEach(code => {
-                    if (!productCodeToCategory.has(code)) productCodeToCategory.set(code, 'lowBatch');
-                });
-            });
-            noBatchFormulasLocal.forEach((f: any) => {
-                getFormulaProductCodes(f).forEach(code => {
-                    if (!productCodeToCategory.has(code)) productCodeToCategory.set(code, 'noBatch');
-                });
-            });
-            placeboFormulasLocal.forEach((f: any) => {
-                getFormulaProductCodes(f).forEach(code => {
-                    if (!productCodeToCategory.has(code)) productCodeToCategory.set(code, 'placebo');
-                });
-            });
-
-            // Build batch to section mapping (same as modal)
-            const batchToSection = new Map<string, 'main' | 'lowBatch' | 'noBatch' | 'placebo'>();
-            allBatches.forEach((batch: any) => {
-                if (!batch.batchNumber) return;
-                const batchNoNorm = normalizeBatch(batch.batchNumber);
-                const itemCode = batch.itemCode;
-                const category = (itemCode ? productCodeToCategory.get(itemCode) : undefined) || 'main';
-                batchToSection.set(batchNoNorm, category);
-            });
-
-            if (pmRequisitionData.success && pmRequisitionData.materials) {
-                const sectionPmArSets = {
-                    main: { found: new Set<string>(), missing: new Set<string>() },
-                    lowBatch: { found: new Set<string>(), missing: new Set<string>() },
-                    noBatch: { found: new Set<string>(), missing: new Set<string>() },
-                    placebo: { found: new Set<string>(), missing: new Set<string>() },
-                };
-
-                const perMfcPmArSets = new Map<string, { found: Set<string>; missing: Set<string> }>();
-
-                // ENHANCED: Track which batches have found/missing ARs (for capsule batch counts)
-                const sectionPmBatchSets = {
-                    main: { found: new Set<string>(), missing: new Set<string>() },
-                    lowBatch: { found: new Set<string>(), missing: new Set<string>() },
-                    noBatch: { found: new Set<string>(), missing: new Set<string>() },
-                    placebo: { found: new Set<string>(), missing: new Set<string>() },
-                };
-
-                // Build normalized set of qualified batches (same as modal logic)
-                const qualifiedBatchesNormalized = new Set<string>();
-                pmCoaInwardQualifiedBatchNumbers.forEach(bn => {
-                    const normalized = normalizeBatch(bn);
-                    if (normalized && systemBatchesNormalized.has(normalized)) {
-                        qualifiedBatchesNormalized.add(normalized);
-                    }
-                });
-
-                pmRequisitionData.materials.forEach((m: any) => {
-                    if (!m.arNo || m.arNo.trim() === '') return;
-
-                    const arNo = m.arNo.trim();
-                    const arNoUpper = arNo.toUpperCase();
-                    const mfcNo = (m.mfcNo || m.formulaMfc || '').trim().toUpperCase();
-                    const batchNo = m.batchNumber;
-                    const batchNoNorm = normalizeBatch(batchNo);
-
-                    // Filter out orphan batches (not in system) to match Modal logic
-                    if (batchNo && !systemBatchesNormalized.has(batchNoNorm)) return;
-
-                    // ENHANCED: Use Inward AR Numbers for AR-level matching (same as modal)
-                    // Found = AR exists in Inward Register (either as AR Number or Inward Number)
-                    // Normalize AR by stripping suffix (e.g., .1, .2) before matching
-                    const arNoBase = arNoUpper.split('.')[0];
-                    const isArInInward = inwardArNumbersSet.has(arNoUpper) || inwardArNumbersSet.has(arNoBase);
-                    const statusKey = isArInInward ? 'found' : 'missing';
-
-                    // Use batch-based section mapping (same as modal) instead of mfcNo
-                    const category = batchToSection.get(batchNoNorm);
-                    if (category) {
-                        sectionPmArSets[category][statusKey].add(arNo);
-                        // ENHANCED: Track batch for this category/status
-                        if (batchNo) {
-                            sectionPmBatchSets[category][statusKey].add(batchNo);
-                        }
-                    }
-
-                    // Per-MFC counts still use mfcNo for individual MFC card display
-                    if (mfcNo) {
-                        if (!perMfcPmArSets.has(mfcNo)) {
-                            perMfcPmArSets.set(mfcNo, { found: new Set(), missing: new Set() });
-                        }
-                        perMfcPmArSets.get(mfcNo)![statusKey].add(arNo);
-                    }
-                });
-
-                const perMfcPmCounts = new Map<string, { found: number; missing: number }>();
-                perMfcPmArSets.forEach((sets, mfcNo) => {
-                    perMfcPmCounts.set(mfcNo, { found: sets.found.size, missing: sets.missing.size });
-                });
-                setPerFormulaPmUniqueArCounts(perMfcPmCounts);
-
-                // ENHANCED: Calculate per-MFC batch counts for PM COA (found/missing)
-                // For each MFC, determine which of ITS batches have found/missing PM COA data
-                const perMfcPmBatchCounts = new Map<string, { found: number; missing: number }>();
-                
-                formulas.forEach((f: any) => {
-                    const mfcNo = (f.masterFormulaDetails?.masterCardNo || '').trim().toUpperCase();
-                    if (!mfcNo) return;
-                    
-                    // Get all product codes for this MFC
-                    const productCodes = getFormulaProductCodesShared(f);
-                    
-                    // Find all batches that belong to this MFC
-                    const mfcBatches = new Set<string>();
-                    allBatches.forEach((batch: any) => {
-                        if (batch.batchNumber && batch.itemCode && productCodes.includes(batch.itemCode)) {
-                            mfcBatches.add(batch.batchNumber);
-                        }
-                    });
-                    
-                    // Count how many of this MFC's batches have missing PM COA ARs
-                    let missingBatchCount = 0;
-                    mfcBatches.forEach(batchNo => {
-                        const batchNoNorm = normalizeBatch(batchNo);
-                        // Check if this batch has any missing PM COA ARs
-                        let hasMissingAr = false;
-                        pmRequisitionData.materials.forEach((m: any) => {
-                            if (m.batchNumber && normalizeBatch(m.batchNumber) === batchNoNorm) {
-                                const arNo = (m.arNo || '').trim();
-                                if (arNo) {
-                                    const arNoUpper = arNo.toUpperCase();
-                                    const arNoBase = arNoUpper.split('.')[0];
-                                    // Missing = NOT in Inward Register
-                                    const isInInward = inwardArNumbersSet.has(arNoUpper) || inwardArNumbersSet.has(arNoBase);
-                                    if (!isInInward) {
-                                        hasMissingAr = true;
-                                    }
-                                }
-                            }
-                        });
-                        if (hasMissingAr) {
-                            missingBatchCount++;
-                        }
-                    });
-                    
-                    const foundBatchCount = Math.max(0, mfcBatches.size - missingBatchCount);
-                    perMfcPmBatchCounts.set(mfcNo, { found: foundBatchCount, missing: missingBatchCount });
-                });
-                
-                setPerFormulaPmCoaBatchCounts(perMfcPmBatchCounts);
-
-                setSectionPmUniqueArCounts({
-                    main: { found: sectionPmArSets.main.found.size, missing: sectionPmArSets.main.missing.size },
-                    lowBatch: { found: sectionPmArSets.lowBatch.found.size, missing: sectionPmArSets.lowBatch.missing.size },
-                    noBatch: { found: sectionPmArSets.noBatch.found.size, missing: sectionPmArSets.noBatch.missing.size },
-                    placebo: { found: sectionPmArSets.placebo.found.size, missing: sectionPmArSets.placebo.missing.size },
-                });
-
-                // ENHANCED: Set unique batch counts per section
-                // A batch is "missing" if it has ANY missing AR
-                // Batches with no requisition data OR all ARs found = "found"
-                // This ensures total = found + missing = unique batches (all batches in section)
-                const computePmSectionBatchCounts = (
-                    batchSets: { found: Set<string>; missing: Set<string> },
-                    category: 'main' | 'lowBatch' | 'noBatch' | 'placebo'
-                ) => {
-                    // Count unique batches in this section (deduplicated to match uniqueBatchReconciliation)
-                    const allBatchesInSection = new Set<string>();
-                    uniqueBatchesShared.forEach((batch) => {
-                        if (!batch.batchNumber) return;
-                        const itemCode = batch.itemCode;
-                        const batchCategory = (itemCode ? productCodeToCategory.get(itemCode) : undefined) || 'main';
-                        if (batchCategory === category) {
-                            allBatchesInSection.add(batch.batchNumber);
-                        }
-                    });
-
-                    // Batches with at least one missing AR
-                    const missingBatches = batchSets.missing;
-                    
-                    // Found = all batches in section MINUS those with missing ARs
-                    const foundCount = allBatchesInSection.size - missingBatches.size;
-                    
-                    return { found: Math.max(0, foundCount), missing: missingBatches.size };
-                };
-
-                setSectionPmUniqueBatchCounts({
-                    main: computePmSectionBatchCounts(sectionPmBatchSets.main, 'main'),
-                    lowBatch: computePmSectionBatchCounts(sectionPmBatchSets.lowBatch, 'lowBatch'),
-                    noBatch: computePmSectionBatchCounts(sectionPmBatchSets.noBatch, 'noBatch'),
-                    placebo: computePmSectionBatchCounts(sectionPmBatchSets.placebo, 'placebo'),
-                });
-            }
-
-            // --- Process PPM Data ---
-            if (ppmRequisitionData.success && ppmRequisitionData.materials) {
-                const sectionPpmArSets = {
-                    main: { found: new Set<string>(), missing: new Set<string>() },
-                    lowBatch: { found: new Set<string>(), missing: new Set<string>() },
-                    noBatch: { found: new Set<string>(), missing: new Set<string>() },
-                    placebo: { found: new Set<string>(), missing: new Set<string>() },
-                };
-
-                const perMfcPpmArSets = new Map<string, { found: Set<string>; missing: Set<string> }>();
-
-                // ENHANCED: Track which batches have found/missing ARs (for capsule batch counts)
-                const sectionPpmBatchSets = {
-                    main: { found: new Set<string>(), missing: new Set<string>() },
-                    lowBatch: { found: new Set<string>(), missing: new Set<string>() },
-                    noBatch: { found: new Set<string>(), missing: new Set<string>() },
-                    placebo: { found: new Set<string>(), missing: new Set<string>() },
-                };
-
-                // Build normalized set of qualified batches for PPM (same as modal logic)
-                const ppmQualifiedBatchesNormalized = new Set<string>();
-                ppmCoaInwardQualifiedBatchNumbers.forEach(bn => {
-                    const normalized = normalizeBatch(bn);
-                    if (normalized && systemBatchesNormalized.has(normalized)) {
-                        ppmQualifiedBatchesNormalized.add(normalized);
-                    }
-                });
-
-                ppmRequisitionData.materials.forEach((m: any) => {
-                    if (!m.arNo || m.arNo.trim() === '') return;
-
-                    const arNo = m.arNo.trim();
-                    const arNoUpper = arNo.toUpperCase();
-                    const mfcNo = (m.mfcNo || m.formulaMfc || '').trim().toUpperCase();
-                    const batchNo = m.batchNumber;
-                    const batchNoNorm = normalizeBatch(batchNo);
-
-                    // Filter out orphan batches (not in system) to match Modal logic
-                    if (batchNo && !systemBatchesNormalized.has(batchNoNorm)) return;
-
-                    // ENHANCED: Use Inward AR Numbers for AR-level matching (same as modal)
-                    // Found = AR exists in Inward Register (either as AR Number or Inward Number)
-                    // Normalize AR by stripping suffix (e.g., .1, .2) before matching
-                    const arNoBase = arNoUpper.split('.')[0];
-                    const isArInInward = inwardArNumbersSet.has(arNoUpper) || inwardArNumbersSet.has(arNoBase);
-                    const statusKey = isArInInward ? 'found' : 'missing';
-
-                    // Use batch-based section mapping (same as modal) instead of mfcNo
-                    const category = batchToSection.get(batchNoNorm);
-                    if (category) {
-                        sectionPpmArSets[category][statusKey].add(arNo);
-                        // ENHANCED: Track batch for this category/status
-                        if (batchNo) {
-                            sectionPpmBatchSets[category][statusKey].add(batchNo);
-                        }
-                    }
-
-                    // Per-MFC counts still use mfcNo for individual MFC card display
-                    if (mfcNo) {
-                        if (!perMfcPpmArSets.has(mfcNo)) {
-                            perMfcPpmArSets.set(mfcNo, { found: new Set(), missing: new Set() });
-                        }
-                        perMfcPpmArSets.get(mfcNo)![statusKey].add(arNo);
-                    }
-                });
-
-                const perMfcPpmCounts = new Map<string, { found: number; missing: number }>();
-                perMfcPpmArSets.forEach((sets, mfcNo) => {
-                    perMfcPpmCounts.set(mfcNo, { found: sets.found.size, missing: sets.missing.size });
-                });
-                setPerFormulaPpmUniqueArCounts(perMfcPpmCounts);
-
-                // ENHANCED: Calculate per-MFC batch counts for PPM COA (found/missing)
-                // For each MFC, determine which of ITS batches have found/missing PPM COA data
-                const perMfcPpmBatchCounts = new Map<string, { found: number; missing: number }>();
-                
-                formulas.forEach((f: any) => {
-                    const mfcNo = (f.masterFormulaDetails?.masterCardNo || '').trim().toUpperCase();
-                    if (!mfcNo) return;
-                    
-                    // Get all product codes for this MFC
-                    const productCodes = getFormulaProductCodesShared(f);
-                    
-                    // Find all batches that belong to this MFC
-                    const mfcBatches = new Set<string>();
-                    allBatches.forEach((batch: any) => {
-                        if (batch.batchNumber && batch.itemCode && productCodes.includes(batch.itemCode)) {
-                            mfcBatches.add(batch.batchNumber);
-                        }
-                    });
-                    
-                    // Count how many of this MFC's batches have missing PPM COA ARs
-                    let missingBatchCount = 0;
-                    mfcBatches.forEach(batchNo => {
-                        const batchNoNorm = normalizeBatch(batchNo);
-                        // Check if this batch has any missing PPM COA ARs
-                        let hasMissingAr = false;
-                        ppmRequisitionData.materials.forEach((m: any) => {
-                            if (m.batchNumber && normalizeBatch(m.batchNumber) === batchNoNorm) {
-                                const arNo = (m.arNo || '').trim();
-                                if (arNo) {
-                                    const arNoUpper = arNo.toUpperCase();
-                                    const arNoBase = arNoUpper.split('.')[0];
-                                    // Missing = NOT in Inward Register
-                                    const isInInward = inwardArNumbersSet.has(arNoUpper) || inwardArNumbersSet.has(arNoBase);
-                                    if (!isInInward) {
-                                        hasMissingAr = true;
-                                    }
-                                }
-                            }
-                        });
-                        if (hasMissingAr) {
-                            missingBatchCount++;
-                        }
-                    });
-                    
-                    const foundBatchCount = Math.max(0, mfcBatches.size - missingBatchCount);
-                    perMfcPpmBatchCounts.set(mfcNo, { found: foundBatchCount, missing: missingBatchCount });
-                });
-                
-                setPerFormulaPpmCoaBatchCounts(perMfcPpmBatchCounts);
-
-                setSectionPpmUniqueArCounts({
-                    main: { found: sectionPpmArSets.main.found.size, missing: sectionPpmArSets.main.missing.size },
-                    lowBatch: { found: sectionPpmArSets.lowBatch.found.size, missing: sectionPpmArSets.lowBatch.missing.size },
-                    noBatch: { found: sectionPpmArSets.noBatch.found.size, missing: sectionPpmArSets.noBatch.missing.size },
-                    placebo: { found: sectionPpmArSets.placebo.found.size, missing: sectionPpmArSets.placebo.missing.size },
-                });
-
-                // ENHANCED: Set unique batch counts per section
-                // A batch is "missing" if it has ANY missing AR
-                // Batches with no requisition data OR all ARs found = "found"
-                // This ensures total = found + missing = unique batches (all batches in section)
-                const computePpmSectionBatchCounts = (
-                    batchSets: { found: Set<string>; missing: Set<string> },
-                    category: 'main' | 'lowBatch' | 'noBatch' | 'placebo'
-                ) => {
-                    // Count unique batches in this section (deduplicated to match uniqueBatchReconciliation)
-                    const allBatchesInSection = new Set<string>();
-                    uniqueBatchesShared.forEach((batch) => {
-                        if (!batch.batchNumber) return;
-                        const itemCode = batch.itemCode;
-                        const batchCategory = (itemCode ? productCodeToCategory.get(itemCode) : undefined) || 'main';
-                        if (batchCategory === category) {
-                            allBatchesInSection.add(batch.batchNumber);
-                        }
-                    });
-
-                    // Batches with at least one missing AR
-                    const missingBatches = batchSets.missing;
-                    
-                    // Found = all batches in section MINUS those with missing ARs
-                    const foundCount = allBatchesInSection.size - missingBatches.size;
-                    
-                    return { found: Math.max(0, foundCount), missing: missingBatches.size };
-                };
-
-                setSectionPpmUniqueBatchCounts({
-                    main: computePpmSectionBatchCounts(sectionPpmBatchSets.main, 'main'),
-                    lowBatch: computePpmSectionBatchCounts(sectionPpmBatchSets.lowBatch, 'lowBatch'),
-                    noBatch: computePpmSectionBatchCounts(sectionPpmBatchSets.noBatch, 'noBatch'),
-                    placebo: computePpmSectionBatchCounts(sectionPpmBatchSets.placebo, 'placebo'),
-                });
-            }
-
-        } catch (error) {
-            console.error('Error calculating unique AR counts:', error);
-        }
-    }, [formulas, allBatches, pmCoaInwardQualifiedBatchNumbers, ppmCoaInwardQualifiedBatchNumbers]);
-
-    // Recalculate unique AR counts when formulas change
-    useEffect(() => {
-        if (formulas.length > 0) {
-            calculateUniqueArCounts();
-        }
-    }, [formulas, calculateUniqueArCounts]);
-
     // Toggle batch section and scroll to it
     const toggleBatchSection = (viewMode: 'unique' | 'all' = 'unique') => {
         if (showBatchSection && batchViewMode === viewMode) {
@@ -2744,12 +2083,35 @@ export default function FormulaDataPage() {
         }
     };
 
+    // Helper: build productCode → section map from the 4 formula lists
+    const buildProductCodeToSectionMap = useCallback(() => {
+        const map = new Map<string, 'main' | 'lowBatch' | 'noBatch' | 'placebo'>();
+        const addCodes = (list: FormulaRecord[], section: 'main' | 'lowBatch' | 'noBatch' | 'placebo') => {
+            list.forEach(f => {
+                const codes: string[] = [];
+                const mc = f.masterFormulaDetails?.productCode;
+                if (mc && mc !== 'N/A') codes.push(mc);
+                f.fillingDetails?.forEach((fd: FillingDetail) => { if (fd.productCode && fd.productCode !== 'N/A') codes.push(fd.productCode); });
+                f.processes?.forEach((p: ProcessData) => {
+                    p.fillingProducts?.forEach((fp: AsepticFillingProduct) => { if (fp.productCode) codes.push(fp.productCode); });
+                });
+                codes.forEach(c => { if (!map.has(c)) map.set(c, section); });
+            });
+        };
+        addCodes(mainFormulas, 'main');
+        addCodes(lowBatchFormulas, 'lowBatch');
+        addCodes(noBatchFormulas, 'noBatch');
+        addCodes(placeboFormulas, 'placebo');
+        return map;
+    }, [mainFormulas, lowBatchFormulas, noBatchFormulas, placeboFormulas]);
+
     // Open RM Data Modal - fetch and display RM requisition data
     // Green (matched): Show RM materials from requisition (filtered by MFC-linked batches)
     // Red (unmatched): Show batches that are missing RM requisition data (filtered by MFC-linked batches)
     const openRmDataModal = useCallback(async (
         type: 'matched' | 'unmatched',
-        defaultViewMode: 'table' | 'file' | 'batch' | 'material' = 'batch'
+        defaultViewMode: 'table' | 'file' | 'batch' | 'material' = 'batch',
+        section?: 'main' | 'lowBatch' | 'noBatch' | 'placebo'
     ) => {
         setShowRmDataModal(true);
         setRmModalType(type);
@@ -2766,22 +2128,22 @@ export default function FormulaDataPage() {
 
         try {
             // Get the set of product codes that are linked to MFCs (from Formula Master)
-            // These are the keys in batchCounts that have counts > 0
             const mfcLinkedProductCodes = new Set<string>(Object.keys(batchCounts));
+
+            // Build year-filtered batch numbers set
+            const yearFilteredBatchNums = selectedFilterYear
+                ? new Set<string>(yearFilteredBatches.map((b: any) => b.batchNumber).filter(Boolean))
+                : null;
 
             if (type === 'matched') {
                 // Green: Fetch RM materials from requisition API
-                // Then filter to only show materials for batches linked to MFCs
                 const response = await fetch('/api/requisition/materials?type=RM&pageSize=100000');
                 const data = await response.json();
 
                 if (data.success && data.materials) {
-                    // We need to get the itemCode for each batch to filter by MFC linkage
-                    // First fetch batch data to map batchNumber -> itemCode
                     const batchResponse = await fetch('/api/batch?page=1&limit=10000');
                     const batchData = await batchResponse.json();
 
-                    // Build a map of batchNumber -> itemCode
                     const batchToItemCode: Record<string, string> = {};
                     if (batchData.success && batchData.data) {
                         batchData.data.forEach((record: any) => {
@@ -2793,10 +2155,17 @@ export default function FormulaDataPage() {
                         });
                     }
 
-                    // Filter materials to only those whose batch is linked to an MFC product code
+                    const productCodeToSection = section ? buildProductCodeToSectionMap() : null;
+
                     const filteredMaterials = data.materials.filter((m: any) => {
                         const itemCode = batchToItemCode[m.batchNumber];
-                        return itemCode && mfcLinkedProductCodes.has(itemCode);
+                        if (!itemCode || !mfcLinkedProductCodes.has(itemCode)) return false;
+                        if (yearFilteredBatchNums && !yearFilteredBatchNums.has(m.batchNumber)) return false;
+                        if (productCodeToSection && section) {
+                            const cat = productCodeToSection.get(itemCode) ?? 'main';
+                            if (cat !== section) return false;
+                        }
+                        return true;
                     });
 
                     setRmModalData(filteredMaterials);
@@ -2804,52 +2173,28 @@ export default function FormulaDataPage() {
                     setRmModalError(data.message || 'Failed to fetch RM materials');
                 }
             } else {
-                // Red (unmatched): Fetch batches that are missing RM requisition data
-                // Only include batches that are linked to MFCs
-                const batchResponse = await fetch('/api/batch?page=1&limit=10000');
-                const batchData = await batchResponse.json();
+                // Red (unmatched): Use yearFilteredBatches + rmBatchNumbers directly
+                // (same source as capsule counts — guarantees consistency)
+                const productCodeToSection = buildProductCodeToSectionMap();
 
-                // Get all batch numbers that have RM requisition data
-                const rmResponse = await fetch('/api/requisition/materials?type=RM&pageSize=100000');
-                const rmData = await rmResponse.json();
+                const unmatchedBatches = (yearFilteredBatches as any[])
+                    .filter((batch: any) => {
+                        if (!batch.batchNumber || rmBatchNumbers.has(batch.batchNumber)) return false;
+                        const cat = (batch.itemCode ? productCodeToSection.get(batch.itemCode) : undefined) ?? 'main';
+                        return !section || cat === section;
+                    })
+                    .map((batch: any) => ({
+                        batchNumber: batch.batchNumber,
+                        itemCode: batch.itemCode,
+                        itemName: batch.itemName,
+                        mfgDate: batch.mfgDate,
+                        expiryDate: batch.expiryDate,
+                        batchSize: batch.batchSize,
+                        department: batch.department,
+                        make: batch.make,
+                    }));
 
-                if (batchData.success && batchData.data) {
-                    // Get set of batch numbers that have RM data
-                    const batchesWithRm = new Set<string>();
-                    if (rmData.success && rmData.materials) {
-                        rmData.materials.forEach((m: any) => {
-                            if (m.batchNumber) batchesWithRm.add(m.batchNumber);
-                        });
-                    }
-
-                    // Find batches that:
-                    // 1. Are linked to an MFC (itemCode is in batchCounts)
-                    // 2. DON'T have RM requisition data
-                    const unmatchedBatches: any[] = [];
-                    batchData.data.forEach((record: any) => {
-                        record.batches?.forEach((batch: any) => {
-                            // Only include if linked to an MFC
-                            if (batch.itemCode && mfcLinkedProductCodes.has(batch.itemCode)) {
-                                if (!batchesWithRm.has(batch.batchNumber)) {
-                                    unmatchedBatches.push({
-                                        batchNumber: batch.batchNumber,
-                                        itemCode: batch.itemCode,
-                                        itemName: batch.itemName,
-                                        mfgDate: batch.mfgDate,
-                                        expiryDate: batch.expiryDate,
-                                        batchSize: batch.batchSize,
-                                        department: batch.department,
-                                        make: record.companyName || batch.make,
-                                    });
-                                }
-                            }
-                        });
-                    });
-
-                    setRmModalData(unmatchedBatches);
-                } else {
-                    setRmModalError('Failed to fetch batch data');
-                }
+                setRmModalData(unmatchedBatches);
             }
         } catch (error) {
             console.error('Error fetching RM data:', error);
@@ -2857,7 +2202,7 @@ export default function FormulaDataPage() {
         } finally {
             setIsRmModalLoading(false);
         }
-    }, [batchCounts]);
+    }, [batchCounts, selectedFilterYear, yearFilteredBatches, rmBatchNumbers, buildProductCodeToSectionMap]);
 
     const closeRmDataModal = useCallback(() => {
         setShowRmDataModal(false);
@@ -2906,7 +2251,10 @@ export default function FormulaDataPage() {
     };
 
     // Open PPM Data Modal - fetch and display PPM requisition data
-    const openPpmDataModal = useCallback(async (type: 'matched' | 'unmatched') => {
+    const openPpmDataModal = useCallback(async (
+        type: 'matched' | 'unmatched',
+        section?: 'main' | 'lowBatch' | 'noBatch' | 'placebo'
+    ) => {
         setShowPpmDataModal(true);
         setPpmModalType(type);
         setIsPpmModalLoading(true);
@@ -2915,6 +2263,10 @@ export default function FormulaDataPage() {
 
         try {
             const mfcLinkedProductCodes = new Set<string>(Object.keys(batchCounts));
+
+            const yearFilteredBatchNums = selectedFilterYear
+                ? new Set<string>(yearFilteredBatches.map((b: any) => b.batchNumber).filter(Boolean))
+                : null;
 
             if (type === 'matched') {
                 // Green: Fetch PPM materials from requisition API
@@ -2936,9 +2288,17 @@ export default function FormulaDataPage() {
                         });
                     }
 
+                    const productCodeToSection = section ? buildProductCodeToSectionMap() : null;
+
                     const filteredMaterials = data.materials.filter((m: any) => {
                         const itemCode = batchToItemCode[m.batchNumber];
-                        return itemCode && mfcLinkedProductCodes.has(itemCode);
+                        if (!itemCode || !mfcLinkedProductCodes.has(itemCode)) return false;
+                        if (yearFilteredBatchNums && !yearFilteredBatchNums.has(m.batchNumber)) return false;
+                        if (productCodeToSection && section) {
+                            const cat = productCodeToSection.get(itemCode) ?? 'main';
+                            if (cat !== section) return false;
+                        }
+                        return true;
                     });
 
                     setPpmModalData(filteredMaterials);
@@ -2946,45 +2306,27 @@ export default function FormulaDataPage() {
                     setPpmModalError(data.message || 'Failed to fetch PPM materials');
                 }
             } else {
-                // Red (unmatched): Show batches missing PPM requisition data
-                const batchResponse = await fetch('/api/batch?page=1&limit=10000');
-                const batchData = await batchResponse.json();
+                // Red (unmatched): Use yearFilteredBatches + ppmBatchNumbers directly
+                const productCodeToSection = buildProductCodeToSectionMap();
 
-                const ppmResponse = await fetch('/api/requisition/materials?type=PPM&pageSize=100000');
-                const ppmData = await ppmResponse.json();
+                const unmatchedBatches = (yearFilteredBatches as any[])
+                    .filter((batch: any) => {
+                        if (!batch.batchNumber || ppmBatchNumbers.has(batch.batchNumber)) return false;
+                        const cat = (batch.itemCode ? productCodeToSection.get(batch.itemCode) : undefined) ?? 'main';
+                        return !section || cat === section;
+                    })
+                    .map((batch: any) => ({
+                        batchNumber: batch.batchNumber,
+                        itemCode: batch.itemCode,
+                        itemName: batch.itemName,
+                        mfgDate: batch.mfgDate,
+                        expiryDate: batch.expiryDate,
+                        batchSize: batch.batchSize,
+                        department: batch.department,
+                        make: batch.make,
+                    }));
 
-                if (batchData.success && batchData.data) {
-                    const batchesWithPpm = new Set<string>();
-                    if (ppmData.success && ppmData.materials) {
-                        ppmData.materials.forEach((m: any) => {
-                            if (m.batchNumber) batchesWithPpm.add(m.batchNumber);
-                        });
-                    }
-
-                    const unmatchedBatches: any[] = [];
-                    batchData.data.forEach((record: any) => {
-                        record.batches?.forEach((batch: any) => {
-                            if (batch.itemCode && mfcLinkedProductCodes.has(batch.itemCode)) {
-                                if (!batchesWithPpm.has(batch.batchNumber)) {
-                                    unmatchedBatches.push({
-                                        batchNumber: batch.batchNumber,
-                                        itemCode: batch.itemCode,
-                                        itemName: batch.itemName,
-                                        mfgDate: batch.mfgDate,
-                                        expiryDate: batch.expiryDate,
-                                        batchSize: batch.batchSize,
-                                        department: batch.department,
-                                        make: record.companyName || batch.make,
-                                    });
-                                }
-                            }
-                        });
-                    });
-
-                    setPpmModalData(unmatchedBatches);
-                } else {
-                    setPpmModalError('Failed to fetch batch data');
-                }
+                setPpmModalData(unmatchedBatches);
             }
         } catch (error) {
             console.error('Error fetching PPM data:', error);
@@ -2992,7 +2334,7 @@ export default function FormulaDataPage() {
         } finally {
             setIsPpmModalLoading(false);
         }
-    }, [batchCounts]);
+    }, [batchCounts, selectedFilterYear, yearFilteredBatches, ppmBatchNumbers, buildProductCodeToSectionMap]);
 
     const closePpmDataModal = useCallback(() => {
         setShowPpmDataModal(false);
@@ -3001,7 +2343,10 @@ export default function FormulaDataPage() {
     }, []);
 
     // Open PM Data Modal - fetch and display PM requisition data
-    const openPmDataModal = useCallback(async (type: 'matched' | 'unmatched') => {
+    const openPmDataModal = useCallback(async (
+        type: 'matched' | 'unmatched',
+        section?: 'main' | 'lowBatch' | 'noBatch' | 'placebo'
+    ) => {
         setShowPmDataModal(true);
         setPmModalType(type);
         setIsPmModalLoading(true);
@@ -3010,6 +2355,10 @@ export default function FormulaDataPage() {
 
         try {
             const mfcLinkedProductCodes = new Set<string>(Object.keys(batchCounts));
+
+            const yearFilteredBatchNums = selectedFilterYear
+                ? new Set<string>(yearFilteredBatches.map((b: any) => b.batchNumber).filter(Boolean))
+                : null;
 
             if (type === 'matched') {
                 // Green: Fetch PM materials from requisition API
@@ -3031,9 +2380,17 @@ export default function FormulaDataPage() {
                         });
                     }
 
+                    const productCodeToSection = section ? buildProductCodeToSectionMap() : null;
+
                     const filteredMaterials = data.materials.filter((m: any) => {
                         const itemCode = batchToItemCode[m.batchNumber];
-                        return itemCode && mfcLinkedProductCodes.has(itemCode);
+                        if (!itemCode || !mfcLinkedProductCodes.has(itemCode)) return false;
+                        if (yearFilteredBatchNums && !yearFilteredBatchNums.has(m.batchNumber)) return false;
+                        if (productCodeToSection && section) {
+                            const cat = productCodeToSection.get(itemCode) ?? 'main';
+                            if (cat !== section) return false;
+                        }
+                        return true;
                     });
 
                     setPmModalData(filteredMaterials);
@@ -3041,45 +2398,28 @@ export default function FormulaDataPage() {
                     setPmModalError(data.message || 'Failed to fetch PM materials');
                 }
             } else {
-                // Red (unmatched): Show batches missing PM requisition data
-                const batchResponse = await fetch('/api/batch?page=1&limit=10000');
-                const batchData = await batchResponse.json();
+                // Red (unmatched): Use yearFilteredBatches + pmBatchNumbers directly
+                // (same source as capsule counts — guarantees consistency)
+                const productCodeToSection = buildProductCodeToSectionMap();
 
-                const pmResponse = await fetch('/api/requisition/materials?type=PM&pageSize=100000');
-                const pmData = await pmResponse.json();
+                const unmatchedBatches = (yearFilteredBatches as any[])
+                    .filter((batch: any) => {
+                        if (!batch.batchNumber || pmBatchNumbers.has(batch.batchNumber)) return false;
+                        const cat = (batch.itemCode ? productCodeToSection.get(batch.itemCode) : undefined) ?? 'main';
+                        return !section || cat === section;
+                    })
+                    .map((batch: any) => ({
+                        batchNumber: batch.batchNumber,
+                        itemCode: batch.itemCode,
+                        itemName: batch.itemName,
+                        mfgDate: batch.mfgDate,
+                        expiryDate: batch.expiryDate,
+                        batchSize: batch.batchSize,
+                        department: batch.department,
+                        make: batch.make,
+                    }));
 
-                if (batchData.success && batchData.data) {
-                    const batchesWithPm = new Set<string>();
-                    if (pmData.success && pmData.materials) {
-                        pmData.materials.forEach((m: any) => {
-                            if (m.batchNumber) batchesWithPm.add(m.batchNumber);
-                        });
-                    }
-
-                    const unmatchedBatches: any[] = [];
-                    batchData.data.forEach((record: any) => {
-                        record.batches?.forEach((batch: any) => {
-                            if (batch.itemCode && mfcLinkedProductCodes.has(batch.itemCode)) {
-                                if (!batchesWithPm.has(batch.batchNumber)) {
-                                    unmatchedBatches.push({
-                                        batchNumber: batch.batchNumber,
-                                        itemCode: batch.itemCode,
-                                        itemName: batch.itemName,
-                                        mfgDate: batch.mfgDate,
-                                        expiryDate: batch.expiryDate,
-                                        batchSize: batch.batchSize,
-                                        department: batch.department,
-                                        make: record.companyName || batch.make,
-                                    });
-                                }
-                            }
-                        });
-                    });
-
-                    setPmModalData(unmatchedBatches);
-                } else {
-                    setPmModalError('Failed to fetch batch data');
-                }
+                setPmModalData(unmatchedBatches);
             }
         } catch (error) {
             console.error('Error fetching PM data:', error);
@@ -3087,7 +2427,7 @@ export default function FormulaDataPage() {
         } finally {
             setIsPmModalLoading(false);
         }
-    }, [batchCounts]);
+    }, [batchCounts, selectedFilterYear, yearFilteredBatches, pmBatchNumbers, buildProductCodeToSectionMap]);
 
     const closePmDataModal = useCallback(() => {
         setShowPmDataModal(false);
@@ -3106,13 +2446,7 @@ export default function FormulaDataPage() {
         setMatModalType(type);
         setMatModalSection(section);
         setIsMatModalLoading(true);
-        // Pass capsule's pre-computed batch count to modal for consistent display
-        if (section !== 'all' && explicitFormulas.length === 0) {
-            const sectionCounts = sectionRmCoaBatchCounts[section as keyof typeof sectionRmCoaBatchCounts];
-            setRmCoaCapsuleBatchCount(type === 'qualified' ? sectionCounts.found : sectionCounts.missing);
-        } else {
-            setRmCoaCapsuleBatchCount(0); // Will fall back to recomputed count
-        }
+        setRmCoaCapsuleBatchCount(0); // Will fall back to recomputed count
         setMatModalError(null);
         setMatModalData([]);
         setExpandedMatArNumbers(new Set());
@@ -3122,14 +2456,15 @@ export default function FormulaDataPage() {
         setMatSearchQuery('');
 
         // Set subtitle based on context
+        const yearSuffix = selectedFilterYear ? ` • Year: ${selectedFilterYear}` : '';
         if (explicitFormulas && explicitFormulas.length === 1) {
             const mfc = explicitFormulas[0].masterFormulaDetails?.masterCardNo || 'Unknown MFC';
             const product = explicitFormulas[0].masterFormulaDetails?.productName || '';
-            setMatModalSubtitle(`Filtered by MFC: ${mfc} - ${product}`);
+            setMatModalSubtitle(`Filtered by MFC: ${mfc} - ${product}${yearSuffix}`);
         } else if (section !== 'all') {
-            setMatModalSubtitle(`Filtered by ${section === 'main' ? 'MFCs with 3+ batches' : section === 'lowBatch' ? 'Low Batch MFCs' : section === 'noBatch' ? 'No Batch MFCs' : 'Placebo & Media Fill'}`);
+            setMatModalSubtitle(`Filtered by ${section === 'main' ? 'MFCs with 3+ batches' : section === 'lowBatch' ? 'Low Batch MFCs' : section === 'noBatch' ? 'No Batch MFCs' : 'Placebo & Media Fill'}${yearSuffix}`);
         } else {
-            setMatModalSubtitle('');
+            setMatModalSubtitle(selectedFilterYear ? `Year: ${selectedFilterYear}` : '');
         }
 
         // Get MFC numbers for the selected section
@@ -3259,10 +2594,10 @@ export default function FormulaDataPage() {
                             });
                         }
 
-                        // Build batch to product code mapping
+                        // Build batch to product code mapping (year-filtered)
                         const batchToProductCode = new Map<string, string>();
-                        if (allBatches && allBatches.length > 0) {
-                            allBatches.forEach((batch: any) => {
+                        if (yearFilteredBatches && yearFilteredBatches.length > 0) {
+                            yearFilteredBatches.forEach((batch: any) => {
                                 if (batch.batchNumber && batch.itemCode) {
                                     batchToProductCode.set(batch.batchNumber.trim().toUpperCase(), batch.itemCode);
                                 }
@@ -3285,25 +2620,31 @@ export default function FormulaDataPage() {
                             return true;
                         };
 
-                        // Step 1: Find all unique batches belonging to this MFC
-                        const mfcBatches = new Set<string>();
-                        allBatches.forEach((batch: any) => {
+                        const normalizeBatchRm = (b: string | null | undefined) => (b || '').trim().toUpperCase();
+
+                        // Step 1: Batches for this MFC in the selected year — normalize keys so requisition rows match system batches
+                        const mfcBatchesNorm = new Set<string>();
+                        const rmBatchNormToDisplay = new Map<string, string>();
+                        yearFilteredBatches.forEach((batch: any) => {
                             if (batch.batchNumber && batch.itemCode && validProductCodes.has(batch.itemCode)) {
-                                mfcBatches.add(batch.batchNumber);
+                                const bn = normalizeBatchRm(batch.batchNumber);
+                                if (bn) {
+                                    mfcBatchesNorm.add(bn);
+                                    if (!rmBatchNormToDisplay.has(bn)) {
+                                        rmBatchNormToDisplay.set(bn, batch.batchNumber);
+                                    }
+                                }
                             }
                         });
 
                         // Step 2: Find batches that have ANY missing RM COA ARs (same logic as capsule)
-                        const batchesWithMissingArs = new Set<string>();
+                        const batchesWithMissingArsNorm = new Set<string>();
                         if (requisitionData.success && requisitionData.materials) {
-                            const normalizeBatch = (b: string) => (b || '').trim().toUpperCase();
-                            
-                            mfcBatches.forEach(batchNo => {
-                                const batchNoNorm = normalizeBatch(batchNo);
+                            mfcBatchesNorm.forEach(batchNoNorm => {
                                 let hasMissingAr = false;
-                                
+
                                 requisitionData.materials.forEach((m: any) => {
-                                    if (m.batchNumber && normalizeBatch(m.batchNumber) === batchNoNorm) {
+                                    if (m.batchNumber && normalizeBatchRm(m.batchNumber) === batchNoNorm) {
                                         const arNo = (m.arNo || '').trim();
                                         // Skip dotted AR numbers
                                         if (arNo && isRmArNumber(arNo) && !/\.\d/.test(arNo)) {
@@ -3318,44 +2659,43 @@ export default function FormulaDataPage() {
                                         }
                                     }
                                 });
-                                
+
                                 if (hasMissingAr) {
-                                    batchesWithMissingArs.add(batchNo);
+                                    batchesWithMissingArsNorm.add(batchNoNorm);
                                 }
                             });
                         }
 
                         // Step 3: Found batches = MFC batches that have NO missing ARs
-                        const foundBatches = new Set<string>();
-                        mfcBatches.forEach(batchNo => {
-                            if (!batchesWithMissingArs.has(batchNo)) {
-                                foundBatches.add(batchNo);
+                        const foundBatchesNorm = new Set<string>();
+                        mfcBatchesNorm.forEach(batchNoNorm => {
+                            if (!batchesWithMissingArsNorm.has(batchNoNorm)) {
+                                foundBatchesNorm.add(batchNoNorm);
                             }
                         });
 
                         // Step 4: Build materials list for found batches with their AR details
                         const materials: any[] = [];
-                        const normalizeBatch = (b: string) => (b || '').trim().toUpperCase();
-                        
+
                         if (requisitionData.success && requisitionData.materials) {
-                            // Group by batch number for display
                             const batchDataMap = new Map<string, any[]>();
-                            
+
                             requisitionData.materials.forEach((m: any) => {
-                                if (m.batchNumber && foundBatches.has(m.batchNumber)) {
+                                const bn = m.batchNumber ? normalizeBatchRm(m.batchNumber) : '';
+                                if (bn && foundBatchesNorm.has(bn)) {
                                     const arNo = (m.arNo || '').trim();
                                     if (arNo && isRmArNumber(arNo) && rmCoaArNumbers.has(arNo)) {
-                                        if (!batchDataMap.has(m.batchNumber)) {
-                                            batchDataMap.set(m.batchNumber, []);
+                                        if (!batchDataMap.has(bn)) {
+                                            batchDataMap.set(bn, []);
                                         }
-                                        batchDataMap.get(m.batchNumber)!.push(m);
+                                        batchDataMap.get(bn)!.push(m);
                                     }
                                 }
                             });
 
                             // Create one record per batch with aggregated AR info
-                            foundBatches.forEach(batchNo => {
-                                const batchMaterials = batchDataMap.get(batchNo) || [];
+                            foundBatchesNorm.forEach(batchNoNorm => {
+                                const batchMaterials = batchDataMap.get(batchNoNorm) || [];
                                 const arNumbers = new Set<string>();
                                 let materialCode = 'N/A';
                                 let materialName = 'Unknown';
@@ -3373,7 +2713,7 @@ export default function FormulaDataPage() {
                                 });
 
                                 materials.push({
-                                    batchNumber: batchNo,
+                                    batchNumber: rmBatchNormToDisplay.get(batchNoNorm) || batchNoNorm,
                                     materialCode: materialCode,
                                     materialName: materialName,
                                     formulaMfc: formulaMfc,
@@ -3385,7 +2725,7 @@ export default function FormulaDataPage() {
                                 });
                             });
                         }
-                        
+
                         setMatModalData(materials);
                     } else {
                         // No MFC filtering - show all RM COA data
@@ -3468,10 +2808,10 @@ export default function FormulaDataPage() {
 
 
                 if (requisitionData.success && requisitionData.materials) {
-                    // Fetch batch data to map batch numbers to product codes for accurate filtering
+                    // Fetch batch data to map batch numbers to product codes for accurate filtering (year-filtered)
                     const batchToProductCode = new Map<string, string>();
-                    if (allBatches && allBatches.length > 0) {
-                        allBatches.forEach((batch: any) => {
+                    if (yearFilteredBatches && yearFilteredBatches.length > 0) {
+                        yearFilteredBatches.forEach((batch: any) => {
                             if (batch.batchNumber && batch.itemCode) {
                                 batchToProductCode.set(batch.batchNumber.trim().toUpperCase(), batch.itemCode);
                             }
@@ -3540,7 +2880,7 @@ export default function FormulaDataPage() {
         } finally {
             setIsMatModalLoading(false);
         }
-    }, [formulas, batchCounts, allBatches, sectionRmCoaBatchCounts]);
+    }, [formulas, batchCounts, yearFilteredBatches]);
 
     const closeMatDataModal = useCallback(() => {
         setShowMatDataModal(false);
@@ -3560,13 +2900,7 @@ export default function FormulaDataPage() {
         setPmCoaModalType(type);
         setPmCoaModalSection(section);
         setIsPmCoaModalLoading(true);
-        // Pass capsule's pre-computed batch count to modal for consistent display
-        if (section !== 'all' && explicitFormulas.length === 0) {
-            const sectionCounts = sectionPmUniqueBatchCounts[section as keyof typeof sectionPmUniqueBatchCounts];
-            setPmCoaCapsuleBatchCount(type === 'qualified' ? sectionCounts.found : sectionCounts.missing);
-        } else {
-            setPmCoaCapsuleBatchCount(0); // Will fall back to recomputed count
-        }
+        setPmCoaCapsuleBatchCount(0); // Will fall back to recomputed count
         setPmCoaModalError(null);
         setPmCoaModalData([]);
         setExpandedPmCoaArNumbers(new Set());
@@ -3574,14 +2908,15 @@ export default function FormulaDataPage() {
         setPmCoaViewMode(defaultViewMode);
 
         // Set subtitle based on context
+        const pmYearSuffix = selectedFilterYear ? ` • Year: ${selectedFilterYear}` : '';
         if (explicitFormulas && explicitFormulas.length === 1) {
             const mfc = explicitFormulas[0].masterFormulaDetails?.masterCardNo || 'Unknown MFC';
             const product = explicitFormulas[0].masterFormulaDetails?.productName || '';
-            setPmCoaModalSubtitle(`Filtered by MFC: ${mfc} - ${product}`);
+            setPmCoaModalSubtitle(`Filtered by MFC: ${mfc} - ${product}${pmYearSuffix}`);
         } else if (section !== 'all') {
-            setPmCoaModalSubtitle(`Filtered by ${section === 'main' ? 'MFCs with 3+ Batches' : section === 'lowBatch' ? 'Low Batch MFCs' : section === 'noBatch' ? 'No Batch MFCs' : 'Placebo & Media Fill'}`);
+            setPmCoaModalSubtitle(`Filtered by ${section === 'main' ? 'MFCs with 3+ Batches' : section === 'lowBatch' ? 'Low Batch MFCs' : section === 'noBatch' ? 'No Batch MFCs' : 'Placebo & Media Fill'}${pmYearSuffix}`);
         } else {
-            setPmCoaModalSubtitle('');
+            setPmCoaModalSubtitle(selectedFilterYear ? `Year: ${selectedFilterYear}` : '');
         }
 
         // Get MFC numbers for the selected section
@@ -3708,10 +3043,10 @@ export default function FormulaDataPage() {
                 });
             }
 
-            // Build batch to product code mapping for MFC filtering
+            // Build batch to product code mapping for MFC filtering (year-filtered)
             const batchToProductCode = new Map<string, string>();
-            if (allBatches && allBatches.length > 0) {
-                allBatches.forEach((batch: any) => {
+            if (yearFilteredBatches && yearFilteredBatches.length > 0) {
+                yearFilteredBatches.forEach((batch: any) => {
                     if (batch.batchNumber && batch.itemCode) {
                         batchToProductCode.set(batch.batchNumber.trim().toUpperCase(), batch.itemCode);
                     }
@@ -3730,10 +3065,10 @@ export default function FormulaDataPage() {
                 // This handles whitespace and case differences between data sources
                 const normalizeBatch = (b: string | null | undefined) => (b || '').trim().toUpperCase();
 
-                // Create System Batches Set from allBatches to match Capsule Logic (sectionPmCoaData)
-                // The capsule uses allBatches for counting, so the modal must use the same source
+                // Create System Batches Set from yearFilteredBatches to match Capsule Logic (sectionPmCoaData)
+                // The capsule uses yearFilteredBatches for counting, so the modal must use the same source
                 const systemBatchesNormalized = new Set<string>();
-                allBatches.forEach((batch: any) => {
+                yearFilteredBatches.forEach((batch: any) => {
                     if (batch.batchNumber) {
                         const n = normalizeBatch(batch.batchNumber);
                         if (n) systemBatchesNormalized.add(n);
@@ -3832,10 +3167,10 @@ export default function FormulaDataPage() {
                     });
                 });
 
-                // For each unique batch in allBatches, determine its section and add to sectionBatchNumbers
+                // For each unique batch in yearFilteredBatches, determine its section and add to sectionBatchNumbers
                 // Deduplicate by batchNumber first (keep first record), matching uniqueBatchReconciliation logic
                 const seenBatchNumbers = new Set<string>();
-                allBatches.forEach((batch: any) => {
+                yearFilteredBatches.forEach((batch: any) => {
                     if (!batch.batchNumber) return;
                     const batchNoNorm = normalizeBatch(batch.batchNumber);
                     // Skip if already processed (dedup by batchNumber)
@@ -3853,18 +3188,26 @@ export default function FormulaDataPage() {
 
                 // ENHANCED: If filtering by specific MFC, use unique batch logic matching capsule
                 if (validProductCodes.size > 0) {
-                    // Step 1: Find all unique batches belonging to this MFC
-                    const mfcBatches = new Set<string>();
-                    allBatches.forEach((batch: any) => {
+                    // Step 1: Batches for this MFC in the selected year (normalized keys for requisition join)
+                    const mfcBatchesNorm = new Set<string>();
+                    const pmBatchNormToDisplay = new Map<string, string>();
+                    yearFilteredBatches.forEach((batch: any) => {
                         if (batch.batchNumber && batch.itemCode && validProductCodes.has(batch.itemCode)) {
-                            mfcBatches.add(batch.batchNumber);
+                            const bn = normalizeBatch(batch.batchNumber);
+                            if (bn) {
+                                mfcBatchesNorm.add(bn);
+                                if (!pmBatchNormToDisplay.has(bn)) {
+                                    pmBatchNormToDisplay.set(bn, batch.batchNumber);
+                                }
+                            }
                         }
                     });
 
                     // Step 2: Find batches that have ANY missing PM COA ARs (same logic as capsule)
-                    const batchesWithMissingArs = new Set<string>();
+                    const batchesWithMissingArsNorm = new Set<string>();
                     requisitionData.materials.forEach((m: any) => {
-                        if (m.batchNumber && mfcBatches.has(m.batchNumber)) {
+                        const bn = m.batchNumber ? normalizeBatch(m.batchNumber) : '';
+                        if (bn && mfcBatchesNorm.has(bn)) {
                             const arNo = (m.arNo || '').trim();
                             if (arNo) {
                                 const arNoUpper = arNo.toUpperCase();
@@ -3872,117 +3215,45 @@ export default function FormulaDataPage() {
                                 // Missing = NOT in Inward Register
                                 const isInInward = inwardArNumbersSet.has(arNoUpper) || inwardArNumbersSet.has(arNoBase);
                                 if (!isInInward) {
-                                    batchesWithMissingArs.add(m.batchNumber);
+                                    batchesWithMissingArsNorm.add(bn);
                                 }
                             }
                         }
                     });
 
                     // Step 3: Found batches = MFC batches that have NO missing ARs
-                    const foundBatches = new Set<string>();
-                    mfcBatches.forEach(batchNo => {
-                        if (!batchesWithMissingArs.has(batchNo)) {
-                            foundBatches.add(batchNo);
+                    const foundBatchesNorm = new Set<string>();
+                    mfcBatchesNorm.forEach(batchNoNorm => {
+                        if (!batchesWithMissingArsNorm.has(batchNoNorm)) {
+                            foundBatchesNorm.add(batchNoNorm);
                         }
                     });
 
                     if (type === 'qualified') {
                         // Step 4: Build materials list for found batches with their AR details
                         const batchDataMap = new Map<string, any[]>();
-                        
+
                         requisitionData.materials.forEach((m: any) => {
-                            if (m.batchNumber && foundBatches.has(m.batchNumber)) {
+                            const bn = m.batchNumber ? normalizeBatch(m.batchNumber) : '';
+                            if (bn && foundBatchesNorm.has(bn)) {
                                 const arNo = (m.arNo || '').trim();
                                 if (arNo) {
                                     const arNoUpper = arNo.toUpperCase();
                                     const arNoBase = arNoUpper.split('.')[0];
                                     const isInInward = inwardArNumbersSet.has(arNoUpper) || inwardArNumbersSet.has(arNoBase);
                                     if (isInInward) {
-                                        if (!batchDataMap.has(m.batchNumber)) {
-                                            batchDataMap.set(m.batchNumber, []);
+                                        if (!batchDataMap.has(bn)) {
+                                            batchDataMap.set(bn, []);
                                         }
-                                        batchDataMap.get(m.batchNumber)!.push(m);
+                                        batchDataMap.get(bn)!.push(m);
                                     }
                                 }
                             }
                         });
 
                         // Create one record per batch with aggregated AR info
-                        foundBatches.forEach(batchNo => {
-                            const batchMaterials = batchDataMap.get(batchNo) || [];
-                            const arNumbers = new Set<string>();
-                            let materialCode = 'N/A';
-                            let materialName = 'Unknown';
-                            let formulaMfc = 'N/A';
-                            let totalQty = 0;
-
-                            batchMaterials.forEach((m: any) => {
-                                if (m.arNo) arNumbers.add(m.arNo.trim());
-                                if (m.materialCode && materialCode === 'N/A') materialCode = m.materialCode;
-                                if ((m.materialName || m.itemName) && materialName === 'Unknown') {
-                                    materialName = m.materialName || m.itemName;
-                                }
-                                if ((m.mfcNo || m.formulaMfc) && formulaMfc === 'N/A') formulaMfc = (m.mfcNo || m.formulaMfc || '').trim().toUpperCase();
-                                totalQty += m.quantityToIssue || m.quantityRequired || 0;
-                            });
-
-                            // If batch has no PM requirements (vacuously qualified), still show it
-                            if (arNumbers.size === 0) {
-                                filteredMaterials.push({
-                                    batchNumber: batchNo,
-                                    materialCode: 'N/A',
-                                    materialName: 'No PM Required (Qualified)',
-                                    itemName: 'No PM Required (Qualified)',
-                                    arNo: 'N/A',
-                                    grNo: 'N/A',
-                                    formulaMfc: formulaMfc !== 'N/A' ? formulaMfc : 'Unknown',
-                                    quantityToIssue: 0,
-                                    expiryDate: 'N/A',
-                                    status: 'All ARs Found in Inward',
-                                    sourceFile: 'PM COA',
-                                });
-                            } else {
-                                filteredMaterials.push({
-                                    batchNumber: batchNo,
-                                    materialCode: materialCode,
-                                    materialName: materialName,
-                                    itemName: materialName,
-                                    arNo: Array.from(arNumbers).join(', '),
-                                    arCount: arNumbers.size,
-                                    grNo: 'N/A',
-                                    formulaMfc: formulaMfc,
-                                    quantityToIssue: totalQty,
-                                    expiryDate: 'N/A',
-                                    status: 'All ARs Found in Inward',
-                                    sourceFile: 'PM COA',
-                                });
-                            }
-                        });
-                    } else {
-                        // type === 'unqualified' - show batches with missing ARs
-                        const batchDataMap = new Map<string, any[]>();
-                        
-                        batchesWithMissingArs.forEach(batchNo => {
-                            batchDataMap.set(batchNo, []);
-                        });
-                        
-                        requisitionData.materials.forEach((m: any) => {
-                            if (m.batchNumber && batchesWithMissingArs.has(m.batchNumber)) {
-                                const arNo = (m.arNo || '').trim();
-                                if (arNo) {
-                                    const arNoUpper = arNo.toUpperCase();
-                                    const arNoBase = arNoUpper.split('.')[0];
-                                    const isInInward = inwardArNumbersSet.has(arNoUpper) || inwardArNumbersSet.has(arNoBase);
-                                    if (!isInInward) {
-                                        batchDataMap.get(m.batchNumber)!.push(m);
-                                    }
-                                }
-                            }
-                        });
-
-                        // Create one record per batch with aggregated missing AR info
-                        batchesWithMissingArs.forEach(batchNo => {
-                            const batchMaterials = batchDataMap.get(batchNo) || [];
+                        foundBatchesNorm.forEach(batchNoNorm => {
+                            const batchMaterials = batchDataMap.get(batchNoNorm) || [];
                             const arNumbers = new Set<string>();
                             let materialCode = 'N/A';
                             let materialName = 'Unknown';
@@ -4000,7 +3271,64 @@ export default function FormulaDataPage() {
                             });
 
                             filteredMaterials.push({
-                                batchNumber: batchNo,
+                                batchNumber: pmBatchNormToDisplay.get(batchNoNorm) || batchNoNorm,
+                                materialCode: materialCode,
+                                materialName: materialName,
+                                itemName: materialName,
+                                arNo: Array.from(arNumbers).join(', '),
+                                arCount: arNumbers.size,
+                                grNo: 'N/A',
+                                formulaMfc: formulaMfc,
+                                quantityToIssue: totalQty,
+                                expiryDate: 'N/A',
+                                status: 'Verified in Inward',
+                                sourceFile: 'Inward Register',
+                            });
+                        });
+                    } else {
+                        // type === 'unqualified' - show batches with missing ARs
+                        const batchDataMap = new Map<string, any[]>();
+
+                        batchesWithMissingArsNorm.forEach(batchNoNorm => {
+                            batchDataMap.set(batchNoNorm, []);
+                        });
+
+                        requisitionData.materials.forEach((m: any) => {
+                            const bn = m.batchNumber ? normalizeBatch(m.batchNumber) : '';
+                            if (bn && batchesWithMissingArsNorm.has(bn)) {
+                                const arNo = (m.arNo || '').trim();
+                                if (arNo) {
+                                    const arNoUpper = arNo.toUpperCase();
+                                    const arNoBase = arNoUpper.split('.')[0];
+                                    const isInInward = inwardArNumbersSet.has(arNoUpper) || inwardArNumbersSet.has(arNoBase);
+                                    if (!isInInward) {
+                                        batchDataMap.get(bn)!.push(m);
+                                    }
+                                }
+                            }
+                        });
+
+                        // Create one record per batch with aggregated missing AR info
+                        batchesWithMissingArsNorm.forEach(batchNoNorm => {
+                            const batchMaterials = batchDataMap.get(batchNoNorm) || [];
+                            const arNumbers = new Set<string>();
+                            let materialCode = 'N/A';
+                            let materialName = 'Unknown';
+                            let formulaMfc = 'N/A';
+                            let totalQty = 0;
+
+                            batchMaterials.forEach((m: any) => {
+                                if (m.arNo) arNumbers.add(m.arNo.trim());
+                                if (m.materialCode && materialCode === 'N/A') materialCode = m.materialCode;
+                                if ((m.materialName || m.itemName) && materialName === 'Unknown') {
+                                    materialName = m.materialName || m.itemName;
+                                }
+                                if ((m.mfcNo || m.formulaMfc) && formulaMfc === 'N/A') formulaMfc = (m.mfcNo || m.formulaMfc || '').trim().toUpperCase();
+                                totalQty += m.quantityToIssue || m.quantityRequired || 0;
+                            });
+
+                            filteredMaterials.push({
+                                batchNumber: pmBatchNormToDisplay.get(batchNoNorm) || batchNoNorm,
                                 materialCode: materialCode,
                                 materialName: materialName,
                                 itemName: materialName,
@@ -4053,26 +3381,27 @@ export default function FormulaDataPage() {
                         } else {
                             // Only show AR numbers that are genuinely missing from Inward Register
                             // ENHANCED: Case-insensitive matching + normalize by stripping suffix (e.g., .1, .2)
-                            const arNo = (m.arNo || '').trim();
-                            const arNoUpper = arNo.toUpperCase();
-                            const arNoBase = arNoUpper.split('.')[0];
-                            const isArMissingFromInward = arNo && arNo !== 'N/A' && !inwardArNumbersSet.has(arNoUpper) && !inwardArNumbersSet.has(arNoBase);
-
-                            if (batchNo && isArMissingFromInward) {
-                                filteredMaterials.push({
-                                    arNo: m.arNo || 'N/A',
-                                    materialCode: m.materialCode || 'N/A',
-                                    materialName: m.materialName || m.itemName || 'N/A',
-                                    itemName: m.itemName || 'N/A',
-                                    batchNumber: batchNo || 'N/A',
-                                    grNo: m.grNo || 'N/A',
-                                    formulaMfc: mfcNo || 'N/A',
-                                    quantityToIssue: m.quantityToIssue || m.quantityRequired || 0,
-                                    expiryDate: m.expiryDate || 'N/A',
-                                    status: 'Missing in Inward Register',
-                                    sourceFile: 'Not Received'
-                                });
-                            }
+                            const arTokens = splitArNumbers(m.arNo);
+                            arTokens.forEach((arTok) => {
+                                const arNoUpper = arTok.toUpperCase();
+                                const arNoBase = arNoUpper.split('.')[0];
+                                const isArMissingFromInward = arTok && !inwardArNumbersSet.has(arNoUpper) && !inwardArNumbersSet.has(arNoBase);
+                                if (batchNo && isArMissingFromInward) {
+                                    filteredMaterials.push({
+                                        arNo: arTok,
+                                        materialCode: m.materialCode || 'N/A',
+                                        materialName: m.materialName || m.itemName || 'N/A',
+                                        itemName: m.itemName || 'N/A',
+                                        batchNumber: batchNo || 'N/A',
+                                        grNo: m.grNo || 'N/A',
+                                        formulaMfc: mfcNo || 'N/A',
+                                        quantityToIssue: m.quantityToIssue || m.quantityRequired || 0,
+                                        expiryDate: m.expiryDate || 'N/A',
+                                        status: 'Missing in Inward Register',
+                                        sourceFile: 'Not Received'
+                                    });
+                                }
+                            });
                         }
                     });
                 }
@@ -4108,7 +3437,7 @@ export default function FormulaDataPage() {
 
                             // Get MFC for display purposes
                             let batchMfc = 'Unknown';
-                            const batchRecord = allBatches.find(b => normBatch(b.batchNumber) === batchNoNorm);
+                            const batchRecord = yearFilteredBatches.find((b: any) => normBatch(b.batchNumber) === batchNoNorm);
                             if (batchRecord && batchRecord.itemCode) {
                                 const formula = formulas.find((f: any) => {
                                     if (f.masterFormulaDetails?.productCode === batchRecord.itemCode) return true;
@@ -4141,7 +3470,7 @@ export default function FormulaDataPage() {
                     // SECOND RECONCILIATION: Add batches with NO PM requirements (vacuously qualified)
                     // These batches don't appear in pmCoaInwardQualifiedBatchNumbers but should be counted as qualified
                     // because the capsule logic counts them: if (isQualified || !hasRequirements)
-                    allBatches.forEach((batch: any) => {
+                    yearFilteredBatches.forEach((batch: any) => {
                         const batchNoNorm = normBatch(batch.batchNumber);
 
                         // Skip if no batch number, already added, or if batch HAS PM requirements
@@ -4196,7 +3525,7 @@ export default function FormulaDataPage() {
         } finally {
             setIsPmCoaModalLoading(false);
         }
-    }, [formulas, batchCounts, pmCoaInwardQualifiedBatchNumbers, pmBatchNumbers, allBatches, sectionPmUniqueBatchCounts]);
+    }, [formulas, batchCounts, pmCoaInwardQualifiedBatchNumbers, pmBatchNumbers, yearFilteredBatches]);
 
     const closePmCoaModal = useCallback(() => {
         setShowPmCoaModal(false);
@@ -4218,13 +3547,7 @@ export default function FormulaDataPage() {
         setPpmCoaModalType(type);
         setPpmCoaModalSection(section);
         setIsPpmCoaModalLoading(true);
-        // Pass capsule's pre-computed batch count to modal for consistent display
-        if (section !== 'all' && explicitFormulas.length === 0) {
-            const sectionCounts = sectionPpmUniqueBatchCounts[section as keyof typeof sectionPpmUniqueBatchCounts];
-            setPpmCoaCapsuleBatchCount(type === 'qualified' ? sectionCounts.found : sectionCounts.missing);
-        } else {
-            setPpmCoaCapsuleBatchCount(0); // Will fall back to recomputed count
-        }
+        setPpmCoaCapsuleBatchCount(0); // Will fall back to recomputed count
         setPpmCoaModalError(null);
         setPpmCoaModalData([]);
         setExpandedPpmCoaArNumbers(new Set());
@@ -4232,14 +3555,15 @@ export default function FormulaDataPage() {
         setPpmCoaViewMode(defaultViewMode);
 
         // Set subtitle based on context
+        const ppmYearSuffix = selectedFilterYear ? ` • Year: ${selectedFilterYear}` : '';
         if (explicitFormulas && explicitFormulas.length === 1) {
             const mfc = explicitFormulas[0].masterFormulaDetails?.masterCardNo || 'Unknown MFC';
             const product = explicitFormulas[0].masterFormulaDetails?.productName || '';
-            setPpmCoaModalSubtitle(`Filtered by MFC: ${mfc} - ${product}`);
+            setPpmCoaModalSubtitle(`Filtered by MFC: ${mfc} - ${product}${ppmYearSuffix}`);
         } else if (section !== 'all') {
-            setPpmCoaModalSubtitle(`Filtered by ${section === 'main' ? 'MFCs with 3+ batches' : section === 'lowBatch' ? 'Low Batch MFCs' : section === 'noBatch' ? 'No Batch MFCs' : 'Placebo & Media Fill'}`);
+            setPpmCoaModalSubtitle(`Filtered by ${section === 'main' ? 'MFCs with 3+ batches' : section === 'lowBatch' ? 'Low Batch MFCs' : section === 'noBatch' ? 'No Batch MFCs' : 'Placebo & Media Fill'}${ppmYearSuffix}`);
         } else {
-            setPpmCoaModalSubtitle('');
+            setPpmCoaModalSubtitle(selectedFilterYear ? `Year: ${selectedFilterYear}` : '');
         }
 
         // Get MFC numbers for the selected section
@@ -4373,139 +3697,70 @@ export default function FormulaDataPage() {
 
             if (requisitionData.success && requisitionData.materials) {
                 const filteredMaterials: any[] = [];
+                const normalizeBatchPpm = (b: string | null | undefined) => (b || '').trim().toUpperCase();
 
                 // ENHANCED: If filtering by specific MFC, use unique batch logic matching capsule
                 if (validProductCodes.size > 0) {
-                    // Step 1: Find all unique batches belonging to this MFC
-                    const mfcBatches = new Set<string>();
-                    allBatches.forEach((batch: any) => {
+                    const mfcBatchesNorm = new Set<string>();
+                    const ppmBatchNormToDisplay = new Map<string, string>();
+                    yearFilteredBatches.forEach((batch: any) => {
                         if (batch.batchNumber && batch.itemCode && validProductCodes.has(batch.itemCode)) {
-                            mfcBatches.add(batch.batchNumber);
-                        }
-                    });
-
-                    // Step 2: Find batches that have ANY missing PPM COA ARs (same logic as capsule)
-                    const batchesWithMissingArs = new Set<string>();
-                    requisitionData.materials.forEach((m: any) => {
-                        if (m.batchNumber && mfcBatches.has(m.batchNumber)) {
-                            const arNo = (m.arNo || '').trim();
-                            if (arNo) {
-                                const arNoUpper = arNo.toUpperCase();
-                                const arNoBase = arNoUpper.split('.')[0];
-                                // Missing = NOT in Inward Register
-                                const isInInward = inwardArNumbersSet.has(arNoUpper) || inwardArNumbersSet.has(arNoBase);
-                                if (!isInInward) {
-                                    batchesWithMissingArs.add(m.batchNumber);
+                            const bn = normalizeBatchPpm(batch.batchNumber);
+                            if (bn) {
+                                mfcBatchesNorm.add(bn);
+                                if (!ppmBatchNormToDisplay.has(bn)) {
+                                    ppmBatchNormToDisplay.set(bn, batch.batchNumber);
                                 }
                             }
                         }
                     });
 
-                    // Step 3: Found batches = MFC batches that have NO missing ARs
-                    const foundBatches = new Set<string>();
-                    mfcBatches.forEach(batchNo => {
-                        if (!batchesWithMissingArs.has(batchNo)) {
-                            foundBatches.add(batchNo);
+                    const batchesWithMissingArsNorm = new Set<string>();
+                    requisitionData.materials.forEach((m: any) => {
+                        const bn = m.batchNumber ? normalizeBatchPpm(m.batchNumber) : '';
+                        if (bn && mfcBatchesNorm.has(bn)) {
+                            const arNo = (m.arNo || '').trim();
+                            if (arNo) {
+                                const arNoUpper = arNo.toUpperCase();
+                                const arNoBase = arNoUpper.split('.')[0];
+                                const isInInward = inwardArNumbersSet.has(arNoUpper) || inwardArNumbersSet.has(arNoBase);
+                                if (!isInInward) {
+                                    batchesWithMissingArsNorm.add(bn);
+                                }
+                            }
+                        }
+                    });
+
+                    const foundBatchesNorm = new Set<string>();
+                    mfcBatchesNorm.forEach(batchNoNorm => {
+                        if (!batchesWithMissingArsNorm.has(batchNoNorm)) {
+                            foundBatchesNorm.add(batchNoNorm);
                         }
                     });
 
                     if (type === 'qualified') {
-                        // Step 4: Build materials list for found batches with their AR details
                         const batchDataMap = new Map<string, any[]>();
-                        
+
                         requisitionData.materials.forEach((m: any) => {
-                            if (m.batchNumber && foundBatches.has(m.batchNumber)) {
+                            const bn = m.batchNumber ? normalizeBatchPpm(m.batchNumber) : '';
+                            if (bn && foundBatchesNorm.has(bn)) {
                                 const arNo = (m.arNo || '').trim();
                                 if (arNo) {
                                     const arNoUpper = arNo.toUpperCase();
                                     const arNoBase = arNoUpper.split('.')[0];
                                     const isInInward = inwardArNumbersSet.has(arNoUpper) || inwardArNumbersSet.has(arNoBase);
                                     if (isInInward) {
-                                        if (!batchDataMap.has(m.batchNumber)) {
-                                            batchDataMap.set(m.batchNumber, []);
+                                        if (!batchDataMap.has(bn)) {
+                                            batchDataMap.set(bn, []);
                                         }
-                                        batchDataMap.get(m.batchNumber)!.push(m);
+                                        batchDataMap.get(bn)!.push(m);
                                     }
                                 }
                             }
                         });
 
-                        // Create one record per batch with aggregated AR info
-                        foundBatches.forEach(batchNo => {
-                            const batchMaterials = batchDataMap.get(batchNo) || [];
-                            const arNumbers = new Set<string>();
-                            let materialCode = 'N/A';
-                            let materialName = 'Unknown';
-                            let formulaMfc = 'N/A';
-                            let totalQty = 0;
-
-                            batchMaterials.forEach((m: any) => {
-                                if (m.arNo) arNumbers.add(m.arNo.trim());
-                                if (m.materialCode && materialCode === 'N/A') materialCode = m.materialCode;
-                                if ((m.materialName || m.itemName) && materialName === 'Unknown') {
-                                    materialName = m.materialName || m.itemName;
-                                }
-                                if ((m.mfcNo || m.formulaMfc) && formulaMfc === 'N/A') formulaMfc = (m.mfcNo || m.formulaMfc || '').trim().toUpperCase();
-                                totalQty += m.quantityToIssue || m.quantityRequired || 0;
-                            });
-
-                            // If batch has no PPM requirements (vacuously qualified), still show it
-                            if (arNumbers.size === 0) {
-                                filteredMaterials.push({
-                                    batchNumber: batchNo,
-                                    materialCode: 'N/A',
-                                    materialName: 'No PPM Required (Qualified)',
-                                    itemName: 'No PPM Required (Qualified)',
-                                    arNo: 'N/A',
-                                    grNo: 'N/A',
-                                    formulaMfc: formulaMfc !== 'N/A' ? formulaMfc : 'Unknown',
-                                    quantityToIssue: 0,
-                                    expiryDate: 'N/A',
-                                    status: 'All ARs Found in Inward',
-                                    sourceFile: 'PPM COA',
-                                });
-                            } else {
-                                filteredMaterials.push({
-                                    batchNumber: batchNo,
-                                    materialCode: materialCode,
-                                    materialName: materialName,
-                                    itemName: materialName,
-                                    arNo: Array.from(arNumbers).join(', '),
-                                    arCount: arNumbers.size,
-                                    grNo: 'N/A',
-                                    formulaMfc: formulaMfc,
-                                    quantityToIssue: totalQty,
-                                    expiryDate: 'N/A',
-                                    status: 'All ARs Found in Inward',
-                                    sourceFile: 'PPM COA',
-                                });
-                            }
-                        });
-                    } else {
-                        // type === 'unqualified' - show batches with missing ARs
-                        const batchDataMap = new Map<string, any[]>();
-                        
-                        batchesWithMissingArs.forEach(batchNo => {
-                            batchDataMap.set(batchNo, []);
-                        });
-                        
-                        requisitionData.materials.forEach((m: any) => {
-                            if (m.batchNumber && batchesWithMissingArs.has(m.batchNumber)) {
-                                const arNo = (m.arNo || '').trim();
-                                if (arNo) {
-                                    const arNoUpper = arNo.toUpperCase();
-                                    const arNoBase = arNoUpper.split('.')[0];
-                                    const isInInward = inwardArNumbersSet.has(arNoUpper) || inwardArNumbersSet.has(arNoBase);
-                                    if (!isInInward) {
-                                        batchDataMap.get(m.batchNumber)!.push(m);
-                                    }
-                                }
-                            }
-                        });
-
-                        // Create one record per batch with aggregated missing AR info
-                        batchesWithMissingArs.forEach(batchNo => {
-                            const batchMaterials = batchDataMap.get(batchNo) || [];
+                        foundBatchesNorm.forEach(batchNoNorm => {
+                            const batchMaterials = batchDataMap.get(batchNoNorm) || [];
                             const arNumbers = new Set<string>();
                             let materialCode = 'N/A';
                             let materialName = 'Unknown';
@@ -4523,7 +3778,62 @@ export default function FormulaDataPage() {
                             });
 
                             filteredMaterials.push({
-                                batchNumber: batchNo,
+                                batchNumber: ppmBatchNormToDisplay.get(batchNoNorm) || batchNoNorm,
+                                materialCode: materialCode,
+                                materialName: materialName,
+                                itemName: materialName,
+                                arNo: Array.from(arNumbers).join(', '),
+                                arCount: arNumbers.size,
+                                grNo: 'N/A',
+                                formulaMfc: formulaMfc,
+                                quantityToIssue: totalQty,
+                                expiryDate: 'N/A',
+                                status: 'Verified in Inward',
+                                sourceFile: 'Inward Register',
+                            });
+                        });
+                    } else {
+                        const batchDataMap = new Map<string, any[]>();
+
+                        batchesWithMissingArsNorm.forEach(batchNoNorm => {
+                            batchDataMap.set(batchNoNorm, []);
+                        });
+
+                        requisitionData.materials.forEach((m: any) => {
+                            const bn = m.batchNumber ? normalizeBatchPpm(m.batchNumber) : '';
+                            if (bn && batchesWithMissingArsNorm.has(bn)) {
+                                const arNo = (m.arNo || '').trim();
+                                if (arNo) {
+                                    const arNoUpper = arNo.toUpperCase();
+                                    const arNoBase = arNoUpper.split('.')[0];
+                                    const isInInward = inwardArNumbersSet.has(arNoUpper) || inwardArNumbersSet.has(arNoBase);
+                                    if (!isInInward) {
+                                        batchDataMap.get(bn)!.push(m);
+                                    }
+                                }
+                            }
+                        });
+
+                        batchesWithMissingArsNorm.forEach(batchNoNorm => {
+                            const batchMaterials = batchDataMap.get(batchNoNorm) || [];
+                            const arNumbers = new Set<string>();
+                            let materialCode = 'N/A';
+                            let materialName = 'Unknown';
+                            let formulaMfc = 'N/A';
+                            let totalQty = 0;
+
+                            batchMaterials.forEach((m: any) => {
+                                if (m.arNo) arNumbers.add(m.arNo.trim());
+                                if (m.materialCode && materialCode === 'N/A') materialCode = m.materialCode;
+                                if ((m.materialName || m.itemName) && materialName === 'Unknown') {
+                                    materialName = m.materialName || m.itemName;
+                                }
+                                if ((m.mfcNo || m.formulaMfc) && formulaMfc === 'N/A') formulaMfc = (m.mfcNo || m.formulaMfc || '').trim().toUpperCase();
+                                totalQty += m.quantityToIssue || m.quantityRequired || 0;
+                            });
+
+                            filteredMaterials.push({
+                                batchNumber: ppmBatchNormToDisplay.get(batchNoNorm) || batchNoNorm,
                                 materialCode: materialCode,
                                 materialName: materialName,
                                 itemName: materialName,
@@ -4571,7 +3881,7 @@ export default function FormulaDataPage() {
                     formulas.filter((f: any) => { const pn = (f.masterFormulaDetails?.productName || '').toUpperCase(); return pn.includes('PLACEBO') || pn.includes('MEDIA FILL') || pn.includes('MEDIAFILL'); })
                         .forEach((f: any) => { getPpmSectionProductCodes(f).forEach(code => { if (!ppmSectionProductCodeToCategory.has(code)) ppmSectionProductCodeToCategory.set(code, 'placebo'); }); });
 
-                    // Build per-section batch sets (deduplicated, first record wins)
+                    // Build per-section batch sets (deduplicated, first record wins, year-filtered)
                     const ppmSectionBatchSets = new Map<string, Set<string>>();
                     ppmSectionBatchSets.set('main', new Set<string>());
                     ppmSectionBatchSets.set('lowBatch', new Set<string>());
@@ -4579,7 +3889,7 @@ export default function FormulaDataPage() {
                     ppmSectionBatchSets.set('placebo', new Set<string>());
                     ppmSectionBatchSets.set('all', new Set<string>());
                     const seenPpmBatches = new Set<string>();
-                    allBatches.forEach((batch: any) => {
+                    yearFilteredBatches.forEach((batch: any) => {
                         if (!batch.batchNumber) return;
                         if (seenPpmBatches.has(batch.batchNumber)) return;
                         seenPpmBatches.add(batch.batchNumber);
@@ -4751,7 +4061,7 @@ export default function FormulaDataPage() {
 
                         const uniqueBatchesProcessed = new Set<string>();
 
-                        allBatches.forEach((batch: any) => {
+                        yearFilteredBatches.forEach((batch: any) => {
                             const batchNo = batch.batchNumber;
                             if (!batchNo || uniqueBatchesProcessed.has(batchNo)) return;
 
@@ -4797,7 +4107,7 @@ export default function FormulaDataPage() {
         } finally {
             setIsPpmCoaModalLoading(false);
         }
-    }, [formulas, batchCounts, ppmCoaInwardQualifiedBatchNumbers, ppmBatchNumbers, allBatches, sectionPpmUniqueBatchCounts]);
+    }, [formulas, batchCounts, ppmCoaInwardQualifiedBatchNumbers, ppmBatchNumbers, yearFilteredBatches]);
 
     const closePpmCoaModal = useCallback(() => {
         setShowPpmCoaModal(false);
@@ -4827,14 +4137,15 @@ export default function FormulaDataPage() {
         setBulkCoaViewMode('batch');
 
         // Set subtitle based on context
+        const bulkYearSuffix = selectedFilterYear ? ` • Year: ${selectedFilterYear}` : '';
         if (explicitFormulas && explicitFormulas.length === 1) {
             const mfc = explicitFormulas[0].masterFormulaDetails?.masterCardNo || 'Unknown MFC';
             const product = explicitFormulas[0].masterFormulaDetails?.productName || '';
-            setBulkCoaModalSubtitle(`Filtered by MFC: ${mfc} - ${product}`);
+            setBulkCoaModalSubtitle(`Filtered by MFC: ${mfc} - ${product}${bulkYearSuffix}`);
         } else if (section !== 'all') {
-            setBulkCoaModalSubtitle(`Filtered by ${section === 'main' ? 'MFCs with 3+ batches' : section === 'lowBatch' ? 'Low Batch MFCs' : section === 'noBatch' ? 'No Batch MFCs' : 'Placebo & Media Fill'}`);
+            setBulkCoaModalSubtitle(`Filtered by ${section === 'main' ? 'MFCs with 3+ batches' : section === 'lowBatch' ? 'Low Batch MFCs' : section === 'noBatch' ? 'No Batch MFCs' : 'Placebo & Media Fill'}${bulkYearSuffix}`);
         } else {
-            setBulkCoaModalSubtitle('');
+            setBulkCoaModalSubtitle(selectedFilterYear ? `Year: ${selectedFilterYear}` : '');
         }
 
         try {
@@ -4873,9 +4184,9 @@ export default function FormulaDataPage() {
                 });
             }
 
-            // Map batchNumber -> itemCode for filtering
+            // Map batchNumber -> itemCode for filtering (year-filtered)
             const batchToItemCode = new Map<string, string>();
-            allBatches.forEach(batch => {
+            yearFilteredBatches.forEach((batch: any) => {
                 if (batch.batchNumber && batch.itemCode) {
                     batchToItemCode.set(batch.batchNumber, batch.itemCode);
                 }
@@ -4884,11 +4195,10 @@ export default function FormulaDataPage() {
             // Use the pre-computed bulkCoaQualifiedBatchNumbers set (same as capsule)
             // This ensures modal data matches capsule counts exactly
 
-            // Build valid batch numbers set for this MFC filter (same logic as capsule)
-            // This maps formula product codes → allBatches itemCodes → batch numbers
+            // Build valid batch numbers set for this MFC filter (same logic as capsule, year-filtered)
             const validBatchNumbers = new Set<string>();
             if (isFiltering) {
-                allBatches.forEach(batch => {
+                yearFilteredBatches.forEach((batch: any) => {
                     if (batch.batchNumber && batch.itemCode && validProductCodes.has(batch.itemCode)) {
                         validBatchNumbers.add(batch.batchNumber);
                     }
@@ -4931,10 +4241,10 @@ export default function FormulaDataPage() {
                 setBulkCoaModalData(matchedData);
             } else {
                 // Show batches that DON'T have Bulk COA data
-                // Use the same logic as sectionBulkCoaData: unique batches from allBatches
+                // Use the same logic as sectionBulkCoaData: unique batches from yearFilteredBatches
                 // checked against bulkCoaQualifiedBatchNumbers
                 const uniqueBatchMap = new Map<string, any>();
-                allBatches.forEach(batch => {
+                yearFilteredBatches.forEach((batch: any) => {
                     if (batch.batchNumber && !uniqueBatchMap.has(batch.batchNumber)) {
                         // Apply section filter if needed
                         if (isFiltering) {
@@ -4970,7 +4280,7 @@ export default function FormulaDataPage() {
         } finally {
             setIsBulkCoaModalLoading(false);
         }
-    }, [allBatches, bulkCoaQualifiedBatchNumbers]);
+    }, [yearFilteredBatches, bulkCoaQualifiedBatchNumbers]);
 
     const closeBulkCoaModal = useCallback(() => {
         setShowBulkCoaModal(false);
@@ -5001,14 +4311,15 @@ export default function FormulaDataPage() {
         setFinishCoaViewMode('batch');
 
         // Set subtitle based on context
+        const finishYearSuffix = selectedFilterYear ? ` • Year: ${selectedFilterYear}` : '';
         if (explicitFormulas && explicitFormulas.length === 1) {
             const mfc = explicitFormulas[0].masterFormulaDetails?.masterCardNo || 'Unknown MFC';
             const product = explicitFormulas[0].masterFormulaDetails?.productName || '';
-            setFinishCoaModalSubtitle(`Filtered by MFC: ${mfc} - ${product}`);
+            setFinishCoaModalSubtitle(`Filtered by MFC: ${mfc} - ${product}${finishYearSuffix}`);
         } else if (section !== 'all') {
-            setFinishCoaModalSubtitle(`Filtered by ${section === 'main' ? 'MFCs with 3+ batches' : section === 'lowBatch' ? 'Low Batch MFCs' : section === 'noBatch' ? 'No Batch MFCs' : 'Placebo & Media Fill'}`);
+            setFinishCoaModalSubtitle(`Filtered by ${section === 'main' ? 'MFCs with 3+ batches' : section === 'lowBatch' ? 'Low Batch MFCs' : section === 'noBatch' ? 'No Batch MFCs' : 'Placebo & Media Fill'}${finishYearSuffix}`);
         } else {
-            setFinishCoaModalSubtitle('');
+            setFinishCoaModalSubtitle(selectedFilterYear ? `Year: ${selectedFilterYear}` : '');
         }
 
         try {
@@ -5047,9 +4358,9 @@ export default function FormulaDataPage() {
                 });
             }
 
-            // Map batchNumber -> itemCode for filtering
+            // Map batchNumber -> itemCode for filtering (year-filtered)
             const batchToItemCode = new Map<string, string>();
-            allBatches.forEach(batch => {
+            yearFilteredBatches.forEach((batch: any) => {
                 if (batch.batchNumber && batch.itemCode) {
                     batchToItemCode.set(batch.batchNumber, batch.itemCode);
                 }
@@ -5058,10 +4369,10 @@ export default function FormulaDataPage() {
             // Use the pre-computed finishCoaQualifiedBatchNumbers set (same as capsule)
             // This ensures modal data matches capsule counts exactly
 
-            // Build valid batch numbers set for this MFC filter (same logic as capsule)
+            // Build valid batch numbers set for this MFC filter (same logic as capsule, year-filtered)
             const validBatchNumbers = new Set<string>();
             if (isFiltering) {
-                allBatches.forEach(batch => {
+                yearFilteredBatches.forEach((batch: any) => {
                     if (batch.batchNumber && batch.itemCode && validProductCodes.has(batch.itemCode)) {
                         validBatchNumbers.add(batch.batchNumber);
                     }
@@ -5104,9 +4415,9 @@ export default function FormulaDataPage() {
                 setFinishCoaModalData(matchedData);
             } else {
                 // Show batches that DON'T have Finish COA data
-                // Deduplicate batches first (same as Bulk COA unmatched logic)
+                // Deduplicate batches first (same as Bulk COA unmatched logic, year-filtered)
                 const uniqueBatchMap = new Map<string, any>();
-                allBatches.forEach(batch => {
+                yearFilteredBatches.forEach((batch: any) => {
                     if (batch.batchNumber && !uniqueBatchMap.has(batch.batchNumber)) {
                         // Apply section filter if needed
                         if (isFiltering) {
@@ -5143,7 +4454,7 @@ export default function FormulaDataPage() {
         } finally {
             setIsFinishCoaModalLoading(false);
         }
-    }, [allBatches, finishCoaQualifiedBatchNumbers]);
+    }, [yearFilteredBatches, finishCoaQualifiedBatchNumbers]);
 
     const closeFinishCoaModal = useCallback(() => {
         setShowFinishCoaModal(false);
@@ -5174,6 +4485,18 @@ export default function FormulaDataPage() {
         // Create a Set of product codes for efficient lookup
         const productCodeSet = new Set(productCodes.filter(pc => pc && pc !== 'N/A'));
 
+        // Helper to parse year from mfgDate (DD-MM-YY or DD-MM-YYYY format)
+        const getBatchYear = (mfgDate: string): string => {
+            const parts = (mfgDate || '').split('-');
+            if (parts.length === 3) {
+                const y = parseInt(parts[2], 10);
+                if (!isNaN(y)) return (y < 50 ? 2000 + y : 1900 + y).toString();
+            }
+            return '';
+        };
+        const matchesYearFilter = (mfgDate: string) =>
+            !selectedFilterYear || getBatchYear(mfgDate) === selectedFilterYear;
+
         try {
             if (type === 'matched') {
                 // Fetch RM materials and filter by batches with any of these product codes
@@ -5181,7 +4504,7 @@ export default function FormulaDataPage() {
                 const data = await response.json();
 
                 if (data.success && data.materials) {
-                    // Get batch data to map batchNumber -> itemCode
+                    // Get batch data to map batchNumber -> itemCode (year-filtered)
                     const batchResponse = await fetch('/api/batch?page=1&limit=10000');
                     const batchData = await batchResponse.json();
 
@@ -5189,7 +4512,7 @@ export default function FormulaDataPage() {
                     if (batchData.success && batchData.data) {
                         batchData.data.forEach((record: any) => {
                             record.batches?.forEach((batch: any) => {
-                                if (batch.batchNumber && batch.itemCode) {
+                                if (batch.batchNumber && batch.itemCode && matchesYearFilter(batch.mfgDate)) {
                                     batchToItemCode[batch.batchNumber] = batch.itemCode;
                                 }
                             });
@@ -5225,8 +4548,8 @@ export default function FormulaDataPage() {
                     const unmatchedBatches: any[] = [];
                     batchData.data.forEach((record: any) => {
                         record.batches?.forEach((batch: any) => {
-                            // Only include if this batch has one of the formula's product codes
-                            if (batch.itemCode && productCodeSet.has(batch.itemCode)) {
+                            // Only include if this batch has one of the formula's product codes and matches year filter
+                            if (batch.itemCode && productCodeSet.has(batch.itemCode) && matchesYearFilter(batch.mfgDate)) {
                                 if (!batchesWithRm.has(batch.batchNumber)) {
                                     unmatchedBatches.push({
                                         batchNumber: batch.batchNumber,
@@ -5254,7 +4577,7 @@ export default function FormulaDataPage() {
         } finally {
             setPerFormulaRmLoading(false);
         }
-    }, []);
+    }, [selectedFilterYear]);
 
     const closePerFormulaRmModal = useCallback(() => {
         setPerFormulaRmModalOpen(false);
@@ -5280,6 +4603,18 @@ export default function FormulaDataPage() {
 
         const productCodeSet = new Set(productCodes.filter(pc => pc && pc !== 'N/A'));
 
+        // Helper to parse year from mfgDate (DD-MM-YY or DD-MM-YYYY format)
+        const getBatchYear = (mfgDate: string): string => {
+            const parts = (mfgDate || '').split('-');
+            if (parts.length === 3) {
+                const y = parseInt(parts[2], 10);
+                if (!isNaN(y)) return (y < 50 ? 2000 + y : 1900 + y).toString();
+            }
+            return '';
+        };
+        const matchesYearFilter = (mfgDate: string) =>
+            !selectedFilterYear || getBatchYear(mfgDate) === selectedFilterYear;
+
         try {
             if (type === 'matched') {
                 // Fetch PPM materials and filter by batches with any of these product codes
@@ -5294,7 +4629,7 @@ export default function FormulaDataPage() {
                     if (batchData.success && batchData.data) {
                         batchData.data.forEach((record: any) => {
                             record.batches?.forEach((batch: any) => {
-                                if (batch.batchNumber && batch.itemCode) {
+                                if (batch.batchNumber && batch.itemCode && matchesYearFilter(batch.mfgDate)) {
                                     batchToItemCode[batch.batchNumber] = batch.itemCode;
                                 }
                             });
@@ -5329,7 +4664,7 @@ export default function FormulaDataPage() {
                     const unmatchedBatches: any[] = [];
                     batchData.data.forEach((record: any) => {
                         record.batches?.forEach((batch: any) => {
-                            if (batch.itemCode && productCodeSet.has(batch.itemCode)) {
+                            if (batch.itemCode && productCodeSet.has(batch.itemCode) && matchesYearFilter(batch.mfgDate)) {
                                 if (!batchesWithPpm.has(batch.batchNumber)) {
                                     unmatchedBatches.push({
                                         batchNumber: batch.batchNumber,
@@ -5357,7 +4692,7 @@ export default function FormulaDataPage() {
         } finally {
             setPerFormulaPpmLoading(false);
         }
-    }, []);
+    }, [selectedFilterYear]);
 
     const closePerFormulaPpmModal = useCallback(() => {
         setPerFormulaPpmModalOpen(false);
@@ -5383,6 +4718,18 @@ export default function FormulaDataPage() {
 
         const productCodeSet = new Set(productCodes.filter(pc => pc && pc !== 'N/A'));
 
+        // Helper to parse year from mfgDate (DD-MM-YY or DD-MM-YYYY format)
+        const getBatchYear = (mfgDate: string): string => {
+            const parts = (mfgDate || '').split('-');
+            if (parts.length === 3) {
+                const y = parseInt(parts[2], 10);
+                if (!isNaN(y)) return (y < 50 ? 2000 + y : 1900 + y).toString();
+            }
+            return '';
+        };
+        const matchesYearFilter = (mfgDate: string) =>
+            !selectedFilterYear || getBatchYear(mfgDate) === selectedFilterYear;
+
         try {
             if (type === 'matched') {
                 // Fetch PM materials and filter by batches with any of these product codes
@@ -5397,7 +4744,7 @@ export default function FormulaDataPage() {
                     if (batchData.success && batchData.data) {
                         batchData.data.forEach((record: any) => {
                             record.batches?.forEach((batch: any) => {
-                                if (batch.batchNumber && batch.itemCode) {
+                                if (batch.batchNumber && batch.itemCode && matchesYearFilter(batch.mfgDate)) {
                                     batchToItemCode[batch.batchNumber] = batch.itemCode;
                                 }
                             });
@@ -5432,7 +4779,7 @@ export default function FormulaDataPage() {
                     const unmatchedBatches: any[] = [];
                     batchData.data.forEach((record: any) => {
                         record.batches?.forEach((batch: any) => {
-                            if (batch.itemCode && productCodeSet.has(batch.itemCode)) {
+                            if (batch.itemCode && productCodeSet.has(batch.itemCode) && matchesYearFilter(batch.mfgDate)) {
                                 if (!batchesWithPm.has(batch.batchNumber)) {
                                     unmatchedBatches.push({
                                         batchNumber: batch.batchNumber,
@@ -5460,7 +4807,7 @@ export default function FormulaDataPage() {
         } finally {
             setPerFormulaPmLoading(false);
         }
-    }, []);
+    }, [selectedFilterYear]);
 
     const closePerFormulaPmModal = useCallback(() => {
         setPerFormulaPmModalOpen(false);
@@ -5602,173 +4949,73 @@ export default function FormulaDataPage() {
         return codes;
     }, []);
 
-    // Filter formulas
-    const filteredFormulas = useMemo(() => {
-        let result = formulas;
-
-        if (selectedManufacturer) {
-            result = result.filter(f =>
-                (f.masterFormulaDetails?.manufacturer || 'Other') === selectedManufacturer
-            );
+    // Compute display stats (header + reconciliation boxes) that respond to year filter
+    const displayStats = useMemo(() => {
+        if (!selectedFilterYear) {
+            return {
+                totalMfcs: formulas.length,
+                totalBatches: sectionBatchTotals.totalCounted,
+                uniqueBatches: 0, // will be overridden by uniqueBatchReconciliation when no filter
+                mainBatches: sectionBatchTotals.main,
+                lowBatchBatches: sectionBatchTotals.lowBatch,
+                noBatchBatches: sectionBatchTotals.noBatch,
+                placeboBatches: sectionBatchTotals.placebo,
+            };
         }
 
-        if (searchTerm) {
-            const term = searchTerm.toLowerCase();
-
-            result = result.filter(f =>
-                f.masterFormulaDetails.masterCardNo?.toLowerCase().includes(term) ||
-                f.masterFormulaDetails.productCode?.toLowerCase().includes(term) ||
-                f.masterFormulaDetails.productName?.toLowerCase().includes(term) ||
-                f.masterFormulaDetails.genericName?.toLowerCase().includes(term)
-            );
-        }
-
-        // Sort by MFC Number if enabled
-        if (mfcSortOrder !== 'none') {
-            result = [...result].sort((a, b) => {
-                const mfcA = a.masterFormulaDetails?.masterCardNo || '';
-                const mfcB = b.masterFormulaDetails?.masterCardNo || '';
-
-                // Natural sort for MFC numbers (handles alphanumeric like MFC/ZAIIUCF09)
-                const comparison = mfcA.localeCompare(mfcB, undefined, { numeric: true, sensitivity: 'base' });
-
-                return mfcSortOrder === 'asc' ? comparison : -comparison;
-            });
-        }
-
-        return result;
-    }, [formulas, selectedManufacturer, searchTerm, mfcSortOrder, astRstData]);
-
-    // Separate formulas into categories with DEDUPLICATION by product code
-    const { mainFormulas, lowBatchFormulas, noBatchFormulas, placeboFormulas, sectionBatchTotals } = useMemo(() => {
-        const placebo: FormulaRecord[] = [];
-        const lowBatch: FormulaRecord[] = [];
-        const noBatch: FormulaRecord[] = [];
-        const main: FormulaRecord[] = [];
-
-        filteredFormulas.forEach(f => {
-            const productName = f.masterFormulaDetails.productName?.toLowerCase() || '';
-            // Include both 'placebo' and 'mediafill' in placebo section
-            const isPlaceboOrMediafill = productName.includes('placebo') || productName.includes('mediafill') || productName.includes('media fill');
-            const batchCount = f.totalBatchCount || 0;
-
-            if (isPlaceboOrMediafill) {
-                placebo.push(f);
-            } else if (batchCount === 0) {
-                // New category: MFCs with NO batches at all
-                noBatch.push(f);
-            } else if (batchCount < 3) {
-                // Low batch: 1-2 batches
-                lowBatch.push(f);
-            } else {
-                main.push(f);
+        const getYear = (mfgDate: string | undefined): string => {
+            const parts = (mfgDate || '').split('-');
+            if (parts.length === 3) {
+                const y = parseInt(parts[2], 10);
+                if (!isNaN(y)) return (y < 50 ? 2000 + y : 1900 + y).toString();
             }
-        });
-
-        // Calculate total batches for each section - DEDUPLICATED by PRODUCT CODE
-        // The key insight: batches are matched by product code (itemCode)
-        // If the same product code appears in multiple formulas, we only count it ONCE
-
-        // Track which product codes we've already counted (globally across all sections)
-        const countedProductCodes = new Set<string>();
-
-        // Helper function to get all product codes from a formula
-        const getFormulaProductCodes = (f: FormulaRecord): string[] => {
-            const codes: string[] = [];
-
-            // Main product code
-            const mainCode = f.masterFormulaDetails?.productCode;
-            if (mainCode && mainCode !== 'N/A') codes.push(mainCode);
-
-            // Filling details product codes
-            if (f.fillingDetails && Array.isArray(f.fillingDetails)) {
-                f.fillingDetails.forEach((fd: FillingDetail) => {
-                    if (fd.productCode && fd.productCode !== 'N/A' && !codes.includes(fd.productCode)) {
-                        codes.push(fd.productCode);
-                    }
-                });
-            }
-
-            // Process filling products
-            if (f.processes && Array.isArray(f.processes)) {
-                f.processes.forEach((p: ProcessData) => {
-                    if (p.fillingProducts && Array.isArray(p.fillingProducts)) {
-                        p.fillingProducts.forEach((fp: AsepticFillingProduct) => {
-                            if (fp.productCode && !codes.includes(fp.productCode)) {
-                                codes.push(fp.productCode);
-                            }
-                        });
-                    }
-                });
-            }
-
-            return codes;
+            return '';
         };
 
-        let mainBatchTotal = 0;
-        let lowBatchTotal = 0;
-        let noBatchTotal = 0;
-        let placeboBatchTotal = 0;
+        const yearBatches = (allBatches as any[]).filter(b => getYear(b.mfgDate) === selectedFilterYear);
+        const totalBatches = yearBatches.length;
 
-        // Calculate for main formulas (3+ batches)
-        main.forEach(f => {
-            const productCodes = getFormulaProductCodes(f);
-            productCodes.forEach(code => {
-                if (!countedProductCodes.has(code)) {
-                    countedProductCodes.add(code);
-                    mainBatchTotal += batchCounts[code] || 0;
-                }
-            });
-        });
+        const uniqueBatchNums = new Set<string>();
+        yearBatches.forEach((b: any) => { if (b.batchNumber) uniqueBatchNums.add(b.batchNumber); });
 
-        // Calculate for low batch formulas (1-2 batches)
-        lowBatch.forEach(f => {
-            const productCodes = getFormulaProductCodes(f);
-            productCodes.forEach(code => {
-                if (!countedProductCodes.has(code)) {
-                    countedProductCodes.add(code);
-                    lowBatchTotal += batchCounts[code] || 0;
-                }
+        // itemCode → section mapping from filtered formulas
+        const itemCodeToSection = new Map<string, 'main' | 'lowBatch' | 'noBatch' | 'placebo'>();
+        const addCodes = (fList: FormulaRecord[], section: 'main' | 'lowBatch' | 'noBatch' | 'placebo') => {
+            fList.forEach(f => {
+                const codes: string[] = [];
+                if (f.masterFormulaDetails?.productCode) codes.push(f.masterFormulaDetails.productCode);
+                f.fillingDetails?.forEach((fd: FillingDetail) => { if (fd.productCode) codes.push(fd.productCode); });
+                f.processes?.forEach((p: ProcessData) => {
+                    p.fillingProducts?.forEach((fp: AsepticFillingProduct) => { if (fp.productCode) codes.push(fp.productCode); });
+                });
+                codes.forEach(c => { if (!itemCodeToSection.has(c)) itemCodeToSection.set(c, section); });
             });
-        });
+        };
+        addCodes(mainFormulas, 'main');
+        addCodes(lowBatchFormulas, 'lowBatch');
+        addCodes(noBatchFormulas, 'noBatch');
+        addCodes(placeboFormulas, 'placebo');
 
-        // No batch formulas always have 0
-        noBatch.forEach(f => {
-            const productCodes = getFormulaProductCodes(f);
-            productCodes.forEach(code => {
-                if (!countedProductCodes.has(code)) {
-                    countedProductCodes.add(code);
-                    noBatchTotal += batchCounts[code] || 0; // Should be 0
-                }
-            });
-        });
-
-        // Calculate for placebo formulas
-        placebo.forEach(f => {
-            const productCodes = getFormulaProductCodes(f);
-            productCodes.forEach(code => {
-                if (!countedProductCodes.has(code)) {
-                    countedProductCodes.add(code);
-                    placeboBatchTotal += batchCounts[code] || 0;
-                }
-            });
+        let mainBatches = 0, lowBatchBatches = 0, noBatchBatches = 0, placeboBatches = 0;
+        yearBatches.forEach((b: any) => {
+            const section = itemCodeToSection.get(b.itemCode);
+            if (section === 'main') mainBatches++;
+            else if (section === 'lowBatch') lowBatchBatches++;
+            else if (section === 'noBatch') noBatchBatches++;
+            else if (section === 'placebo') placeboBatches++;
         });
 
         return {
-            mainFormulas: main,
-            lowBatchFormulas: lowBatch,
-            noBatchFormulas: noBatch,
-            placeboFormulas: placebo,
-            sectionBatchTotals: {
-                main: mainBatchTotal,
-                lowBatch: lowBatchTotal,
-                noBatch: noBatchTotal,
-                placebo: placeboBatchTotal,
-                // Total should now match actual batch count
-                totalCounted: mainBatchTotal + lowBatchTotal + noBatchTotal + placeboBatchTotal
-            }
+            totalMfcs: filteredFormulas.length,
+            totalBatches,
+            uniqueBatches: uniqueBatchNums.size,
+            mainBatches,
+            lowBatchBatches,
+            noBatchBatches,
+            placeboBatches,
         };
-    }, [filteredFormulas, batchCounts]);
+    }, [selectedFilterYear, formulas, filteredFormulas, sectionBatchTotals,
+        mainFormulas, lowBatchFormulas, noBatchFormulas, placeboFormulas, allBatches]);
 
     // Calculate unique batch reconciliation - how unique batches are distributed across MFC categories
     const uniqueBatchReconciliation = useMemo(() => {
@@ -5776,9 +5023,21 @@ export default function FormulaDataPage() {
             return null;
         }
 
-        // Get unique batches by batch number
+        // Apply year filter to source batches
+        const sourceBatches = selectedFilterYear
+            ? (allBatches as any[]).filter(batch => {
+                const parts = (batch.mfgDate || '').split('-');
+                if (parts.length === 3) {
+                    const y = parseInt(parts[2], 10);
+                    if (!isNaN(y)) return (y < 50 ? 2000 + y : 1900 + y).toString() === selectedFilterYear;
+                }
+                return false;
+            })
+            : allBatches;
+
+        // Get unique batches by batch number (from year-filtered source)
         const uniqueBatchMap = new Map<string, BatchItem>();
-        allBatches.forEach(batch => {
+        (sourceBatches as any[]).forEach(batch => {
             if (batch.batchNumber && !uniqueBatchMap.has(batch.batchNumber)) {
                 uniqueBatchMap.set(batch.batchNumber, batch);
             }
@@ -5888,12 +5147,12 @@ export default function FormulaDataPage() {
             reconciledTotal: mainUniqueBatches + lowBatchUniqueBatches + noBatchUniqueBatches + placeboUniqueBatches,
             isReconciled: (mainUniqueBatches + lowBatchUniqueBatches + noBatchUniqueBatches + placeboUniqueBatches + unmatchedUniqueBatches) === totalUniqueBatches
         };
-    }, [allBatches, mainFormulas, lowBatchFormulas, noBatchFormulas, placeboFormulas]);
+    }, [allBatches, selectedFilterYear, mainFormulas, lowBatchFormulas, noBatchFormulas, placeboFormulas]);
 
     // Calculate per-section RM data based on UNIQUE batches per section
     // This matches the unique batch counts by checking which unique batches have RM data
     const sectionRmData = useMemo(() => {
-        if (!allBatches || allBatches.length === 0 || rmBatchNumbers.size === 0) {
+        if (!yearFilteredBatches || yearFilteredBatches.length === 0 || rmBatchNumbers.size === 0) {
             return {
                 main: { matched: 0, unmatched: 0 },
                 lowBatch: { matched: 0, unmatched: 0 },
@@ -5904,7 +5163,7 @@ export default function FormulaDataPage() {
 
         // Get unique batches by batch number
         const uniqueBatchMap = new Map<string, { batchNumber: string; itemCode?: string }>();
-        allBatches.forEach(batch => {
+        yearFilteredBatches.forEach(batch => {
             if (batch.batchNumber && !uniqueBatchMap.has(batch.batchNumber)) {
                 uniqueBatchMap.set(batch.batchNumber, { batchNumber: batch.batchNumber, itemCode: batch.itemCode });
             }
@@ -5982,12 +5241,12 @@ export default function FormulaDataPage() {
         });
 
         return counts;
-    }, [allBatches, rmBatchNumbers, mainFormulas, lowBatchFormulas, noBatchFormulas, placeboFormulas]);
+    }, [yearFilteredBatches, rmBatchNumbers, mainFormulas, lowBatchFormulas, noBatchFormulas, placeboFormulas]);
 
     // Calculate per-section PPM and PM data based on TOTAL batches (not unique)
     // PPM and PM should each reconcile to total batch count (e.g., 1796 for main section)
     const sectionPpmPmData = useMemo(() => {
-        if (!allBatches || allBatches.length === 0) {
+        if (!yearFilteredBatches || yearFilteredBatches.length === 0) {
             return {
                 main: { ppmMatched: 0, ppmUnmatched: 0, pmMatched: 0, pmUnmatched: 0 },
                 lowBatch: { ppmMatched: 0, ppmUnmatched: 0, pmMatched: 0, pmUnmatched: 0 },
@@ -6053,7 +5312,7 @@ export default function FormulaDataPage() {
         };
 
         // Iterate over ALL batches (total records) for PPM+PM to reconcile to total batch count
-        allBatches.forEach(batch => {
+        yearFilteredBatches.forEach(batch => {
             const itemCode = batch.itemCode;
             const category = (itemCode ? productCodeToCategory.get(itemCode) : undefined) || 'main';
 
@@ -6073,12 +5332,12 @@ export default function FormulaDataPage() {
         });
 
         return counts;
-    }, [allBatches, ppmBatchNumbers, pmBatchNumbers, mainFormulas, lowBatchFormulas, noBatchFormulas, placeboFormulas]);
+    }, [yearFilteredBatches, ppmBatchNumbers, pmBatchNumbers, mainFormulas, lowBatchFormulas, noBatchFormulas, placeboFormulas]);
 
     const sectionMaterialQualData = useMemo(() => {
         // Only return zeros if there are no batches to analyze
         // (Don't check materialQualifiedBatchNumbers.size - we want to show unqualified even if 0 qualified)
-        if (!allBatches || allBatches.length === 0) {
+        if (!yearFilteredBatches || yearFilteredBatches.length === 0) {
             return {
                 main: { qualified: 0, unqualified: 0 },
                 lowBatch: { qualified: 0, unqualified: 0 },
@@ -6089,7 +5348,7 @@ export default function FormulaDataPage() {
 
         // Get unique batches by batch number
         const uniqueBatchMap = new Map<string, { batchNumber: string; itemCode?: string }>();
-        allBatches.forEach(batch => {
+        yearFilteredBatches.forEach(batch => {
             if (batch.batchNumber && !uniqueBatchMap.has(batch.batchNumber)) {
                 uniqueBatchMap.set(batch.batchNumber, { batchNumber: batch.batchNumber, itemCode: batch.itemCode });
             }
@@ -6167,12 +5426,12 @@ export default function FormulaDataPage() {
         });
 
         return counts;
-    }, [allBatches, materialQualifiedBatchNumbers, mainFormulas, lowBatchFormulas, noBatchFormulas, placeboFormulas]);
+    }, [yearFilteredBatches, materialQualifiedBatchNumbers, mainFormulas, lowBatchFormulas, noBatchFormulas, placeboFormulas]);
 
     // Calculate per-section PM COA data based on UNIQUE batches per section
     // Matches the unique batch counts by checking which unique batches have PM COA data (inward qualified)
     const sectionPmCoaData = useMemo(() => {
-        if (!allBatches || allBatches.length === 0) {
+        if (!yearFilteredBatches || yearFilteredBatches.length === 0) {
             return {
                 main: { qualified: 0, unqualified: 0 },
                 lowBatch: { qualified: 0, unqualified: 0 },
@@ -6183,7 +5442,7 @@ export default function FormulaDataPage() {
 
         // Get unique batches by batch number
         const uniqueBatchMap = new Map<string, { batchNumber: string; itemCode?: string }>();
-        allBatches.forEach(batch => {
+        yearFilteredBatches.forEach(batch => {
             if (batch.batchNumber && !uniqueBatchMap.has(batch.batchNumber)) {
                 uniqueBatchMap.set(batch.batchNumber, { batchNumber: batch.batchNumber, itemCode: batch.itemCode });
             }
@@ -6265,12 +5524,12 @@ export default function FormulaDataPage() {
         });
 
         return counts;
-    }, [allBatches, pmCoaInwardQualifiedBatchNumbers, pmBatchNumbers, mainFormulas, lowBatchFormulas, noBatchFormulas, placeboFormulas]);
+    }, [yearFilteredBatches, pmCoaInwardQualifiedBatchNumbers, pmBatchNumbers, mainFormulas, lowBatchFormulas, noBatchFormulas, placeboFormulas]);
 
     // Calculate per-section PPM COA data based on UNIQUE batches per section
     // Matches the unique batch counts by checking which unique batches have PPM COA data (inward qualified)
     const sectionPpmCoaData = useMemo(() => {
-        if (!allBatches || allBatches.length === 0) {
+        if (!yearFilteredBatches || yearFilteredBatches.length === 0) {
             return {
                 main: { qualified: 0, unqualified: 0 },
                 lowBatch: { qualified: 0, unqualified: 0 },
@@ -6281,7 +5540,7 @@ export default function FormulaDataPage() {
 
         // Get unique batches by batch number
         const uniqueBatchMap = new Map<string, { batchNumber: string; itemCode?: string }>();
-        allBatches.forEach(batch => {
+        yearFilteredBatches.forEach(batch => {
             if (batch.batchNumber && !uniqueBatchMap.has(batch.batchNumber)) {
                 uniqueBatchMap.set(batch.batchNumber, { batchNumber: batch.batchNumber, itemCode: batch.itemCode });
             }
@@ -6361,12 +5620,12 @@ export default function FormulaDataPage() {
         });
 
         return counts;
-    }, [allBatches, ppmCoaInwardQualifiedBatchNumbers, ppmBatchNumbers, mainFormulas, lowBatchFormulas, noBatchFormulas, placeboFormulas]);
+    }, [yearFilteredBatches, ppmCoaInwardQualifiedBatchNumbers, ppmBatchNumbers, mainFormulas, lowBatchFormulas, noBatchFormulas, placeboFormulas]);
 
     // Calculate per-section Bulk COA data based on UNIQUE batches per section
     // This matches the unique batch counts by checking which unique batches have Bulk COA data
     const sectionBulkCoaData = useMemo(() => {
-        if (!allBatches || allBatches.length === 0) {
+        if (!yearFilteredBatches || yearFilteredBatches.length === 0) {
             return {
                 main: { qualified: 0, unqualified: 0 },
                 lowBatch: { qualified: 0, unqualified: 0 },
@@ -6377,7 +5636,7 @@ export default function FormulaDataPage() {
 
         // Get unique batches by batch number
         const uniqueBatchMap = new Map<string, { batchNumber: string; itemCode?: string }>();
-        allBatches.forEach(batch => {
+        yearFilteredBatches.forEach(batch => {
             if (batch.batchNumber && !uniqueBatchMap.has(batch.batchNumber)) {
                 uniqueBatchMap.set(batch.batchNumber, { batchNumber: batch.batchNumber, itemCode: batch.itemCode });
             }
@@ -6455,12 +5714,12 @@ export default function FormulaDataPage() {
         });
 
         return counts;
-    }, [allBatches, bulkCoaQualifiedBatchNumbers, mainFormulas, lowBatchFormulas, noBatchFormulas, placeboFormulas]);
+    }, [yearFilteredBatches, bulkCoaQualifiedBatchNumbers, mainFormulas, lowBatchFormulas, noBatchFormulas, placeboFormulas]);
 
     // Calculate per-section Finish COA data based on UNIQUE batches per section
     // This matches the unique batch counts by checking which unique batches have Finish COA data
     const sectionFinishCoaData = useMemo(() => {
-        if (!allBatches || allBatches.length === 0) {
+        if (!yearFilteredBatches || yearFilteredBatches.length === 0) {
             return {
                 main: { qualified: 0, unqualified: 0 },
                 lowBatch: { qualified: 0, unqualified: 0 },
@@ -6471,7 +5730,7 @@ export default function FormulaDataPage() {
 
         // Get unique batches by batch number
         const uniqueBatchMap = new Map<string, { batchNumber: string; itemCode?: string }>();
-        allBatches.forEach(batch => {
+        yearFilteredBatches.forEach(batch => {
             if (batch.batchNumber && !uniqueBatchMap.has(batch.batchNumber)) {
                 uniqueBatchMap.set(batch.batchNumber, { batchNumber: batch.batchNumber, itemCode: batch.itemCode });
             }
@@ -6551,7 +5810,93 @@ export default function FormulaDataPage() {
         });
 
         return counts;
-    }, [allBatches, finishCoaQualifiedBatchNumbers, mainFormulas, lowBatchFormulas, noBatchFormulas, placeboFormulas]);
+    }, [yearFilteredBatches, finishCoaQualifiedBatchNumbers, mainFormulas, lowBatchFormulas, noBatchFormulas, placeboFormulas]);
+
+    // Per-formula year-filtered stats for the MFC row badges (Total, Unique, RM, PPM, PM, BulkCOA, FinishCOA)
+    const perFormulaYearFilteredStats = useMemo(() => {
+        if (!selectedFilterYear || !yearFilteredBatches || yearFilteredBatches.length === 0) return null;
+
+        const getProductCodes = (f: FormulaRecord): string[] => {
+            const codes: string[] = [];
+            const mainCode = f.masterFormulaDetails?.productCode;
+            if (mainCode && mainCode !== 'N/A') codes.push(mainCode);
+            if (f.fillingDetails && Array.isArray(f.fillingDetails)) {
+                f.fillingDetails.forEach((fd: FillingDetail) => {
+                    if (fd.productCode && fd.productCode !== 'N/A' && !codes.includes(fd.productCode)) codes.push(fd.productCode);
+                });
+            }
+            if (f.processes && Array.isArray(f.processes)) {
+                f.processes.forEach((p: ProcessData) => {
+                    if (p.fillingProducts && Array.isArray(p.fillingProducts)) {
+                        p.fillingProducts.forEach((fp: AsepticFillingProduct) => {
+                            if (fp.productCode && !codes.includes(fp.productCode)) codes.push(fp.productCode);
+                        });
+                    }
+                });
+            }
+            return codes;
+        };
+
+        const statsMap = new Map<string, {
+            totalBatchCount: number;
+            uniqueBatchCount: number;
+            rmMatched: number; rmUnmatched: number;
+            ppmMatched: number; ppmUnmatched: number;
+            pmMatched: number; pmUnmatched: number;
+            bulkCoaQualified: number; bulkCoaUnqualified: number;
+            finishCoaQualified: number; finishCoaUnqualified: number;
+        }>();
+
+        filteredFormulas.forEach(f => {
+            const mfcKey = (f.masterFormulaDetails?.masterCardNo || '').trim().toUpperCase();
+            if (!mfcKey) return;
+
+            const productCodes = getProductCodes(f);
+            let totalBatchCount = 0;
+            const uniqueBatchNums = new Set<string>();
+
+            yearFilteredBatches.forEach((batch: any) => {
+                if (batch.itemCode && productCodes.includes(batch.itemCode)) {
+                    totalBatchCount++;
+                    if (batch.batchNumber) uniqueBatchNums.add(batch.batchNumber);
+                }
+            });
+
+            // RM: unique batches with/without RM requisition data
+            let rmMatched = 0, rmUnmatched = 0;
+            uniqueBatchNums.forEach(bn => {
+                if (rmBatchNumbers.has(bn)) rmMatched++; else rmUnmatched++;
+            });
+
+            // PPM and PM: total batch records with/without data
+            let ppmMatched = 0, ppmUnmatched = 0, pmMatched = 0, pmUnmatched = 0;
+            yearFilteredBatches.forEach((batch: any) => {
+                if (batch.itemCode && productCodes.includes(batch.itemCode)) {
+                    if (batch.batchNumber && ppmBatchNumbers.has(batch.batchNumber)) ppmMatched++; else ppmUnmatched++;
+                    if (batch.batchNumber && pmBatchNumbers.has(batch.batchNumber)) pmMatched++; else pmUnmatched++;
+                }
+            });
+
+            // Bulk COA and Finish COA: unique batches with/without COA
+            let bulkCoaQualified = 0, bulkCoaUnqualified = 0;
+            let finishCoaQualified = 0, finishCoaUnqualified = 0;
+            uniqueBatchNums.forEach(bn => {
+                if (bulkCoaQualifiedBatchNumbers.has(bn)) bulkCoaQualified++; else bulkCoaUnqualified++;
+                if (finishCoaQualifiedBatchNumbers.has(bn)) finishCoaQualified++; else finishCoaUnqualified++;
+            });
+
+            statsMap.set(mfcKey, {
+                totalBatchCount, uniqueBatchCount: uniqueBatchNums.size,
+                rmMatched, rmUnmatched,
+                ppmMatched, ppmUnmatched,
+                pmMatched, pmUnmatched,
+                bulkCoaQualified, bulkCoaUnqualified,
+                finishCoaQualified, finishCoaUnqualified,
+            });
+        });
+
+        return statsMap;
+    }, [selectedFilterYear, filteredFormulas, yearFilteredBatches, rmBatchNumbers, ppmBatchNumbers, pmBatchNumbers, bulkCoaQualifiedBatchNumbers, finishCoaQualifiedBatchNumbers]);
 
     const toggleMfc = (mfcId: string) => {
         setExpandedMfc(expandedMfc === mfcId ? null : mfcId);
@@ -6581,18 +5926,6 @@ export default function FormulaDataPage() {
         onPpmUnmatchedClick,
         onPmMatchedClick,
         onPmUnmatchedClick,
-        materialQualified,
-        materialUnqualified,
-        onMaterialQualifiedClick,
-        onMaterialUnqualifiedClick,
-        pmCoaQualified,
-        pmCoaUnqualified,
-        onPmCoaQualifiedClick,
-        onPmCoaUnqualifiedClick,
-        ppmCoaQualified,
-        ppmCoaUnqualified,
-        onPpmCoaQualifiedClick,
-        onPpmCoaUnqualifiedClick,
         bulkCoaQualified,
         bulkCoaUnqualified,
         onBulkCoaQualifiedClick,
@@ -6601,18 +5934,6 @@ export default function FormulaDataPage() {
         finishCoaUnqualified,
         onFinishCoaQualifiedClick,
         onFinishCoaUnqualifiedClick,
-        rmCoaUniqueArFound,
-        rmCoaUniqueArMissing,
-        onRmCoaFoundClick,
-        onRmCoaMissingClick,
-        pmCoaUniqueArFound,
-        pmCoaUniqueArMissing,
-        onPmCoaFoundClick,
-        onPmCoaMissingClick,
-        ppmCoaUniqueArFound,
-        ppmCoaUniqueArMissing,
-        onPpmCoaFoundClick,
-        onPpmCoaMissingClick
     }: {
         title: string;
         count: number;
@@ -6636,18 +5957,6 @@ export default function FormulaDataPage() {
         onPpmUnmatchedClick?: () => void;
         onPmMatchedClick?: () => void;
         onPmUnmatchedClick?: () => void;
-        materialQualified?: number;
-        materialUnqualified?: number;
-        onMaterialQualifiedClick?: () => void;
-        onMaterialUnqualifiedClick?: () => void;
-        pmCoaQualified?: number;
-        pmCoaUnqualified?: number;
-        onPmCoaQualifiedClick?: () => void;
-        onPmCoaUnqualifiedClick?: () => void;
-        ppmCoaQualified?: number;
-        ppmCoaUnqualified?: number;
-        onPpmCoaQualifiedClick?: () => void;
-        onPpmCoaUnqualifiedClick?: () => void;
         bulkCoaQualified?: number;
         bulkCoaUnqualified?: number;
         onBulkCoaQualifiedClick?: () => void;
@@ -6656,18 +5965,6 @@ export default function FormulaDataPage() {
         finishCoaUnqualified?: number;
         onFinishCoaQualifiedClick?: () => void;
         onFinishCoaUnqualifiedClick?: () => void;
-        rmCoaUniqueArFound?: number;
-        rmCoaUniqueArMissing?: number;
-        onRmCoaFoundClick?: () => void;
-        onRmCoaMissingClick?: () => void;
-        pmCoaUniqueArFound?: number;
-        pmCoaUniqueArMissing?: number;
-        onPmCoaFoundClick?: () => void;
-        onPmCoaMissingClick?: () => void;
-        ppmCoaUniqueArFound?: number;
-        ppmCoaUniqueArMissing?: number;
-        onPpmCoaFoundClick?: () => void;
-        onPpmCoaMissingClick?: () => void;
     }) => {
         // Convert dark badge colors to light background colors
         const getLightColors = (darkColor: string) => {
@@ -6842,273 +6139,6 @@ export default function FormulaDataPage() {
                                     size="medium"
                                     type="PM"
                                 />
-                            </div>
-                        )}
-                        {/* Material Qualification Status Capsule */}
-                        {(materialQualified !== undefined || materialUnqualified !== undefined) && (materialQualified! + materialUnqualified!) > 0 && (
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'flex-start', width: 'auto', flexShrink: 0 }}>
-                                <BatchStatusCapsule
-                                    matched={materialQualified || 0}
-                                    unmatched={materialUnqualified || 0}
-                                    onGreenClick={onMaterialQualifiedClick}
-                                    onRedClick={onMaterialUnqualifiedClick}
-                                    size="medium"
-                                    type="RM COA"
-                                />
-                                {/* Unique AR Numbers Capsule for RM COA */}
-                                {((rmCoaUniqueArFound ?? 0) > 0 || (rmCoaUniqueArMissing ?? 0) > 0) && (
-                                    <div
-                                        style={{
-                                            display: 'inline-flex',
-                                            alignItems: 'stretch',
-                                            height: '20px',
-                                            borderRadius: '20px',
-                                            overflow: 'hidden',
-                                            boxShadow: '0 2px 6px rgba(0,0,0,0.15), inset 0 1px 0 rgba(255,255,255,0.2)',
-                                            border: '1px solid rgba(255,255,255,0.3)',
-                                            minWidth: '70px',
-                                            marginLeft: '72px',
-                                        }}
-                                        title={`Unique AR Numbers: ${rmCoaUniqueArFound ?? 0} found, ${rmCoaUniqueArMissing ?? 0} missing`}
-                                    >
-                                        {/* Green Section - Found */}
-                                        {(rmCoaUniqueArFound ?? 0) > 0 && (
-                                            <button
-                                                onClick={(e) => { e.stopPropagation(); onRmCoaFoundClick?.(); }}
-                                                style={{
-                                                    flex: rmCoaUniqueArFound ?? 0,
-                                                    minWidth: '35px',
-                                                    display: 'flex',
-                                                    alignItems: 'center',
-                                                    justifyContent: 'center',
-                                                    gap: '2px',
-                                                    padding: '2px 8px',
-                                                    background: 'linear-gradient(135deg, #059669 0%, #10b981 100%)',
-                                                    border: 'none',
-                                                    cursor: onRmCoaFoundClick ? 'pointer' : 'default',
-                                                    color: 'white',
-                                                    fontSize: '10px',
-                                                    fontWeight: 700,
-                                                    transition: 'all 0.2s ease',
-                                                    whiteSpace: 'nowrap',
-                                                }}
-                                                onMouseEnter={(e) => { if (onRmCoaFoundClick) e.currentTarget.style.filter = 'brightness(1.1)'; }}
-                                                onMouseLeave={(e) => { e.currentTarget.style.filter = 'brightness(1)'; }}
-                                                title={`${rmCoaUniqueArFound ?? 0} unique AR numbers found - Click to view`}
-                                            >
-                                                <span style={{ fontSize: '0.85em' }}>✓</span>
-                                                {rmCoaUniqueArFound ?? 0}
-                                            </button>
-                                        )}
-                                        {/* Red Section - Missing */}
-                                        {(rmCoaUniqueArMissing ?? 0) > 0 && (
-                                            <button
-                                                onClick={(e) => { e.stopPropagation(); onRmCoaMissingClick?.(); }}
-                                                style={{
-                                                    flex: rmCoaUniqueArMissing ?? 0,
-                                                    minWidth: '35px',
-                                                    display: 'flex',
-                                                    alignItems: 'center',
-                                                    justifyContent: 'center',
-                                                    gap: '2px',
-                                                    padding: '2px 8px',
-                                                    background: 'linear-gradient(135deg, #dc2626 0%, #ef4444 100%)',
-                                                    border: 'none',
-                                                    cursor: onRmCoaMissingClick ? 'pointer' : 'default',
-                                                    color: 'white',
-                                                    fontSize: '10px',
-                                                    fontWeight: 700,
-                                                    transition: 'all 0.2s ease',
-                                                    whiteSpace: 'nowrap',
-                                                }}
-                                                onMouseEnter={(e) => { if (onRmCoaMissingClick) e.currentTarget.style.filter = 'brightness(1.1)'; }}
-                                                onMouseLeave={(e) => { e.currentTarget.style.filter = 'brightness(1)'; }}
-                                                title={`${rmCoaUniqueArMissing ?? 0} unique AR numbers missing - Click to view`}
-                                            >
-                                                <span style={{ fontSize: '0.85em' }}>✗</span>
-                                                {rmCoaUniqueArMissing ?? 0}
-                                            </button>
-                                        )}
-                                    </div>
-                                )}
-                            </div>
-                        )}
-                        {/* PM COA Status Capsule */}
-                        {(pmCoaQualified !== undefined || pmCoaUnqualified !== undefined) && (pmCoaQualified! + pmCoaUnqualified!) > 0 && (
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'flex-start', width: 'auto', flexShrink: 0 }}>
-                                <BatchStatusCapsule
-                                    matched={pmCoaQualified || 0}
-                                    unmatched={pmCoaUnqualified || 0}
-                                    onGreenClick={onPmCoaQualifiedClick}
-                                    onRedClick={onPmCoaUnqualifiedClick}
-                                    size="medium"
-                                    type="PM COA"
-                                />
-                                {/* Unique AR Numbers Capsule for PM COA */}
-                                {((pmCoaUniqueArFound ?? 0) > 0 || (pmCoaUniqueArMissing ?? 0) > 0) && (
-                                    <div
-                                        style={{
-                                            display: 'inline-flex',
-                                            alignItems: 'stretch',
-                                            height: '20px',
-                                            borderRadius: '20px',
-                                            overflow: 'hidden',
-                                            boxShadow: '0 2px 6px rgba(0,0,0,0.15), inset 0 1px 0 rgba(255,255,255,0.2)',
-                                            border: '1px solid rgba(255,255,255,0.3)',
-                                            minWidth: '70px',
-                                            marginLeft: '72px',
-                                        }}
-                                        title={`Unique AR Numbers: ${pmCoaUniqueArFound ?? 0} found, ${pmCoaUniqueArMissing ?? 0} missing`}
-                                    >
-                                        {/* Green Section - Found */}
-                                        {(pmCoaUniqueArFound ?? 0) > 0 && (
-                                            <button
-                                                onClick={(e) => { e.stopPropagation(); onPmCoaFoundClick?.(); }}
-                                                style={{
-                                                    flex: pmCoaUniqueArFound ?? 0,
-                                                    minWidth: '35px',
-                                                    display: 'flex',
-                                                    alignItems: 'center',
-                                                    justifyContent: 'center',
-                                                    gap: '2px',
-                                                    padding: '2px 8px',
-                                                    background: 'linear-gradient(135deg, #059669 0%, #10b981 100%)',
-                                                    border: 'none',
-                                                    cursor: onPmCoaFoundClick ? 'pointer' : 'default',
-                                                    color: 'white',
-                                                    fontSize: '10px',
-                                                    fontWeight: 700,
-                                                    transition: 'all 0.2s ease',
-                                                    whiteSpace: 'nowrap',
-                                                }}
-                                                onMouseEnter={(e) => { if (onPmCoaFoundClick) e.currentTarget.style.filter = 'brightness(1.1)'; }}
-                                                onMouseLeave={(e) => { e.currentTarget.style.filter = 'brightness(1)'; }}
-                                                title={`${pmCoaUniqueArFound ?? 0} unique AR numbers found - Click to view`}
-                                            >
-                                                <span style={{ fontSize: '0.85em' }}>✓</span>
-                                                {pmCoaUniqueArFound ?? 0}
-                                            </button>
-                                        )}
-                                        {/* Red Section - Missing */}
-                                        {(pmCoaUniqueArMissing ?? 0) > 0 && (
-                                            <button
-                                                onClick={(e) => { e.stopPropagation(); onPmCoaMissingClick?.(); }}
-                                                style={{
-                                                    flex: pmCoaUniqueArMissing ?? 0,
-                                                    minWidth: '35px',
-                                                    display: 'flex',
-                                                    alignItems: 'center',
-                                                    justifyContent: 'center',
-                                                    gap: '2px',
-                                                    padding: '2px 8px',
-                                                    background: 'linear-gradient(135deg, #dc2626 0%, #ef4444 100%)',
-                                                    border: 'none',
-                                                    cursor: onPmCoaMissingClick ? 'pointer' : 'default',
-                                                    color: 'white',
-                                                    fontSize: '10px',
-                                                    fontWeight: 700,
-                                                    transition: 'all 0.2s ease',
-                                                    whiteSpace: 'nowrap',
-                                                }}
-                                                onMouseEnter={(e) => { if (onPmCoaMissingClick) e.currentTarget.style.filter = 'brightness(1.1)'; }}
-                                                onMouseLeave={(e) => { e.currentTarget.style.filter = 'brightness(1)'; }}
-                                                title={`${pmCoaUniqueArMissing ?? 0} unique AR numbers missing - Click to view`}
-                                            >
-                                                <span style={{ fontSize: '0.85em' }}>✗</span>
-                                                {pmCoaUniqueArMissing ?? 0}
-                                            </button>
-                                        )}
-                                    </div>
-                                )}
-                            </div>
-                        )}
-                        {/* PPM COA Status Capsule */}
-                        {(ppmCoaQualified !== undefined || ppmCoaUnqualified !== undefined) && (ppmCoaQualified! + ppmCoaUnqualified!) > 0 && (
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'flex-start', width: 'auto', flexShrink: 0 }}>
-                                <BatchStatusCapsule
-                                    matched={ppmCoaQualified || 0}
-                                    unmatched={ppmCoaUnqualified || 0}
-                                    onGreenClick={onPpmCoaQualifiedClick}
-                                    onRedClick={onPpmCoaUnqualifiedClick}
-                                    size="medium"
-                                    type="PPM COA"
-                                />
-                                {/* Unique AR Numbers Capsule for PPM COA */}
-                                {((ppmCoaUniqueArFound ?? 0) > 0 || (ppmCoaUniqueArMissing ?? 0) > 0) && (
-                                    <div
-                                        style={{
-                                            display: 'inline-flex',
-                                            alignItems: 'stretch',
-                                            height: '20px',
-                                            borderRadius: '20px',
-                                            overflow: 'hidden',
-                                            boxShadow: '0 2px 6px rgba(0,0,0,0.15), inset 0 1px 0 rgba(255,255,255,0.2)',
-                                            border: '1px solid rgba(255,255,255,0.3)',
-                                            minWidth: '70px',
-                                            marginLeft: '72px',
-                                        }}
-                                        title={`Unique AR Numbers: ${ppmCoaUniqueArFound ?? 0} found, ${ppmCoaUniqueArMissing ?? 0} missing`}
-                                    >
-                                        {/* Green Section - Found */}
-                                        {(ppmCoaUniqueArFound ?? 0) > 0 && (
-                                            <button
-                                                onClick={(e) => { e.stopPropagation(); onPpmCoaFoundClick?.(); }}
-                                                style={{
-                                                    flex: ppmCoaUniqueArFound ?? 0,
-                                                    minWidth: '35px',
-                                                    display: 'flex',
-                                                    alignItems: 'center',
-                                                    justifyContent: 'center',
-                                                    gap: '2px',
-                                                    padding: '2px 8px',
-                                                    background: 'linear-gradient(135deg, #059669 0%, #10b981 100%)',
-                                                    border: 'none',
-                                                    cursor: onPpmCoaFoundClick ? 'pointer' : 'default',
-                                                    color: 'white',
-                                                    fontSize: '10px',
-                                                    fontWeight: 700,
-                                                    transition: 'all 0.2s ease',
-                                                    whiteSpace: 'nowrap',
-                                                }}
-                                                onMouseEnter={(e) => { if (onPpmCoaFoundClick) e.currentTarget.style.filter = 'brightness(1.1)'; }}
-                                                onMouseLeave={(e) => { e.currentTarget.style.filter = 'brightness(1)'; }}
-                                                title={`${ppmCoaUniqueArFound ?? 0} unique AR numbers found - Click to view`}
-                                            >
-                                                <span style={{ fontSize: '0.85em' }}>✓</span>
-                                                {ppmCoaUniqueArFound ?? 0}
-                                            </button>
-                                        )}
-                                        {/* Red Section - Missing */}
-                                        {(ppmCoaUniqueArMissing ?? 0) > 0 && (
-                                            <button
-                                                onClick={(e) => { e.stopPropagation(); onPpmCoaMissingClick?.(); }}
-                                                style={{
-                                                    flex: ppmCoaUniqueArMissing ?? 0,
-                                                    minWidth: '35px',
-                                                    display: 'flex',
-                                                    alignItems: 'center',
-                                                    justifyContent: 'center',
-                                                    gap: '2px',
-                                                    padding: '2px 8px',
-                                                    background: 'linear-gradient(135deg, #dc2626 0%, #ef4444 100%)',
-                                                    border: 'none',
-                                                    cursor: onPpmCoaMissingClick ? 'pointer' : 'default',
-                                                    color: 'white',
-                                                    fontSize: '10px',
-                                                    fontWeight: 700,
-                                                    transition: 'all 0.2s ease',
-                                                    whiteSpace: 'nowrap',
-                                                }}
-                                                onMouseEnter={(e) => { if (onPpmCoaMissingClick) e.currentTarget.style.filter = 'brightness(1.1)'; }}
-                                                onMouseLeave={(e) => { e.currentTarget.style.filter = 'brightness(1)'; }}
-                                                title={`${ppmCoaUniqueArMissing ?? 0} unique AR numbers missing - Click to view`}
-                                            >
-                                                <span style={{ fontSize: '0.85em' }}>✗</span>
-                                                {ppmCoaUniqueArMissing ?? 0}
-                                            </button>
-                                        )}
-                                    </div>
-                                )}
                             </div>
                         )}
                     </div>
@@ -10364,45 +9394,74 @@ export default function FormulaDataPage() {
                         </p>
                     </div>
 
+                    {/* Year Filter in Header */}
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
+                        <select
+                            value={selectedFilterYear ?? ''}
+                            onChange={(e) => setSelectedFilterYear(e.target.value || null)}
+                            style={{
+                                padding: '0.6rem 0.9rem',
+                                borderRadius: '12px',
+                                border: selectedFilterYear ? '2px solid rgba(255,255,255,0.9)' : '1px solid rgba(255,255,255,0.35)',
+                                background: selectedFilterYear ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.15)',
+                                color: 'white',
+                                fontSize: '0.82rem',
+                                fontWeight: '700',
+                                cursor: 'pointer',
+                                backdropFilter: 'blur(12px)',
+                                boxShadow: selectedFilterYear ? '0 2px 12px rgba(255,255,255,0.2)' : '0 2px 8px rgba(0,0,0,0.1)',
+                                transition: 'all 0.2s ease',
+                                minWidth: '120px',
+                                appearance: 'none',
+                                WebkitAppearance: 'none',
+                                textAlign: 'center',
+                            }}
+                            title="Filter all data by manufacturing year"
+                        >
+                            <option value="" style={{ background: '#4c1d95', color: 'white' }}>All Years</option>
+                            {availableYears.map(year => (
+                                <option key={year} value={year} style={{ background: '#4c1d95', color: 'white' }}>{year}</option>
+                            ))}
+                        </select>
+                        <div style={{ fontSize: '0.6rem', color: 'rgba(255,255,255,0.7)', textAlign: 'center', fontWeight: '600' }}>
+                            {selectedFilterYear ? `Mfg Year: ${selectedFilterYear}` : 'Filter by Year'}
+                        </div>
+                    </div>
+
                     {/* Quick Stats in Header */}
-                    <div style={{
-                        display: 'flex',
-                        gap: '12px',
-                    }}>
+                    <div style={{ display: 'flex', gap: '12px' }}>
                         <div style={{
                             padding: '0.85rem 1.5rem',
                             background: 'linear-gradient(135deg, rgba(255,255,255,0.2) 0%, rgba(255,255,255,0.1) 100%)',
                             borderRadius: '14px',
                             backdropFilter: 'blur(12px)',
                             WebkitBackdropFilter: 'blur(12px)',
-                            border: '1px solid rgba(255,255,255,0.25)',
+                            border: selectedFilterYear ? '2px solid rgba(255,255,255,0.6)' : '1px solid rgba(255,255,255,0.25)',
                             boxShadow: '0 4px 16px rgba(0,0,0,0.1), inset 0 1px 0 rgba(255,255,255,0.3)',
                         }}>
                             <div style={{ fontSize: '1.35rem', fontWeight: '800', color: 'white', textShadow: '0 1px 2px rgba(0,0,0,0.1)' }}>
-                                {formulas.length}
+                                {displayStats.totalMfcs}
                             </div>
                             <div style={{ fontSize: '0.7rem', color: 'rgba(255,255,255,0.85)', fontWeight: '600' }}>
                                 Total MFCs
                             </div>
                         </div>
-                        {batchReconciliation && (
-                            <div style={{
-                                padding: '0.85rem 1.5rem',
-                                background: 'linear-gradient(135deg, rgba(16, 185, 129, 0.35) 0%, rgba(20, 184, 166, 0.25) 100%)',
-                                borderRadius: '14px',
-                                backdropFilter: 'blur(12px)',
-                                WebkitBackdropFilter: 'blur(12px)',
-                                border: '1px solid rgba(16, 185, 129, 0.4)',
-                                boxShadow: '0 4px 16px rgba(16, 185, 129, 0.2), inset 0 1px 0 rgba(255,255,255,0.2)',
-                            }}>
-                                <div style={{ fontSize: '1.35rem', fontWeight: '800', color: 'white', textShadow: '0 1px 2px rgba(0,0,0,0.1)' }}>
-                                    {batchReconciliation.totalBatchesInSystem.toLocaleString()}
-                                </div>
-                                <div style={{ fontSize: '0.7rem', color: 'rgba(255,255,255,0.95)', fontWeight: '600' }}>
-                                    Total Batches
-                                </div>
+                        <div style={{
+                            padding: '0.85rem 1.5rem',
+                            background: 'linear-gradient(135deg, rgba(16, 185, 129, 0.35) 0%, rgba(20, 184, 166, 0.25) 100%)',
+                            borderRadius: '14px',
+                            backdropFilter: 'blur(12px)',
+                            WebkitBackdropFilter: 'blur(12px)',
+                            border: selectedFilterYear ? '2px solid rgba(16, 185, 129, 0.8)' : '1px solid rgba(16, 185, 129, 0.4)',
+                            boxShadow: '0 4px 16px rgba(16, 185, 129, 0.2), inset 0 1px 0 rgba(255,255,255,0.2)',
+                        }}>
+                            <div style={{ fontSize: '1.35rem', fontWeight: '800', color: 'white', textShadow: '0 1px 2px rgba(0,0,0,0.1)' }}>
+                                {selectedFilterYear ? displayStats.totalBatches.toLocaleString() : (batchReconciliation?.totalBatchesInSystem ?? displayStats.totalBatches).toLocaleString()}
                             </div>
-                        )}
+                            <div style={{ fontSize: '0.7rem', color: 'rgba(255,255,255,0.95)', fontWeight: '600' }}>
+                                Total Batches
+                            </div>
+                        </div>
                     </div>
 
                     {/* Reload AST & RST Button */}
@@ -10594,7 +9653,7 @@ export default function FormulaDataPage() {
                                                 onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
                                                 title="Click to view all batches"
                                             >
-                                                📋 {batchReconciliation.totalBatchesInSystem.toLocaleString()} Total Batches
+                                                📋 {(selectedFilterYear ? displayStats.totalBatches : batchReconciliation.totalBatchesInSystem).toLocaleString()} Total Batches
                                             </button>
                                         )}
 
@@ -10622,7 +9681,7 @@ export default function FormulaDataPage() {
                                                 onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
                                                 title="Click to view unique batches"
                                             >
-                                                📦 {(batchReconciliation.totalBatchesInSystem - batchReconciliation.batchesNotMatchedToFormula).toLocaleString()} Unique Batches
+                                                📦 {(selectedFilterYear ? displayStats.uniqueBatches : batchReconciliation.totalBatchesInSystem - batchReconciliation.batchesNotMatchedToFormula).toLocaleString()} Unique Batches
                                             </button>
                                         )}
                                     </div>
@@ -10676,7 +9735,7 @@ export default function FormulaDataPage() {
                                     onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
                                 >
                                     <div style={{ fontSize: '22px', fontWeight: 800 }}>
-                                        {batchReconciliation?.totalBatchesInSystem?.toLocaleString() || sectionBatchTotals.totalCounted.toLocaleString()}
+                                        {(selectedFilterYear ? displayStats.totalBatches : (batchReconciliation?.totalBatchesInSystem ?? sectionBatchTotals.totalCounted)).toLocaleString()}
                                     </div>
                                     <div style={{ fontSize: '9px', fontWeight: 600, textTransform: 'uppercase', opacity: 0.9 }}>
                                         Total Batches
@@ -10704,7 +9763,7 @@ export default function FormulaDataPage() {
                                     onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
                                 >
                                     <div style={{ fontSize: '20px', fontWeight: 800 }}>
-                                        {sectionBatchTotals.main.toLocaleString()}
+                                        {displayStats.mainBatches.toLocaleString()}
                                     </div>
                                     <div style={{ fontSize: '8px', fontWeight: 600, textTransform: 'uppercase', opacity: 0.9 }}>
                                         MFC 3+ Batches
@@ -10735,7 +9794,7 @@ export default function FormulaDataPage() {
                                     onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
                                 >
                                     <div style={{ fontSize: '20px', fontWeight: 800 }}>
-                                        {sectionBatchTotals.lowBatch.toLocaleString()}
+                                        {displayStats.lowBatchBatches.toLocaleString()}
                                     </div>
                                     <div style={{ fontSize: '8px', fontWeight: 600, textTransform: 'uppercase', opacity: 0.9 }}>
                                         MFC 1-2 Batches
@@ -10766,7 +9825,7 @@ export default function FormulaDataPage() {
                                     onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
                                 >
                                     <div style={{ fontSize: '20px', fontWeight: 800 }}>
-                                        {sectionBatchTotals.noBatch.toLocaleString()}
+                                        {displayStats.noBatchBatches.toLocaleString()}
                                     </div>
                                     <div style={{ fontSize: '8px', fontWeight: 600, textTransform: 'uppercase', opacity: 0.9 }}>
                                         No Batch MFCs
@@ -10797,7 +9856,7 @@ export default function FormulaDataPage() {
                                     onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
                                 >
                                     <div style={{ fontSize: '20px', fontWeight: 800 }}>
-                                        {sectionBatchTotals.placebo.toLocaleString()}
+                                        {displayStats.placeboBatches.toLocaleString()}
                                     </div>
                                     <div style={{ fontSize: '8px', fontWeight: 600, textTransform: 'uppercase', opacity: 0.9 }}>
                                         Placebo/Media
@@ -10806,6 +9865,48 @@ export default function FormulaDataPage() {
                                         ({placeboFormulas.length} MFCs)
                                     </div>
                                 </div>
+
+                                {/* Missing Batches (no formula) */}
+                                {filteredUnmatchedBatches.length > 0 && (() => {
+                                    const missingBatchCount = filteredUnmatchedBatches.reduce((sum, item) => sum + item.count, 0);
+                                    return (
+                                        <>
+                                            <span style={{ fontSize: '18px', color: '#94a3b8', fontWeight: 300 }}>+</span>
+                                            <div
+                                                onClick={() => {
+                                                    setOrphanedBatchesOpen(true);
+                                                    setTimeout(() => {
+                                                        orphanedBatchesSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                                                    }, 50);
+                                                }}
+                                                style={{
+                                                    background: 'linear-gradient(135deg, rgba(220, 38, 38, 0.9) 0%, rgba(239, 68, 68, 0.95) 100%)',
+                                                    borderRadius: '12px',
+                                                    padding: '10px 14px',
+                                                    textAlign: 'center',
+                                                    boxShadow: '0 4px 16px rgba(220, 38, 38, 0.3)',
+                                                    border: '1px solid rgba(255,255,255,0.2)',
+                                                    color: 'white',
+                                                    cursor: 'pointer',
+                                                    transition: 'transform 0.15s ease',
+                                                    minWidth: '80px',
+                                                }}
+                                                onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.03)'; }}
+                                                onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
+                                            >
+                                                <div style={{ fontSize: '20px', fontWeight: 800 }}>
+                                                    {missingBatchCount.toLocaleString()}
+                                                </div>
+                                                <div style={{ fontSize: '8px', fontWeight: 600, textTransform: 'uppercase', opacity: 0.9 }}>
+                                                    No Formula
+                                                </div>
+                                                <div style={{ fontSize: '8px', opacity: 0.7 }}>
+                                                    ({filteredUnmatchedBatches.length} item codes)
+                                                </div>
+                                            </div>
+                                        </>
+                                    );
+                                })()}
                             </div>
                         </div>
 
@@ -11297,17 +10398,18 @@ export default function FormulaDataPage() {
                         </div>
 
                         {/* Orphaned Batches Alert Section */}
-                        {unmatchedBatches.length > 0 && (
-                            <div style={{ marginBottom: '2rem' }}>
+                        {filteredUnmatchedBatches.length > 0 && (
+                            <div ref={orphanedBatchesSectionRef} style={{ marginBottom: '2rem' }}>
                                 <CollapsibleSectionHeader
                                     title="Batches without Formula Master"
-                                    count={unmatchedBatches.length}
+                                    count={filteredUnmatchedBatches.length}
+                                    totalBatches={filteredUnmatchedBatches.reduce((sum, item) => sum + item.count, 0)}
                                     icon="⚠️"
                                     isOpen={orphanedBatchesOpen}
                                     onToggle={() => setOrphanedBatchesOpen(!orphanedBatchesOpen)}
                                     badgeColor="#dc2626"
                                     badgeText="Alert"
-                                    description="These batches have item codes not found in any MFC"
+                                    description={selectedFilterYear ? `Item codes not in any MFC — filtered to ${selectedFilterYear}` : "These batches have item codes not found in any MFC"}
                                 />
                                 {orphanedBatchesOpen && (
                                     <div style={{
@@ -11316,48 +10418,226 @@ export default function FormulaDataPage() {
                                         overflowX: 'auto',
                                         paddingBottom: '1rem',
                                     }}>
-                                        {unmatchedBatches.map((item, idx) => (
-                                            <div
-                                                key={idx}
-                                                style={{
-                                                    minWidth: '200px',
-                                                    background: '#fee2e2', // red-100
-                                                    border: '1px solid #f87171', // red-400
-                                                    borderRadius: 'var(--radius-lg)',
-                                                    padding: '1rem',
-                                                    display: 'flex',
-                                                    flexDirection: 'column',
-                                                    gap: '0.5rem'
-                                                }}
-                                            >
-                                                <div style={{
-                                                    fontSize: '0.85rem',
-                                                    color: '#b91c1c', // red-700
-                                                    fontWeight: '600'
-                                                }}>
-                                                    Item Code
+                                        {filteredUnmatchedBatches.map((item, idx) => {
+                                            // Gather batch details for preview (from year-filtered or all batches)
+                                            const sourceBatches = (selectedFilterYear ? yearFilteredBatches : allBatches) as BatchItem[];
+                                            const batchesForItem = sourceBatches.filter(b => b.itemCode === item.itemCode);
+                                            const makes = [...new Set(batchesForItem.map(b => b.make).filter(Boolean))];
+                                            const years = [...new Set(batchesForItem.map(b => {
+                                                const parts = (b.mfgDate || '').split('-');
+                                                if (parts.length === 3) {
+                                                    const y = parseInt(parts[2], 10);
+                                                    return isNaN(y) ? null : (y < 50 ? 2000 + y : 1900 + y).toString();
+                                                }
+                                                return null;
+                                            }).filter(Boolean))].sort();
+                                            return (
+                                                <div
+                                                    key={idx}
+                                                    style={{
+                                                        minWidth: '200px',
+                                                        background: '#fee2e2',
+                                                        border: '1px solid #f87171',
+                                                        borderRadius: 'var(--radius-lg)',
+                                                        padding: '1rem',
+                                                        display: 'flex',
+                                                        flexDirection: 'column',
+                                                        gap: '0.5rem'
+                                                    }}
+                                                >
+                                                    <div style={{ fontSize: '0.75rem', color: '#b91c1c', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                                                        Item Code
+                                                    </div>
+                                                    <div style={{ fontSize: '1rem', fontWeight: '700', fontFamily: 'monospace', color: '#7f1d1d' }}>
+                                                        {item.itemCode}
+                                                    </div>
+                                                    {makes.length > 0 && (
+                                                        <div style={{ fontSize: '0.72rem', color: '#991b1b', fontWeight: '500' }}>
+                                                            🏭 {makes.slice(0, 2).join(', ')}{makes.length > 2 ? ` +${makes.length - 2}` : ''}
+                                                        </div>
+                                                    )}
+                                                    {years.length > 0 && (
+                                                        <div style={{ fontSize: '0.72rem', color: '#991b1b' }}>
+                                                            📅 {years.join(', ')}
+                                                        </div>
+                                                    )}
+                                                    <div style={{ fontSize: '0.78rem', color: '#b91c1c', marginTop: 'auto' }}>
+                                                        Found in <strong>{item.count}</strong> batch{item.count !== 1 ? 'es' : ''}
+                                                    </div>
+                                                    <button
+                                                        onClick={() => {
+                                                            const allForItem = (allBatches as BatchItem[]).filter(b => b.itemCode === item.itemCode);
+                                                            setUnmatchedItemDetailModal({ itemCode: item.itemCode, batches: allForItem });
+                                                        }}
+                                                        style={{
+                                                            marginTop: '0.25rem',
+                                                            padding: '0.3rem 0.6rem',
+                                                            borderRadius: '6px',
+                                                            background: 'linear-gradient(135deg, #dc2626 0%, #ef4444 100%)',
+                                                            color: 'white',
+                                                            fontSize: '0.7rem',
+                                                            fontWeight: '600',
+                                                            border: 'none',
+                                                            cursor: 'pointer',
+                                                            display: 'flex',
+                                                            alignItems: 'center',
+                                                            gap: '0.25rem',
+                                                            transition: 'all 0.2s ease',
+                                                        }}
+                                                        onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-1px)'; e.currentTarget.style.boxShadow = '0 4px 8px rgba(220,38,38,0.3)'; }}
+                                                        onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = 'none'; }}
+                                                    >
+                                                        🔍 View Details
+                                                    </button>
                                                 </div>
-                                                <div style={{
-                                                    fontSize: '1.1rem',
-                                                    fontWeight: '700',
-                                                    fontFamily: 'monospace',
-                                                    color: '#7f1d1d' // red-900
-                                                }}>
-                                                    {item.itemCode}
-                                                </div>
-                                                <div style={{
-                                                    fontSize: '0.8rem',
-                                                    color: '#b91c1c',
-                                                    marginTop: 'auto'
-                                                }}>
-                                                    Found in <strong>{item.count}</strong> batches
-                                                </div>
-                                            </div>
-                                        ))}
+                                            );
+                                        })}
                                     </div>
                                 )}
                             </div>
                         )}
+
+                        {/* Unmatched Item Detail Modal */}
+                        {unmatchedItemDetailModal && (() => {
+                            const { itemCode, batches } = unmatchedItemDetailModal;
+                            const uniqueBatchNums = [...new Set(batches.map(b => b.batchNumber).filter(Boolean))];
+                            const makes = [...new Set(batches.map(b => b.make).filter(Boolean))];
+                            const itemNames = [...new Set(batches.map(b => b.itemName).filter(Boolean))];
+                            const years = [...new Set(batches.map(b => {
+                                const parts = (b.mfgDate || '').split('-');
+                                if (parts.length === 3) {
+                                    const y = parseInt(parts[2], 10);
+                                    return isNaN(y) ? null : (y < 50 ? 2000 + y : 1900 + y).toString();
+                                }
+                                return null;
+                            }).filter(Boolean))].sort() as string[];
+
+                            // Group batches by batchNumber (deduplicated)
+                            const batchMap = new Map<string, BatchItem>();
+                            batches.forEach(b => {
+                                if (b.batchNumber && !batchMap.has(b.batchNumber)) batchMap.set(b.batchNumber, b);
+                            });
+                            const uniqueBatches = Array.from(batchMap.values()).sort((a, b) => (a.batchNumber || '').localeCompare(b.batchNumber || ''));
+
+                            return (
+                                <div
+                                    style={{
+                                        position: 'fixed', inset: 0, zIndex: 9999,
+                                        background: 'rgba(0,0,0,0.55)',
+                                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                        padding: '1rem',
+                                    }}
+                                    onClick={() => setUnmatchedItemDetailModal(null)}
+                                >
+                                    <div
+                                        style={{
+                                            background: 'white',
+                                            borderRadius: '16px',
+                                            boxShadow: '0 25px 60px rgba(0,0,0,0.3)',
+                                            width: '100%',
+                                            maxWidth: '860px',
+                                            maxHeight: '90vh',
+                                            display: 'flex',
+                                            flexDirection: 'column',
+                                            overflow: 'hidden',
+                                        }}
+                                        onClick={e => e.stopPropagation()}
+                                    >
+                                        {/* Modal Header */}
+                                        <div style={{
+                                            padding: '1.25rem 1.5rem',
+                                            background: 'linear-gradient(135deg, #dc2626 0%, #ef4444 100%)',
+                                            color: 'white',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'space-between',
+                                            flexShrink: 0,
+                                        }}>
+                                            <div>
+                                                <div style={{ fontSize: '0.75rem', fontWeight: 600, opacity: 0.85, letterSpacing: '0.5px', textTransform: 'uppercase' }}>Unmatched Item — No Formula Master Found</div>
+                                                <div style={{ fontSize: '1.3rem', fontWeight: 700, fontFamily: 'monospace', marginTop: '2px' }}>{itemCode}</div>
+                                            </div>
+                                            <button
+                                                onClick={() => setUnmatchedItemDetailModal(null)}
+                                                style={{ background: 'rgba(255,255,255,0.2)', border: 'none', color: 'white', borderRadius: '8px', padding: '0.4rem 0.8rem', cursor: 'pointer', fontSize: '1rem', fontWeight: 700 }}
+                                            >✕</button>
+                                        </div>
+
+                                        {/* Summary Cards */}
+                                        <div style={{ padding: '1rem 1.5rem', borderBottom: '1px solid #f3f4f6', display: 'flex', gap: '1rem', flexWrap: 'wrap', flexShrink: 0 }}>
+                                            {itemNames.length > 0 && (
+                                                <div style={{ flex: '1 1 200px', background: '#fef2f2', borderRadius: '10px', padding: '0.75rem 1rem', border: '1px solid #fecaca' }}>
+                                                    <div style={{ fontSize: '0.7rem', color: '#9ca3af', fontWeight: 600, textTransform: 'uppercase', marginBottom: '4px' }}>Item Name / Brand</div>
+                                                    <div style={{ fontSize: '0.9rem', fontWeight: 700, color: '#1f2937' }}>{itemNames.join(' / ')}</div>
+                                                </div>
+                                            )}
+                                            {makes.length > 0 && (
+                                                <div style={{ flex: '1 1 180px', background: '#fef2f2', borderRadius: '10px', padding: '0.75rem 1rem', border: '1px solid #fecaca' }}>
+                                                    <div style={{ fontSize: '0.7rem', color: '#9ca3af', fontWeight: 600, textTransform: 'uppercase', marginBottom: '4px' }}>Make / Manufacturer</div>
+                                                    <div style={{ fontSize: '0.9rem', fontWeight: 700, color: '#1f2937' }}>{makes.join(', ')}</div>
+                                                </div>
+                                            )}
+                                            {years.length > 0 && (
+                                                <div style={{ flex: '0 1 140px', background: '#fef2f2', borderRadius: '10px', padding: '0.75rem 1rem', border: '1px solid #fecaca' }}>
+                                                    <div style={{ fontSize: '0.7rem', color: '#9ca3af', fontWeight: 600, textTransform: 'uppercase', marginBottom: '4px' }}>Mfg Years</div>
+                                                    <div style={{ fontSize: '0.9rem', fontWeight: 700, color: '#1f2937' }}>{years.join(', ')}</div>
+                                                </div>
+                                            )}
+                                            <div style={{ flex: '0 1 140px', background: '#fef2f2', borderRadius: '10px', padding: '0.75rem 1rem', border: '1px solid #fecaca' }}>
+                                                <div style={{ fontSize: '0.7rem', color: '#9ca3af', fontWeight: 600, textTransform: 'uppercase', marginBottom: '4px' }}>Unique Batches</div>
+                                                <div style={{ fontSize: '1.4rem', fontWeight: 700, color: '#dc2626' }}>{uniqueBatchNums.length}</div>
+                                            </div>
+                                            <div style={{ flex: '0 1 140px', background: '#fef2f2', borderRadius: '10px', padding: '0.75rem 1rem', border: '1px solid #fecaca' }}>
+                                                <div style={{ fontSize: '0.7rem', color: '#9ca3af', fontWeight: 600, textTransform: 'uppercase', marginBottom: '4px' }}>Total Records</div>
+                                                <div style={{ fontSize: '1.4rem', fontWeight: 700, color: '#dc2626' }}>{batches.length}</div>
+                                            </div>
+                                        </div>
+
+                                        {/* Batch Table */}
+                                        <div style={{ overflowY: 'auto', flex: 1, padding: '1rem 1.5rem' }}>
+                                            <div style={{ fontSize: '0.85rem', fontWeight: 700, color: '#374151', marginBottom: '0.75rem' }}>
+                                                All Batches ({uniqueBatches.length} unique)
+                                            </div>
+                                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
+                                                <thead>
+                                                    <tr style={{ background: '#fef2f2', borderBottom: '2px solid #fecaca' }}>
+                                                        {['#', 'Batch No.', 'Item Name', 'Mfg Date', 'Expiry', 'Batch Size', 'Make', 'Mfg Year', 'Pack / Dept'].map(h => (
+                                                            <th key={h} style={{ padding: '8px 10px', textAlign: 'left', fontSize: '0.7rem', fontWeight: 700, color: '#b91c1c', textTransform: 'uppercase', letterSpacing: '0.4px', whiteSpace: 'nowrap' }}>{h}</th>
+                                                        ))}
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {uniqueBatches.map((b, i) => {
+                                                        const parts = (b.mfgDate || '').split('-');
+                                                        let mfgYear = '';
+                                                        if (parts.length === 3) {
+                                                            const y = parseInt(parts[2], 10);
+                                                            if (!isNaN(y)) mfgYear = (y < 50 ? 2000 + y : 1900 + y).toString();
+                                                        }
+                                                        return (
+                                                            <tr key={i} style={{ borderBottom: '1px solid #fee2e2', background: i % 2 === 0 ? 'white' : '#fff8f8' }}>
+                                                                <td style={{ padding: '7px 10px', color: '#9ca3af', fontWeight: 600 }}>{i + 1}</td>
+                                                                <td style={{ padding: '7px 10px', fontFamily: 'monospace', fontWeight: 700, color: '#dc2626' }}>{b.batchNumber || '—'}</td>
+                                                                <td style={{ padding: '7px 10px', color: '#374151', maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={b.itemName}>{b.itemName || '—'}</td>
+                                                                <td style={{ padding: '7px 10px', color: '#374151', whiteSpace: 'nowrap' }}>{b.mfgDate || '—'}</td>
+                                                                <td style={{ padding: '7px 10px', color: '#374151', whiteSpace: 'nowrap' }}>{b.expiryDate || '—'}</td>
+                                                                <td style={{ padding: '7px 10px', color: '#374151', whiteSpace: 'nowrap' }}>{b.batchSize ? `${b.batchSize} ${b.batchUom || ''}`.trim() : '—'}</td>
+                                                                <td style={{ padding: '7px 10px', color: '#374151', maxWidth: '140px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={b.make}>{b.make || '—'}</td>
+                                                                <td style={{ padding: '7px 10px', color: '#374151', fontWeight: 600 }}>{mfgYear || '—'}</td>
+                                                                <td style={{ padding: '7px 10px', color: '#374151' }}>{[b.pack, b.department].filter(Boolean).join(' / ') || '—'}</td>
+                                                            </tr>
+                                                        );
+                                                    })}
+                                                </tbody>
+                                            </table>
+                                            {uniqueBatches.length === 0 && (
+                                                <div style={{ textAlign: 'center', padding: '2rem', color: '#9ca3af' }}>No batch records found for this item code</div>
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
+                            );
+                        })()}
 
                         {/* Manufacturer Summary Cards */}
                         <div style={{ marginBottom: '2rem' }}>
@@ -11652,7 +10932,7 @@ export default function FormulaDataPage() {
                             <CollapsibleSectionHeader
                                 title="MFCs with 3+ Batches"
                                 count={mainFormulas.length}
-                                totalBatches={sectionBatchTotals.main}
+                                totalBatches={displayStats.mainBatches}
                                 uniqueBatches={uniqueBatchReconciliation?.mainUniqueBatches}
                                 icon="🧪"
                                 isOpen={mainMfcsOpen}
@@ -11662,28 +10942,16 @@ export default function FormulaDataPage() {
                                 description="MFCs with significant production volume"
                                 rmDataMatched={sectionRmData.main.matched}
                                 rmDataUnmatched={sectionRmData.main.unmatched}
-                                onRmMatchedClick={() => openRmDataModal('matched')}
-                                onRmUnmatchedClick={() => openRmDataModal('unmatched')}
+                                onRmMatchedClick={() => openRmDataModal('matched', 'batch', 'main')}
+                                onRmUnmatchedClick={() => openRmDataModal('unmatched', 'batch', 'main')}
                                 ppmDataMatched={sectionPpmPmData.main.ppmMatched}
                                 ppmDataUnmatched={sectionPpmPmData.main.ppmUnmatched}
                                 pmDataMatched={sectionPpmPmData.main.pmMatched}
                                 pmDataUnmatched={sectionPpmPmData.main.pmUnmatched}
-                                onPpmMatchedClick={() => openPpmDataModal('matched')}
-                                onPpmUnmatchedClick={() => openPpmDataModal('unmatched')}
-                                onPmMatchedClick={() => openPmDataModal('matched')}
-                                onPmUnmatchedClick={() => openPmDataModal('unmatched')}
-                                materialQualified={sectionRmCoaBatchCounts.main.found}
-                                materialUnqualified={sectionRmCoaBatchCounts.main.missing}
-                                onMaterialQualifiedClick={() => openMatDataModal('qualified', 'main', mainFormulas, 'table')}
-                                onMaterialUnqualifiedClick={() => openMatDataModal('unqualified', 'main', mainFormulas, 'table')}
-                                pmCoaQualified={sectionPmUniqueBatchCounts.main.found}
-                                pmCoaUnqualified={sectionPmUniqueBatchCounts.main.missing}
-                                onPmCoaQualifiedClick={() => openPmCoaModal('qualified', 'main', mainFormulas)}
-                                onPmCoaUnqualifiedClick={() => openPmCoaModal('unqualified', 'main', mainFormulas)}
-                                ppmCoaQualified={sectionPpmUniqueBatchCounts.main.found}
-                                ppmCoaUnqualified={sectionPpmUniqueBatchCounts.main.missing}
-                                onPpmCoaQualifiedClick={() => openPpmCoaModal('qualified', 'main', mainFormulas)}
-                                onPpmCoaUnqualifiedClick={() => openPpmCoaModal('unqualified', 'main', mainFormulas)}
+                                onPpmMatchedClick={() => openPpmDataModal('matched', 'main')}
+                                onPpmUnmatchedClick={() => openPpmDataModal('unmatched', 'main')}
+                                onPmMatchedClick={() => openPmDataModal('matched', 'main')}
+                                onPmUnmatchedClick={() => openPmDataModal('unmatched', 'main')}
                                 bulkCoaQualified={sectionBulkCoaData.main.qualified}
                                 bulkCoaUnqualified={sectionBulkCoaData.main.unqualified}
                                 onBulkCoaQualifiedClick={() => openBulkCoaModal('matched', 'main', mainFormulas)}
@@ -11692,18 +10960,6 @@ export default function FormulaDataPage() {
                                 finishCoaUnqualified={sectionFinishCoaData.main.unqualified}
                                 onFinishCoaQualifiedClick={() => openFinishCoaModal('matched', 'main', mainFormulas)}
                                 onFinishCoaUnqualifiedClick={() => openFinishCoaModal('unmatched', 'main', mainFormulas)}
-                                rmCoaUniqueArFound={sectionUniqueArCounts.main.found}
-                                rmCoaUniqueArMissing={sectionUniqueArCounts.main.missing}
-                                onRmCoaFoundClick={() => openMatDataModal('qualified', 'main', mainFormulas, 'table')}
-                                onRmCoaMissingClick={() => openMatDataModal('unqualified', 'main', mainFormulas, 'file')}
-                                pmCoaUniqueArFound={sectionPmUniqueArCounts.main.found}
-                                pmCoaUniqueArMissing={sectionPmUniqueArCounts.main.missing}
-                                onPmCoaFoundClick={() => openPmCoaModal('qualified', 'main', mainFormulas, 'file')}
-                                onPmCoaMissingClick={() => openPmCoaModal('unqualified', 'main', mainFormulas, 'file')}
-                                ppmCoaUniqueArFound={sectionPpmUniqueArCounts.main.found}
-                                ppmCoaUniqueArMissing={sectionPpmUniqueArCounts.main.missing}
-                                onPpmCoaFoundClick={() => openPpmCoaModal('qualified', 'main', mainFormulas, 'file')}
-                                onPpmCoaMissingClick={() => openPpmCoaModal('unqualified', 'main', mainFormulas, 'file')}
                             />
                         </div>
 
@@ -11715,6 +10971,22 @@ export default function FormulaDataPage() {
                                     const colors = getManufacturerColor(formula.masterFormulaDetails?.manufacturer || '');
                                     const materialCount = formula.materials?.length || 0;
                                     const mfcNo = formula.masterFormulaDetails?.masterCardNo?.trim() || 'N/A';
+
+                                    // Year-filtered effective stats for row badges
+                                    const mfcNoUpper = (formula.masterFormulaDetails?.masterCardNo || '').trim().toUpperCase();
+                                    const yearStats = perFormulaYearFilteredStats?.get(mfcNoUpper);
+                                    const effectiveTotalBatchCount = yearStats ? yearStats.totalBatchCount : (formula.totalBatchCount || 0);
+                                    const effectiveUniqueBatchCount = yearStats ? yearStats.uniqueBatchCount : ((formula.rmDataMatched || 0) + (formula.rmDataUnmatched || 0));
+                                    const effectiveRmMatched = yearStats ? yearStats.rmMatched : (formula.rmDataMatched || 0);
+                                    const effectiveRmUnmatched = yearStats ? yearStats.rmUnmatched : (formula.rmDataUnmatched || 0);
+                                    const effectivePpmMatched = yearStats ? yearStats.ppmMatched : (formula.ppmDataMatched || 0);
+                                    const effectivePpmUnmatched = yearStats ? yearStats.ppmUnmatched : (formula.ppmDataUnmatched || 0);
+                                    const effectivePmMatched = yearStats ? yearStats.pmMatched : (formula.pmDataMatched || 0);
+                                    const effectivePmUnmatched = yearStats ? yearStats.pmUnmatched : (formula.pmDataUnmatched || 0);
+                                    const effectiveBulkCoaQualified = yearStats ? yearStats.bulkCoaQualified : ((formula as any).bulkCoaQualified || 0);
+                                    const effectiveBulkCoaUnqualified = yearStats ? yearStats.bulkCoaUnqualified : ((formula as any).bulkCoaUnqualified || 0);
+                                    const effectiveFinishCoaQualified = yearStats ? yearStats.finishCoaQualified : ((formula as any).finishCoaQualified || 0);
+                                    const effectiveFinishCoaUnqualified = yearStats ? yearStats.finishCoaUnqualified : ((formula as any).finishCoaUnqualified || 0);
 
                                     return (
                                         <div
@@ -11920,10 +11192,10 @@ export default function FormulaDataPage() {
                                                         })()}
                                                     </div>
                                                     {/* Batch Count Badges: Total and Unique with Reconciliation */}
-                                                    {formula.totalBatchCount && formula.totalBatchCount > 0 && (() => {
-                                                        const uniqueBatches = (formula.rmDataMatched || 0) + (formula.rmDataUnmatched || 0);
-                                                        const matched = formula.rmDataMatched || 0;
-                                                        const unmatched = formula.rmDataUnmatched || 0;
+                                                    {effectiveTotalBatchCount > 0 && (() => {
+                                                        const uniqueBatches = effectiveUniqueBatchCount;
+                                                        const matched = effectiveRmMatched;
+                                                        const unmatched = effectiveRmUnmatched;
                                                         return (
                                                             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                                                                 {/* Total Batch Records */}
@@ -11939,7 +11211,7 @@ export default function FormulaDataPage() {
                                                                     }}
                                                                     title={`Total batch records (may include duplicates)`}
                                                                 >
-                                                                    📦 {formula.totalBatchCount} Total
+                                                                    📦 {effectiveTotalBatchCount} Total
                                                                 </span>
                                                                 {/* Unique Batches */}
                                                                 <span
@@ -11961,7 +11233,7 @@ export default function FormulaDataPage() {
                                                         );
                                                     })()}
                                                     {/* Per-formula RM Data Status Capsule with reconciliation */}
-                                                    {(formula.rmDataMatched !== undefined || formula.rmDataUnmatched !== undefined) && (() => {
+                                                    {(effectiveRmMatched > 0 || effectiveRmUnmatched > 0 || formula.rmDataMatched !== undefined || formula.rmDataUnmatched !== undefined) && (() => {
                                                         // Collect all product codes for this formula
                                                         const allProductCodes: string[] = [];
                                                         if (formula.masterFormulaDetails?.productCode) {
@@ -11988,18 +11260,18 @@ export default function FormulaDataPage() {
                                                             });
                                                         }
 
-                                                        const ppmMatched = formula.ppmDataMatched || 0;
-                                                        const ppmUnmatched = formula.ppmDataUnmatched || 0;
-                                                        const pmMatched = formula.pmDataMatched || 0;
-                                                        const pmUnmatched = formula.pmDataUnmatched || 0;
+                                                        const ppmMatched = effectivePpmMatched;
+                                                        const ppmUnmatched = effectivePpmUnmatched;
+                                                        const pmMatched = effectivePmMatched;
+                                                        const pmUnmatched = effectivePmUnmatched;
 
                                                         return (
                                                             <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                                                                 {/* RM Capsule */}
                                                                 <BatchStatusCapsule
                                                                     type="RM"
-                                                                    matched={formula.rmDataMatched || 0}
-                                                                    unmatched={formula.rmDataUnmatched || 0}
+                                                                    matched={effectiveRmMatched}
+                                                                    unmatched={effectiveRmUnmatched}
                                                                     onGreenClick={() => openPerFormulaRmModal(
                                                                         mfcNo,
                                                                         allProductCodes,
@@ -12187,323 +11459,12 @@ export default function FormulaDataPage() {
                                                                     </div>
                                                                 )}
 
-                                                                {/* RM COA Capsule (Cyan/Teal) */}
-                                                                {/* RM COA Capsule (Cyan/Teal) */}
-                                                                {/* RM COA Capsule (Cyan/Teal) */}
-                                                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
-                                                                    <BatchStatusCapsule
-                                                                        type="RM COA"
-                                                                        matched={(() => {
-                                                                            const mfcNo = (formula.masterFormulaDetails?.masterCardNo || '').trim().toUpperCase();
-                                                                            const batchCounts = perFormulaRmCoaBatchCounts.get(mfcNo);
-                                                                            return batchCounts?.found || 0;
-                                                                        })()}
-                                                                        unmatched={(() => {
-                                                                            const mfcNo = (formula.masterFormulaDetails?.masterCardNo || '').trim().toUpperCase();
-                                                                            const batchCounts = perFormulaRmCoaBatchCounts.get(mfcNo);
-                                                                            return batchCounts?.missing || 0;
-                                                                        })()}
-                                                                        onGreenClick={() => openMatDataModal('qualified', 'main', [formula])}
-                                                                        onRedClick={() => openMatDataModal('unqualified', 'main', [formula])}
-                                                                        size="small"
-                                                                    />
-                                                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '4px', alignSelf: 'stretch', marginTop: '4px' }}>
-                                                                        {(() => {
-                                                                            const mfcNo = (formula.masterFormulaDetails?.masterCardNo || '').trim().toUpperCase();
-                                                                            const arCounts = perFormulaUniqueArCounts.get(mfcNo) || { found: 0, missing: 0 };
-
-                                                                            if (arCounts.found === 0 && arCounts.missing === 0) return null;
-
-                                                                            return (
-                                                                                <div
-                                                                                    style={{
-                                                                                        display: 'inline-flex',
-                                                                                        alignItems: 'stretch',
-                                                                                        height: '16px',
-                                                                                        borderRadius: '16px',
-                                                                                        overflow: 'hidden',
-                                                                                        boxShadow: '0 1px 3px rgba(0,0,0,0.1), inset 0 1px 0 rgba(255,255,255,0.2)',
-                                                                                        border: '1px solid rgba(255,255,255,0.3)',
-                                                                                        minWidth: '50px',
-                                                                                    }}
-                                                                                    title={`Unique AR Numbers: ${arCounts.found} found, ${arCounts.missing} missing`}
-                                                                                >
-                                                                                    {/* Green Section - Found */}
-                                                                                    {arCounts.found > 0 && (
-                                                                                        <button
-                                                                                            onClick={(e) => { e.stopPropagation(); openMatDataModal('qualified', 'main', [formula], 'file'); }}
-                                                                                            style={{
-                                                                                                flex: arCounts.found,
-                                                                                                minWidth: '25px',
-                                                                                                display: 'flex',
-                                                                                                alignItems: 'center',
-                                                                                                justifyContent: 'center',
-                                                                                                gap: '1px',
-                                                                                                padding: '0 4px',
-                                                                                                background: 'linear-gradient(135deg, #059669 0%, #10b981 100%)',
-                                                                                                border: 'none',
-                                                                                                cursor: 'pointer',
-                                                                                                color: 'white',
-                                                                                                fontSize: '9px',
-                                                                                                fontWeight: 700,
-                                                                                                transition: 'all 0.2s ease',
-                                                                                                whiteSpace: 'nowrap',
-                                                                                            }}
-                                                                                            onMouseEnter={(e) => e.currentTarget.style.filter = 'brightness(1.1)'}
-                                                                                            onMouseLeave={(e) => e.currentTarget.style.filter = 'brightness(1)'}
-                                                                                            title={`${arCounts.found} unique AR numbers found - Click to view`}
-                                                                                        >
-                                                                                            <span style={{ fontSize: '0.85em' }}>✓</span>
-                                                                                            {arCounts.found}
-                                                                                        </button>
-                                                                                    )}
-                                                                                    {/* Red Section - Missing */}
-                                                                                    {arCounts.missing > 0 && (
-                                                                                        <button
-                                                                                            onClick={(e) => { e.stopPropagation(); openMatDataModal('unqualified', 'main', [formula], 'file'); }}
-                                                                                            style={{
-                                                                                                flex: arCounts.missing,
-                                                                                                minWidth: '25px',
-                                                                                                display: 'flex',
-                                                                                                alignItems: 'center',
-                                                                                                justifyContent: 'center',
-                                                                                                gap: '1px',
-                                                                                                padding: '0 4px',
-                                                                                                background: 'linear-gradient(135deg, #dc2626 0%, #ef4444 100%)',
-                                                                                                border: 'none',
-                                                                                                cursor: 'pointer',
-                                                                                                color: 'white',
-                                                                                                fontSize: '9px',
-                                                                                                fontWeight: 700,
-                                                                                                transition: 'all 0.2s ease',
-                                                                                                whiteSpace: 'nowrap',
-                                                                                            }}
-                                                                                            onMouseEnter={(e) => e.currentTarget.style.filter = 'brightness(1.1)'}
-                                                                                            onMouseLeave={(e) => e.currentTarget.style.filter = 'brightness(1)'}
-                                                                                            title={`${arCounts.missing} unique AR numbers missing - Click to view`}
-                                                                                        >
-                                                                                            <span style={{ fontSize: '0.85em' }}>✕</span>
-                                                                                            {arCounts.missing}
-                                                                                        </button>
-                                                                                    )}
-                                                                                </div>
-                                                                            );
-                                                                        })()}
-                                                                    </div>
-                                                                </div>
-
-                                                                {/* PM COA Capsule (Red) */}
-                                                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
-                                                                    <BatchStatusCapsule
-                                                                        type="PM COA"
-                                                                        matched={(() => {
-                                                                            const mfcNo = (formula.masterFormulaDetails?.masterCardNo || '').trim().toUpperCase();
-                                                                            const batchCounts = perFormulaPmCoaBatchCounts.get(mfcNo);
-                                                                            return batchCounts?.found || 0;
-                                                                        })()}
-                                                                        unmatched={(() => {
-                                                                            const mfcNo = (formula.masterFormulaDetails?.masterCardNo || '').trim().toUpperCase();
-                                                                            const batchCounts = perFormulaPmCoaBatchCounts.get(mfcNo);
-                                                                            return batchCounts?.missing || 0;
-                                                                        })()}
-                                                                        onGreenClick={() => openPmCoaModal('qualified', 'main', [formula])}
-                                                                        onRedClick={() => openPmCoaModal('unqualified', 'main', [formula])}
-                                                                        size="small"
-                                                                    />
-                                                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '4px', alignSelf: 'stretch', marginTop: '4px' }}>
-                                                                        {(() => {
-                                                                            const mfcNo = (formula.masterFormulaDetails?.masterCardNo || '').trim().toUpperCase();
-                                                                            const pmCounts = perFormulaPmUniqueArCounts.get(mfcNo) || { found: 0, missing: 0 };
-
-                                                                            if (pmCounts.found === 0 && pmCounts.missing === 0) return null;
-
-                                                                            return (
-                                                                                <div
-                                                                                    style={{
-                                                                                        display: 'inline-flex',
-                                                                                        alignItems: 'stretch',
-                                                                                        height: '16px',
-                                                                                        borderRadius: '16px',
-                                                                                        overflow: 'hidden',
-                                                                                        boxShadow: '0 1px 3px rgba(0,0,0,0.1), inset 0 1px 0 rgba(255,255,255,0.2)',
-                                                                                        border: '1px solid rgba(255,255,255,0.3)',
-                                                                                        minWidth: '50px',
-                                                                                    }}
-                                                                                    title={`Unique AR Numbers: ${pmCounts.found} found, ${pmCounts.missing} missing`}
-                                                                                >
-                                                                                    {/* Green Section - Found */}
-                                                                                    {pmCounts.found > 0 && (
-                                                                                        <button
-                                                                                            onClick={(e) => { e.stopPropagation(); openPmCoaModal('qualified', 'main', [formula], 'file'); }}
-                                                                                            style={{
-                                                                                                flex: pmCounts.found,
-                                                                                                minWidth: '25px',
-                                                                                                display: 'flex',
-                                                                                                alignItems: 'center',
-                                                                                                justifyContent: 'center',
-                                                                                                gap: '1px',
-                                                                                                padding: '0 4px',
-                                                                                                background: 'linear-gradient(135deg, #059669 0%, #10b981 100%)',
-                                                                                                border: 'none',
-                                                                                                cursor: 'pointer',
-                                                                                                color: 'white',
-                                                                                                fontSize: '9px',
-                                                                                                fontWeight: 700,
-                                                                                                transition: 'all 0.2s ease',
-                                                                                                whiteSpace: 'nowrap',
-                                                                                            }}
-                                                                                            onMouseEnter={(e) => e.currentTarget.style.filter = 'brightness(1.1)'}
-                                                                                            onMouseLeave={(e) => e.currentTarget.style.filter = 'brightness(1)'}
-                                                                                            title={`${pmCounts.found} unique AR numbers found - Click to view`}
-                                                                                        >
-                                                                                            <span style={{ fontSize: '0.85em' }}>✓</span>
-                                                                                            {pmCounts.found}
-                                                                                        </button>
-                                                                                    )}
-                                                                                    {/* Red Section - Missing */}
-                                                                                    {pmCounts.missing > 0 && (
-                                                                                        <button
-                                                                                            onClick={(e) => { e.stopPropagation(); openPmCoaModal('unqualified', 'main', [formula], 'file'); }}
-                                                                                            style={{
-                                                                                                flex: pmCounts.missing,
-                                                                                                minWidth: '25px',
-                                                                                                display: 'flex',
-                                                                                                alignItems: 'center',
-                                                                                                justifyContent: 'center',
-                                                                                                gap: '1px',
-                                                                                                padding: '0 4px',
-                                                                                                background: 'linear-gradient(135deg, #dc2626 0%, #ef4444 100%)',
-                                                                                                border: 'none',
-                                                                                                cursor: 'pointer',
-                                                                                                color: 'white',
-                                                                                                fontSize: '9px',
-                                                                                                fontWeight: 700,
-                                                                                                transition: 'all 0.2s ease',
-                                                                                                whiteSpace: 'nowrap',
-                                                                                            }}
-                                                                                            onMouseEnter={(e) => e.currentTarget.style.filter = 'brightness(1.1)'}
-                                                                                            onMouseLeave={(e) => e.currentTarget.style.filter = 'brightness(1)'}
-                                                                                            title={`${pmCounts.missing} unique AR numbers missing - Click to view`}
-                                                                                        >
-                                                                                            <span style={{ fontSize: '0.85em' }}>✕</span>
-                                                                                            {pmCounts.missing}
-                                                                                        </button>
-                                                                                    )}
-                                                                                </div>
-                                                                            );
-                                                                        })()}
-                                                                    </div>
-                                                                </div>
-
-                                                                {/* PPM COA Capsule (Orange) */}
-                                                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
-                                                                    <BatchStatusCapsule
-                                                                        type="PPM COA"
-                                                                        matched={(() => {
-                                                                            const mfcNo = (formula.masterFormulaDetails?.masterCardNo || '').trim().toUpperCase();
-                                                                            const batchCounts = perFormulaPpmCoaBatchCounts.get(mfcNo);
-                                                                            return batchCounts?.found || 0;
-                                                                        })()}
-                                                                        unmatched={(() => {
-                                                                            const mfcNo = (formula.masterFormulaDetails?.masterCardNo || '').trim().toUpperCase();
-                                                                            const batchCounts = perFormulaPpmCoaBatchCounts.get(mfcNo);
-                                                                            return batchCounts?.missing || 0;
-                                                                        })()}
-                                                                        onGreenClick={() => openPpmCoaModal('qualified', 'main', [formula])}
-                                                                        onRedClick={() => openPpmCoaModal('unqualified', 'main', [formula])}
-                                                                        size="small"
-                                                                    />
-                                                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '4px', alignSelf: 'stretch', marginTop: '4px' }}>
-                                                                        {(() => {
-                                                                            const mfcNo = (formula.masterFormulaDetails?.masterCardNo || '').trim().toUpperCase();
-                                                                            const ppmCounts = perFormulaPpmUniqueArCounts.get(mfcNo) || { found: 0, missing: 0 };
-
-                                                                            if (ppmCounts.found === 0 && ppmCounts.missing === 0) return null;
-
-                                                                            return (
-                                                                                <div
-                                                                                    style={{
-                                                                                        display: 'inline-flex',
-                                                                                        alignItems: 'stretch',
-                                                                                        height: '16px',
-                                                                                        borderRadius: '16px',
-                                                                                        overflow: 'hidden',
-                                                                                        boxShadow: '0 1px 3px rgba(0,0,0,0.1), inset 0 1px 0 rgba(255,255,255,0.2)',
-                                                                                        border: '1px solid rgba(255,255,255,0.3)',
-                                                                                        minWidth: '50px',
-                                                                                    }}
-                                                                                    title={`Unique AR Numbers: ${ppmCounts.found} found, ${ppmCounts.missing} missing`}
-                                                                                >
-                                                                                    {/* Green Section - Found */}
-                                                                                    {ppmCounts.found > 0 && (
-                                                                                        <button
-                                                                                            onClick={(e) => { e.stopPropagation(); openPpmCoaModal('qualified', 'main', [formula], 'file'); }}
-                                                                                            style={{
-                                                                                                flex: ppmCounts.found,
-                                                                                                minWidth: '25px',
-                                                                                                display: 'flex',
-                                                                                                alignItems: 'center',
-                                                                                                justifyContent: 'center',
-                                                                                                gap: '1px',
-                                                                                                padding: '0 4px',
-                                                                                                background: 'linear-gradient(135deg, #059669 0%, #10b981 100%)',
-                                                                                                border: 'none',
-                                                                                                cursor: 'pointer',
-                                                                                                color: 'white',
-                                                                                                fontSize: '9px',
-                                                                                                fontWeight: 700,
-                                                                                                transition: 'all 0.2s ease',
-                                                                                                whiteSpace: 'nowrap',
-                                                                                            }}
-                                                                                            onMouseEnter={(e) => e.currentTarget.style.filter = 'brightness(1.1)'}
-                                                                                            onMouseLeave={(e) => e.currentTarget.style.filter = 'brightness(1)'}
-                                                                                            title={`${ppmCounts.found} unique AR numbers found - Click to view`}
-                                                                                        >
-                                                                                            <span style={{ fontSize: '0.85em' }}>✓</span>
-                                                                                            {ppmCounts.found}
-                                                                                        </button>
-                                                                                    )}
-                                                                                    {/* Red Section - Missing */}
-                                                                                    {ppmCounts.missing > 0 && (
-                                                                                        <button
-                                                                                            onClick={(e) => { e.stopPropagation(); openPpmCoaModal('unqualified', 'main', [formula], 'file'); }}
-                                                                                            style={{
-                                                                                                flex: ppmCounts.missing,
-                                                                                                minWidth: '25px',
-                                                                                                display: 'flex',
-                                                                                                alignItems: 'center',
-                                                                                                justifyContent: 'center',
-                                                                                                gap: '1px',
-                                                                                                padding: '0 4px',
-                                                                                                background: 'linear-gradient(135deg, #dc2626 0%, #ef4444 100%)',
-                                                                                                border: 'none',
-                                                                                                cursor: 'pointer',
-                                                                                                color: 'white',
-                                                                                                fontSize: '9px',
-                                                                                                fontWeight: 700,
-                                                                                                transition: 'all 0.2s ease',
-                                                                                                whiteSpace: 'nowrap',
-                                                                                            }}
-                                                                                            onMouseEnter={(e) => e.currentTarget.style.filter = 'brightness(1.1)'}
-                                                                                            onMouseLeave={(e) => e.currentTarget.style.filter = 'brightness(1)'}
-                                                                                            title={`${ppmCounts.missing} unique AR numbers missing - Click to view`}
-                                                                                        >
-                                                                                            <span style={{ fontSize: '0.85em' }}>✕</span>
-                                                                                            {ppmCounts.missing}
-                                                                                        </button>
-                                                                                    )}
-                                                                                </div>
-                                                                            );
-                                                                        })()}
-                                                                    </div>
-                                                                </div>
-
                                                                 {/* Bulk COA Capsule (Emerald) */}
                                                                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
                                                                     <BatchStatusCapsule
                                                                         type="Bulk COA"
-                                                                        matched={(formula as any).bulkCoaQualified || 0}
-                                                                        unmatched={(formula as any).bulkCoaUnqualified || 0}
+                                                                        matched={effectiveBulkCoaQualified}
+                                                                        unmatched={effectiveBulkCoaUnqualified}
                                                                         onGreenClick={() => openBulkCoaModal('matched', 'main', [formula])}
                                                                         onRedClick={() => openBulkCoaModal('unmatched', 'main', [formula])}
                                                                         size="small"
@@ -12514,8 +11475,8 @@ export default function FormulaDataPage() {
                                                                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
                                                                     <BatchStatusCapsule
                                                                         type="Finish COA"
-                                                                        matched={(formula as any).finishCoaQualified || 0}
-                                                                        unmatched={(formula as any).finishCoaUnqualified || 0}
+                                                                        matched={effectiveFinishCoaQualified}
+                                                                        unmatched={effectiveFinishCoaUnqualified}
                                                                         onGreenClick={() => openFinishCoaModal('matched', 'main', [formula])}
                                                                         onRedClick={() => openFinishCoaModal('unmatched', 'main', [formula])}
                                                                         size="small"
@@ -13840,7 +12801,7 @@ export default function FormulaDataPage() {
                                 <CollapsibleSectionHeader
                                     title="Low Batch MFCs (1-2 Batches)"
                                     count={lowBatchFormulas.length}
-                                    totalBatches={sectionBatchTotals.lowBatch}
+                                    totalBatches={displayStats.lowBatchBatches}
                                     uniqueBatches={uniqueBatchReconciliation?.lowBatchUniqueBatches}
                                     icon="📊"
                                     isOpen={lowBatchMfcsOpen}
@@ -13854,22 +12815,10 @@ export default function FormulaDataPage() {
                                     ppmDataUnmatched={sectionPpmPmData.lowBatch.ppmUnmatched}
                                     pmDataMatched={sectionPpmPmData.lowBatch.pmMatched}
                                     pmDataUnmatched={sectionPpmPmData.lowBatch.pmUnmatched}
-                                    onPpmMatchedClick={() => openPpmDataModal('matched')}
-                                    onPpmUnmatchedClick={() => openPpmDataModal('unmatched')}
-                                    onPmMatchedClick={() => openPmDataModal('matched')}
-                                    onPmUnmatchedClick={() => openPmDataModal('unmatched')}
-                                    materialQualified={sectionRmCoaBatchCounts.lowBatch.found}
-                                    materialUnqualified={sectionRmCoaBatchCounts.lowBatch.missing}
-                                    onMaterialQualifiedClick={() => openMatDataModal('qualified', 'lowBatch', lowBatchFormulas)}
-                                    onMaterialUnqualifiedClick={() => openMatDataModal('unqualified', 'lowBatch', lowBatchFormulas)}
-                                    pmCoaQualified={0}
-                                    pmCoaUnqualified={sectionMaterialQualData.lowBatch.qualified + sectionMaterialQualData.lowBatch.unqualified}
-                                    onPmCoaQualifiedClick={() => openPmCoaModal('qualified', 'lowBatch', lowBatchFormulas)}
-                                    onPmCoaUnqualifiedClick={() => openPmCoaModal('unqualified', 'lowBatch', lowBatchFormulas)}
-                                    ppmCoaQualified={0}
-                                    ppmCoaUnqualified={sectionMaterialQualData.lowBatch.qualified + sectionMaterialQualData.lowBatch.unqualified}
-                                    onPpmCoaQualifiedClick={() => openPpmCoaModal('qualified', 'lowBatch', lowBatchFormulas)}
-                                    onPpmCoaUnqualifiedClick={() => openPpmCoaModal('unqualified', 'lowBatch', lowBatchFormulas)}
+                                    onPpmMatchedClick={() => openPpmDataModal('matched', 'lowBatch')}
+                                    onPpmUnmatchedClick={() => openPpmDataModal('unmatched', 'lowBatch')}
+                                    onPmMatchedClick={() => openPmDataModal('matched', 'lowBatch')}
+                                    onPmUnmatchedClick={() => openPmDataModal('unmatched', 'lowBatch')}
                                     bulkCoaQualified={sectionBulkCoaData.lowBatch.qualified}
                                     bulkCoaUnqualified={sectionBulkCoaData.lowBatch.unqualified}
                                     onBulkCoaQualifiedClick={() => openBulkCoaModal('matched', 'lowBatch', lowBatchFormulas)}
@@ -13878,16 +12827,6 @@ export default function FormulaDataPage() {
                                     finishCoaUnqualified={sectionFinishCoaData.lowBatch.unqualified}
                                     onFinishCoaQualifiedClick={() => openFinishCoaModal('matched', 'lowBatch', lowBatchFormulas)}
                                     onFinishCoaUnqualifiedClick={() => openFinishCoaModal('unmatched', 'lowBatch', lowBatchFormulas)}
-                                    // onMaterialQualifiedClick and onMaterialUnqualifiedClick are no longer used for RM COA capsule
-                                    rmCoaUniqueArFound={sectionUniqueArCounts.lowBatch.found}
-                                    rmCoaUniqueArMissing={sectionUniqueArCounts.lowBatch.missing}
-                                    onRmCoaFoundClick={() => openMatDataModal('qualified', 'lowBatch', lowBatchFormulas, 'table')}
-                                    onRmCoaMissingClick={() => openMatDataModal('unqualified', 'lowBatch', lowBatchFormulas, 'file')}
-                                    pmCoaUniqueArFound={sectionPmUniqueArCounts.lowBatch.found}
-                                    ppmCoaUniqueArFound={sectionPpmUniqueArCounts.lowBatch.found}
-                                    ppmCoaUniqueArMissing={sectionPpmUniqueArCounts.lowBatch.missing}
-                                    onPpmCoaFoundClick={() => openPpmCoaModal('qualified', 'lowBatch', lowBatchFormulas, 'file')}
-                                    onPpmCoaMissingClick={() => openPpmCoaModal('unqualified', 'lowBatch', lowBatchFormulas, 'file')}
                                 />
                                 {lowBatchMfcsOpen && (
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
@@ -14048,7 +12987,7 @@ export default function FormulaDataPage() {
                                 <CollapsibleSectionHeader
                                     title="No Batch MFCs"
                                     count={noBatchFormulas.length}
-                                    totalBatches={sectionBatchTotals.noBatch}
+                                    totalBatches={displayStats.noBatchBatches}
                                     uniqueBatches={uniqueBatchReconciliation?.noBatchUniqueBatches}
                                     icon="🚫"
                                     isOpen={noBatchMfcsOpen}
@@ -14062,22 +13001,10 @@ export default function FormulaDataPage() {
                                     ppmDataUnmatched={sectionPpmPmData.noBatch.ppmUnmatched}
                                     pmDataMatched={sectionPpmPmData.noBatch.pmMatched}
                                     pmDataUnmatched={sectionPpmPmData.noBatch.pmUnmatched}
-                                    onPpmMatchedClick={() => openPpmDataModal('matched')}
-                                    onPpmUnmatchedClick={() => openPpmDataModal('unmatched')}
-                                    onPmMatchedClick={() => openPmDataModal('matched')}
-                                    onPmUnmatchedClick={() => openPmDataModal('unmatched')}
-                                    materialQualified={sectionRmCoaBatchCounts.noBatch.found}
-                                    materialUnqualified={sectionRmCoaBatchCounts.noBatch.missing}
-                                    onMaterialQualifiedClick={() => openMatDataModal('qualified', 'noBatch', noBatchFormulas)}
-                                    onMaterialUnqualifiedClick={() => openMatDataModal('unqualified', 'noBatch', noBatchFormulas)}
-                                    pmCoaQualified={0}
-                                    pmCoaUnqualified={sectionMaterialQualData.noBatch.qualified + sectionMaterialQualData.noBatch.unqualified}
-                                    onPmCoaQualifiedClick={() => openPmCoaModal('qualified', 'noBatch', noBatchFormulas)}
-                                    onPmCoaUnqualifiedClick={() => openPmCoaModal('unqualified', 'noBatch', noBatchFormulas)}
-                                    ppmCoaQualified={0}
-                                    ppmCoaUnqualified={sectionMaterialQualData.noBatch.qualified + sectionMaterialQualData.noBatch.unqualified}
-                                    onPpmCoaQualifiedClick={() => openPpmCoaModal('qualified', 'noBatch', noBatchFormulas)}
-                                    onPpmCoaUnqualifiedClick={() => openPpmCoaModal('unqualified', 'noBatch', noBatchFormulas)}
+                                    onPpmMatchedClick={() => openPpmDataModal('matched', 'noBatch')}
+                                    onPpmUnmatchedClick={() => openPpmDataModal('unmatched', 'noBatch')}
+                                    onPmMatchedClick={() => openPmDataModal('matched', 'noBatch')}
+                                    onPmUnmatchedClick={() => openPmDataModal('unmatched', 'noBatch')}
                                     bulkCoaQualified={sectionBulkCoaData.noBatch.qualified}
                                     bulkCoaUnqualified={sectionBulkCoaData.noBatch.unqualified}
                                     onBulkCoaQualifiedClick={() => openBulkCoaModal('matched', 'noBatch', noBatchFormulas)}
@@ -14086,16 +13013,6 @@ export default function FormulaDataPage() {
                                     finishCoaUnqualified={sectionFinishCoaData.noBatch.unqualified}
                                     onFinishCoaQualifiedClick={() => openFinishCoaModal('matched', 'noBatch', noBatchFormulas)}
                                     onFinishCoaUnqualifiedClick={() => openFinishCoaModal('unmatched', 'noBatch', noBatchFormulas)}
-                                    // onMaterialQualifiedClick and onMaterialUnqualifiedClick are no longer used for RM COA capsule
-                                    rmCoaUniqueArFound={sectionUniqueArCounts.noBatch.found}
-                                    rmCoaUniqueArMissing={sectionUniqueArCounts.noBatch.missing}
-                                    onRmCoaFoundClick={() => openMatDataModal('qualified', 'noBatch', noBatchFormulas, 'table')}
-                                    onRmCoaMissingClick={() => openMatDataModal('unqualified', 'noBatch', noBatchFormulas, 'file')}
-                                    pmCoaUniqueArFound={sectionPmUniqueArCounts.noBatch.found}
-                                    ppmCoaUniqueArFound={sectionPpmUniqueArCounts.noBatch.found}
-                                    ppmCoaUniqueArMissing={sectionPpmUniqueArCounts.noBatch.missing}
-                                    onPpmCoaFoundClick={() => openPpmCoaModal('qualified', 'noBatch', noBatchFormulas, 'file')}
-                                    onPpmCoaMissingClick={() => openPpmCoaModal('unqualified', 'noBatch', noBatchFormulas, 'file')}
                                 />
                                 {noBatchMfcsOpen && (
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
@@ -14257,7 +13174,7 @@ export default function FormulaDataPage() {
                                 <CollapsibleSectionHeader
                                     title="Placebo & Media Fill Products"
                                     count={placeboFormulas.length}
-                                    totalBatches={sectionBatchTotals.placebo}
+                                    totalBatches={displayStats.placeboBatches}
                                     uniqueBatches={uniqueBatchReconciliation?.placeboUniqueBatches}
                                     icon="💊"
                                     isOpen={placeboMfcsOpen}
@@ -14271,22 +13188,10 @@ export default function FormulaDataPage() {
                                     ppmDataUnmatched={sectionPpmPmData.placebo.ppmUnmatched}
                                     pmDataMatched={sectionPpmPmData.placebo.pmMatched}
                                     pmDataUnmatched={sectionPpmPmData.placebo.pmUnmatched}
-                                    onPpmMatchedClick={() => openPpmDataModal('matched')}
-                                    onPpmUnmatchedClick={() => openPpmDataModal('unmatched')}
-                                    onPmMatchedClick={() => openPmDataModal('matched')}
-                                    onPmUnmatchedClick={() => openPmDataModal('unmatched')}
-                                    materialQualified={sectionRmCoaBatchCounts.placebo.found}
-                                    materialUnqualified={sectionRmCoaBatchCounts.placebo.missing}
-                                    onMaterialQualifiedClick={() => openMatDataModal('qualified', 'placebo', placeboFormulas)}
-                                    onMaterialUnqualifiedClick={() => openMatDataModal('unqualified', 'placebo', placeboFormulas)}
-                                    pmCoaQualified={0}
-                                    pmCoaUnqualified={sectionMaterialQualData.placebo.qualified + sectionMaterialQualData.placebo.unqualified}
-                                    onPmCoaQualifiedClick={() => openPmCoaModal('qualified', 'placebo', placeboFormulas)}
-                                    onPmCoaUnqualifiedClick={() => openPmCoaModal('unqualified', 'placebo', placeboFormulas)}
-                                    ppmCoaQualified={0}
-                                    ppmCoaUnqualified={sectionMaterialQualData.placebo.qualified + sectionMaterialQualData.placebo.unqualified}
-                                    onPpmCoaQualifiedClick={() => openPpmCoaModal('qualified', 'placebo', placeboFormulas)}
-                                    onPpmCoaUnqualifiedClick={() => openPpmCoaModal('unqualified', 'placebo', placeboFormulas)}
+                                    onPpmMatchedClick={() => openPpmDataModal('matched', 'placebo')}
+                                    onPpmUnmatchedClick={() => openPpmDataModal('unmatched', 'placebo')}
+                                    onPmMatchedClick={() => openPmDataModal('matched', 'placebo')}
+                                    onPmUnmatchedClick={() => openPmDataModal('unmatched', 'placebo')}
                                     bulkCoaQualified={sectionBulkCoaData.placebo.qualified}
                                     bulkCoaUnqualified={sectionBulkCoaData.placebo.unqualified}
                                     onBulkCoaQualifiedClick={() => openBulkCoaModal('matched', 'placebo', placeboFormulas)}
@@ -14295,18 +13200,6 @@ export default function FormulaDataPage() {
                                     finishCoaUnqualified={sectionFinishCoaData.placebo.unqualified}
                                     onFinishCoaQualifiedClick={() => openFinishCoaModal('matched', 'placebo', placeboFormulas)}
                                     onFinishCoaUnqualifiedClick={() => openFinishCoaModal('unmatched', 'placebo', placeboFormulas)}
-                                    rmCoaUniqueArFound={sectionUniqueArCounts.placebo.found}
-                                    rmCoaUniqueArMissing={sectionUniqueArCounts.placebo.missing}
-                                    onRmCoaFoundClick={() => openMatDataModal('qualified', 'placebo', placeboFormulas, 'table')}
-                                    onRmCoaMissingClick={() => openMatDataModal('unqualified', 'placebo', placeboFormulas, 'file')}
-                                    pmCoaUniqueArFound={sectionPmUniqueArCounts.placebo.found}
-                                    pmCoaUniqueArMissing={sectionPmUniqueArCounts.placebo.missing}
-                                    onPmCoaFoundClick={() => openPmCoaModal('qualified', 'placebo', placeboFormulas, 'file')}
-                                    onPmCoaMissingClick={() => openPmCoaModal('unqualified', 'placebo', placeboFormulas, 'file')}
-                                    ppmCoaUniqueArFound={sectionPpmUniqueArCounts.placebo.found}
-                                    ppmCoaUniqueArMissing={sectionPpmUniqueArCounts.placebo.missing}
-                                    onPpmCoaFoundClick={() => openPpmCoaModal('qualified', 'placebo', placeboFormulas, 'file')}
-                                    onPpmCoaMissingClick={() => openPpmCoaModal('unqualified', 'placebo', placeboFormulas, 'file')}
                                 />
                                 {placeboMfcsOpen && (
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
@@ -17261,7 +16154,10 @@ export default function FormulaDataPage() {
                                                 fontSize: '1.1rem',
                                             }}>
                                                 {(() => {
-                                                    const arNos = new Set(matModalData.map((m: any) => m.arNo));
+                                                    const arNos = new Set<string>();
+                                                    matModalData.forEach((m: any) => {
+                                                        splitArNumbers(m.arNo).forEach(ar => arNos.add(ar));
+                                                    });
                                                     return arNos.size;
                                                 })()}
                                             </span>
@@ -17280,7 +16176,10 @@ export default function FormulaDataPage() {
                                             fontSize: '1.1rem',
                                         }}>
                                             {(() => {
-                                                const arNos = new Set(matModalData.filter((m: any) => m.arNo && m.arNo !== 'Missing RM COA').map((m: any) => m.arNo));
+                                                const arNos = new Set<string>();
+                                                matModalData.forEach((m: any) => {
+                                                    splitArNumbers(m.arNo).forEach(ar => arNos.add(ar));
+                                                });
                                                 return arNos.size;
                                             })()}
                                         </span>
@@ -17372,13 +16271,16 @@ export default function FormulaDataPage() {
                                                 );
                                             });
 
-                                            // Group by AR Number to get unique records
-                                            const uniqueArMap = new Map();
+                                            // Group by AR Number to get unique records (split multi-AR strings)
+                                            const uniqueArMap = new Map<string, any>();
                                             filteredData.forEach(item => {
-                                                const arNo = item.arNo || 'N/A';
-                                                if (!uniqueArMap.has(arNo)) {
-                                                    uniqueArMap.set(arNo, item);
-                                                }
+                                                const ars = splitArNumbers(item.arNo);
+                                                if (ars.length === 0) return;
+                                                ars.forEach(arNo => {
+                                                    if (!uniqueArMap.has(arNo)) {
+                                                        uniqueArMap.set(arNo, { ...item, arNo });
+                                                    }
+                                                });
                                             });
                                             const uniqueData = Array.from(uniqueArMap.values());
 
@@ -17622,13 +16524,15 @@ export default function FormulaDataPage() {
                                 }
 
                                 if (matViewMode === 'file') {
-                                    // Group by AR Number
+                                    // Group by AR Number (split multi-AR strings)
+                                    const expandedByAr = filteredMatData.flatMap((m: any) => {
+                                        const ars = splitArNumbers(m.arNo);
+                                        return ars.map(arNo => ({ ...m, arNo }));
+                                    });
                                     const groupedByArNo: Record<string, any[]> = {};
-                                    filteredMatData.forEach((m: any) => {
+                                    expandedByAr.forEach((m: any) => {
                                         const arNo = m.arNo || 'N/A';
-                                        if (!groupedByArNo[arNo]) {
-                                            groupedByArNo[arNo] = [];
-                                        }
+                                        if (!groupedByArNo[arNo]) groupedByArNo[arNo] = [];
                                         groupedByArNo[arNo].push(m);
                                     });
 
@@ -18456,7 +17360,10 @@ export default function FormulaDataPage() {
                                                 fontSize: '1.1rem',
                                             }}>
                                                 {(() => {
-                                                    const arNos = new Set(pmCoaModalData.map((m: any) => m.arNo));
+                                                    const arNos = new Set<string>();
+                                                    pmCoaModalData.forEach((m: any) => {
+                                                        splitArNumbers(m.arNo).forEach(ar => arNos.add(ar));
+                                                    });
                                                     return arNos.size;
                                                 })()}
                                             </span>
@@ -18475,7 +17382,10 @@ export default function FormulaDataPage() {
                                             fontSize: '1.1rem',
                                         }}>
                                             {(() => {
-                                                const arNos = new Set(pmCoaModalData.filter((m: any) => m.arNo && m.arNo !== 'N/A').map((m: any) => m.arNo));
+                                                const arNos = new Set<string>();
+                                                pmCoaModalData.forEach((m: any) => {
+                                                    splitArNumbers(m.arNo).forEach(ar => arNos.add(ar));
+                                                });
                                                 return arNos.size;
                                             })()}
                                         </span>
@@ -18569,13 +17479,16 @@ export default function FormulaDataPage() {
                                                 );
                                             });
 
-                                            // Group by AR Number to get unique records
-                                            const uniqueArMap = new Map();
+                                            // Group by AR Number to get unique records (split multi-AR strings)
+                                            const uniqueArMap = new Map<string, any>();
                                             filteredData.forEach(item => {
-                                                const arNo = item.arNo || 'N/A';
-                                                if (!uniqueArMap.has(arNo)) {
-                                                    uniqueArMap.set(arNo, item);
-                                                }
+                                                const ars = splitArNumbers(item.arNo);
+                                                if (ars.length === 0) return;
+                                                ars.forEach(arNo => {
+                                                    if (!uniqueArMap.has(arNo)) {
+                                                        uniqueArMap.set(arNo, { ...item, arNo });
+                                                    }
+                                                });
                                             });
                                             const uniqueData = Array.from(uniqueArMap.values());
 
@@ -18715,14 +17628,16 @@ export default function FormulaDataPage() {
                                     );
                                 });
 
-                                // 2. Group by AR Number
-                                const grouped = new Map();
+                                // 2. Group by AR Number (split multi-AR strings)
+                                const grouped = new Map<string, any[]>();
                                 filteredData.forEach(item => {
-                                    const key = item.arNo || 'N/A';
-                                    if (!grouped.has(key)) {
-                                        grouped.set(key, []);
-                                    }
-                                    grouped.get(key).push(item);
+                                    const ars = splitArNumbers(item.arNo);
+                                    if (ars.length === 0) return;
+                                    ars.forEach(ar => {
+                                        const key = ar || 'N/A';
+                                        if (!grouped.has(key)) grouped.set(key, []);
+                                        grouped.get(key)!.push({ ...item, arNo: ar });
+                                    });
                                 });
 
                                 // 3. Create Row Objects
@@ -18942,7 +17857,8 @@ export default function FormulaDataPage() {
                                 const rows = Array.from(grouped.entries()).map(([code, items]: [string, any[]]) => {
                                     const totalQty = items.reduce((sum, i) => sum + (typeof i.quantityToIssue === 'number' ? i.quantityToIssue : 0), 0);
                                     const batches = new Set(items.map(i => i.batchNumber).filter(Boolean)).size;
-                                    const arNos = new Set(items.map(i => i.arNo).filter((a: any) => a && a !== 'N/A')).size;
+                                    const arNos = new Set<string>();
+                                    items.forEach(i => splitArNumbers(i.arNo).forEach(ar => arNos.add(ar)));
 
                                     return {
                                         materialCode: code,
@@ -19493,7 +18409,13 @@ export default function FormulaDataPage() {
                                             fontWeight: 700,
                                             fontSize: '1.1rem',
                                         }}>
-                                            {new Set(ppmCoaModalData.map((m: any) => m.arNo)).size}
+                                            {(() => {
+                                                const arNos = new Set<string>();
+                                                ppmCoaModalData.forEach((m: any) => {
+                                                    splitArNumbers(m.arNo).forEach(ar => arNos.add(ar));
+                                                });
+                                                return arNos.size;
+                                            })()}
                                         </div>
                                         <span style={{ fontWeight: 600, color: '#64748b', fontSize: '0.9rem' }}>
                                             Unique AR Numbers ({ppmCoaModalType === 'qualified' ? 'Found' : 'Missing'})
@@ -21775,8 +20697,11 @@ export default function FormulaDataPage() {
                                                 fontSize: '1.1rem',
                                             }}>
                                                 {(() => {
-                                                    const arNos = new Set(ppmCoaModalData.map((m: any) => m.arNo));
-                                                    return arNos.size;
+                                                const arNos = new Set<string>();
+                                                ppmCoaModalData.forEach((m: any) => {
+                                                    splitArNumbers(m.arNo).forEach(ar => arNos.add(ar));
+                                                });
+                                                return arNos.size;
                                                 })()}
                                             </span>
                                             <span style={{ color: '#dc2626', fontWeight: 600 }}>Unique AR Numbers (Missing)</span>
@@ -21794,7 +20719,10 @@ export default function FormulaDataPage() {
                                             fontSize: '1.1rem',
                                         }}>
                                             {(() => {
-                                                const arNos = new Set(ppmCoaModalData.filter((m: any) => m.arNo && m.arNo !== 'N/A').map((m: any) => m.arNo));
+                                                const arNos = new Set<string>();
+                                                ppmCoaModalData.forEach((m: any) => {
+                                                    splitArNumbers(m.arNo).forEach(ar => arNos.add(ar));
+                                                });
                                                 return arNos.size;
                                             })()}
                                         </span>
@@ -21888,13 +20816,16 @@ export default function FormulaDataPage() {
                                                 );
                                             });
 
-                                            // Group by AR Number to get unique records
-                                            const uniqueArMap = new Map();
+                                            // Group by AR Number to get unique records (split multi-AR strings)
+                                            const uniqueArMap = new Map<string, any>();
                                             filteredData.forEach(item => {
-                                                const arNo = item.arNo || 'N/A';
-                                                if (!uniqueArMap.has(arNo)) {
-                                                    uniqueArMap.set(arNo, item);
-                                                }
+                                                const ars = splitArNumbers(item.arNo);
+                                                if (ars.length === 0) return;
+                                                ars.forEach(arNo => {
+                                                    if (!uniqueArMap.has(arNo)) {
+                                                        uniqueArMap.set(arNo, { ...item, arNo });
+                                                    }
+                                                });
                                             });
                                             const uniqueData = Array.from(uniqueArMap.values());
 
@@ -22035,13 +20966,15 @@ export default function FormulaDataPage() {
                                     );
                                 });
 
-                                // 2. Group by AR
+                                // 2. Group by AR (split multi-AR strings)
+                                const expandedByAr = filteredData.flatMap((m: any) => {
+                                    const ars = splitArNumbers(m.arNo);
+                                    return ars.map(arNo => ({ ...m, arNo }));
+                                });
                                 const groupedByArNo: Record<string, any[]> = {};
-                                filteredData.forEach((m: any) => {
+                                expandedByAr.forEach((m: any) => {
                                     const arNo = m.arNo || 'N/A';
-                                    if (!groupedByArNo[arNo]) {
-                                        groupedByArNo[arNo] = [];
-                                    }
+                                    if (!groupedByArNo[arNo]) groupedByArNo[arNo] = [];
                                     groupedByArNo[arNo].push(m);
                                 });
 
@@ -22854,3 +21787,6 @@ export default function FormulaDataPage() {
         </div>
     );
 }
+
+
+

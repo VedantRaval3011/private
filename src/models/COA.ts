@@ -55,9 +55,22 @@ const CriticalParameterSchema = new Schema({
 // Sub-schema for Related Substances
 const RelatedSubstanceSchema = new Schema({
   compound: { type: String, required: true },
+  group: { type: String, default: '' },
+  groupLimit: { type: String, default: '' },
   limit: { type: String, default: '' },
   result: { type: String, default: '' },
   complies: { type: Boolean, default: true },
+}, { _id: false });
+
+// Sub-schema for COA table tests (FINISH stage, supports IP/USP grouping + hierarchy)
+const COATestItemSchema = new Schema({
+  id: { type: String, required: true },
+  parentId: { type: String, default: null },
+  standard: { type: String, enum: ['IP', 'USP', 'OTHER'], default: 'OTHER' },
+  test: { type: String, required: true },
+  result: { type: String, default: '' },
+  specification: { type: String, default: '' },
+  sortOrder: { type: Number, default: 0 },
 }, { _id: false });
 
 // Sub-schema for BULK Stage Data
@@ -107,6 +120,7 @@ const FinishStageDataSchema = new Schema({
   criticalParameters: [CriticalParameterSchema],
   identificationTests: [IdentificationTestSchema],
   relatedSubstances: [RelatedSubstanceSchema],
+  coaTests: [COATestItemSchema],
   assayResults: [AssayResultSchema],
   sterility: TestParameterSchema,
   uniformityOfVolume: TestParameterSchema,

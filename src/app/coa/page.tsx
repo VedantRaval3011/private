@@ -8,7 +8,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
-import type { COARecord, COAStage, AssayResult, TestParameter } from '@/types/coa';
+import type { COARecord, COAStage, AssayResult, TestParameter, COATestItem, TestStandard } from '@/types/coa';
 
 interface COAListResponse {
     success: boolean;
@@ -819,9 +819,92 @@ function DetailModal({
         test: string;
         result: string;
         spec: string;
+        depth?: number;
+        isHeaderRow?: boolean;
     }> = [];
 
     let currentSr = 1;
+
+    const renderFinishCoaFromItems = (items: COATestItem[]) => {
+        const byOrder = [...items].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+
+        const standardsInOrder: TestStandard[] = ['IP', 'USP', 'OTHER'];
+        const grouped = standardsInOrder
+            .map(std => ({ std, rows: byOrder.filter(r => (r.standard || 'OTHER') === std) }))
+            .filter(g => g.rows.length > 0);
+
+        const childrenByParent = new Map<string, COATestItem[]>();
+        const topLevel: COATestItem[] = [];
+
+        for (const r of byOrder) {
+            if (r.parentId) {
+                const arr = childrenByParent.get(r.parentId) || [];
+                arr.push(r);
+                childrenByParent.set(r.parentId, arr);
+            } else {
+                topLevel.push(r);
+            }
+        }
+
+        const flatten = (
+            rows: COATestItem[],
+            depth: number,
+            acc: Array<{ test: COATestItem; depth: number }>
+        ) => {
+            for (const r of rows) {
+                acc.push({ test: r, depth });
+                const kids = childrenByParent.get(r.id);
+                if (kids && kids.length > 0) {
+                    kids.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+                    flatten(kids, depth + 1, acc);
+                }
+            }
+        };
+
+        for (const g of grouped) {
+            const headerText =
+                g.std === 'IP'
+                    ? '[ALL TEST MENTION BELOW AS PER IP]'
+                    : g.std === 'USP'
+                        ? '[ALL SPECIFICATION BELOW ARE AS PER USP]'
+                        : '[OTHER / UNSPECIFIED STANDARD]';
+
+            coaRows.push({
+                sr: 0,
+                test: headerText,
+                result: '.',
+                spec: '.',
+                depth: 0,
+                isHeaderRow: true,
+            });
+
+            const stdTop = topLevel
+                .filter(r => (r.standard || 'OTHER') === g.std)
+                .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+
+            const flat: Array<{ test: COATestItem; depth: number }> = [];
+            flatten(stdTop, 0, flat);
+
+            let sr = 1;
+            for (const f of flat) {
+                const isHeaderLike =
+                    (f.test.result || '').trim() === '.' && (f.test.specification || '').trim() === '.';
+                coaRows.push({
+                    sr: sr++,
+                    test: f.test.test,
+                    result: f.test.result,
+                    spec: f.test.specification,
+                    depth: f.depth,
+                    isHeaderRow: isHeaderLike,
+                });
+            }
+        }
+    };
+
+    // If FINISH contains structured COA tests (IP/USP grouped), render from that (no dedupe).
+    if (!isBulk && record.finishData?.coaTests && record.finishData.coaTests.length > 0) {
+        renderFinishCoaFromItems(record.finishData.coaTests);
+    } else {
 
     // 1. Description
     if (data?.description) {
@@ -941,6 +1024,7 @@ function DetailModal({
                 });
             });
         }
+    }
     }
 
     return (
@@ -1070,9 +1154,15 @@ function DetailModal({
                         {coaRows.map((row, i) => (
                             <tr key={i} style={{ borderBottom: row.result === '.' ? 'none' : '1px solid #ccc' }}>
                                 <td style={{ ...coaTdStyle, textAlign: 'center', fontWeight: row.result === '.' ? 'bold' : 'normal' }}>
-                                    {row.result === '.' ? row.sr : row.sr}
+                                    {row.isHeaderRow ? '' : row.sr}
                                 </td>
-                                <td style={{ ...coaTdStyle, fontWeight: row.result === '.' ? 'bold' : 'normal', paddingLeft: row.sr > 0 && row.result !== '.' && !['DESCRIPTION', 'PH', 'ASSAY', 'IDENTIFICATION', 'RELATED SUBSTANCES'].includes(row.test) ? '1.5rem' : '0.5rem' }}>
+                                <td
+                                    style={{
+                                        ...coaTdStyle,
+                                        fontWeight: row.result === '.' ? 'bold' : 'normal',
+                                        paddingLeft: row.isHeaderRow ? '0.5rem' : `${0.5 + (row.depth || 0) * 1.0}rem`,
+                                    }}
+                                >
                                     {row.test}
                                 </td>
                                 <td style={{ ...coaTdStyle, whiteSpace: 'pre-line', textAlign: row.result === '.' ? 'center' : 'left' }}>

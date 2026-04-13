@@ -45,6 +45,7 @@ export interface RetainedSampleRecord {
   productCode: string;
   productName: string;
   batchNumber: string;
+  itemCode?: string;
   stabilityEntries: StabilityEntry[];
   createdAt?: string;
   updatedAt?: string;
@@ -55,6 +56,8 @@ export interface BatchStabilityRow {
   itemCode: string;
   mfgDate: string;
   expiryDate: string;
+  /** Brand name from Batch Creation data (`Batch.batches.itemDetail`). */
+  brandName?: string;
   // 0-month data from COA (auto-populated)
   coaFound: boolean;
   phParams: PhParam[];          // all pH parameters found in COA (dynamic count)
@@ -89,6 +92,7 @@ export interface SaveStabilityRequest {
   productCode: string;
   productName: string;
   batchNumber: string;
+  itemCode?: string;
   month: 6 | 12 | 18 | 24 | 30 | 36;
   pH: string;             // legacy (single pH, kept for backward compat)
   phValues: PhValue[];    // preferred multi-pH values

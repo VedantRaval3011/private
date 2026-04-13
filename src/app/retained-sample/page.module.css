@@ -1163,6 +1163,18 @@
   font-weight: 500;
 }
 
+.brandNameText {
+  margin-top: 2px;
+  font-size: 0.65rem;
+  color: #6b7280;
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
 .batchNum {
   font-weight: 600;
   font-size: 0.75rem;
@@ -1824,6 +1836,26 @@
   gap: 0.45rem;
 }
 
+.summaryCountFullyCompleted {
+  color: #0284c7;
+}
+
+.summaryCountDone {
+  color: #15803d;
+}
+
+.summaryCountPending {
+  color: #c2410c;
+}
+
+.summaryCountOverdue {
+  color: #dc2626;
+}
+
+.summaryCountBatchesPending {
+  color: #ca8a04;
+}
+
 .summaryChip:hover {
   opacity: 0.85;
   transform: translateY(-1px);
@@ -1902,6 +1934,19 @@
   margin-bottom: 4px;
   display: inline-block;
   letter-spacing: 0.03em;
+}
+
+.cellDueMonth {
+  font-size: 0.6rem;
+  font-weight: 600;
+  color: #6b7280;
+  background: #f3f4f6;
+  border: 1px solid #e5e7eb;
+  border-radius: 3px;
+  padding: 1px 5px;
+  margin-bottom: 4px;
+  display: inline-block;
+  letter-spacing: 0.02em;
 }
 
 /* ── Cell status: future (dimmed) ───────────────────────── */

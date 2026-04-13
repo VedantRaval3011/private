@@ -1,0 +1,9 @@
+node.exe : [BABEL] Note: The code generator has deoptimised the styling of 
+C:\Users\admin\Desktop\software\private\src\app\formula-data\page.tsx as it exceeds the max of 500KB.
+At line:1 char:1
++ & "C:\Program Files\nodejs/node.exe" "C:\Program Files\nodejs/node_mo ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: ([BABEL] Note: T...e max of 500KB.:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+The unix formatter is no longer part of core ESLint. Install it manually with `npm install -D eslint-formatter-unix`

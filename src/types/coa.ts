@@ -79,6 +79,30 @@ export interface RelatedSubstance {
 }
 
 // ============================================
+// COA (Certificate) Test Table (Finish COA rendering)
+// ============================================
+
+export type TestStandard = 'IP' | 'USP' | 'OTHER';
+
+/**
+ * One row from the COA "Test | Result | Specification" table.
+ *
+ * This intentionally supports:
+ * - Duplicate test names across different standards (IP vs USP)
+ * - A parent/child hierarchy (e.g., RELATED SUBSTANCES → EARLY/LATE ELUTING…)
+ * - Stable ordering (via `sortOrder`)
+ */
+export interface COATestItem {
+  id: string;
+  parentId?: string | null;
+  standard: TestStandard;
+  test: string;
+  result: string;
+  specification: string;
+  sortOrder: number;
+}
+
+// ============================================
 // BULK Stage Data (In-Process Results)
 // ============================================
 
@@ -167,6 +191,12 @@ export interface FinishStageData {
   
   // Related Substances / Impurities
   relatedSubstances: RelatedSubstance[];
+
+  /**
+   * Full COA table rows for FINISH COA "View COA" rendering.
+   * This preserves IP/USP grouping markers and the table hierarchy.
+   */
+  coaTests?: COATestItem[];
   
   // Assay Results
   assayResults: AssayResult[];

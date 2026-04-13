@@ -216,6 +216,8 @@ export interface FormulaRecord extends FormulaMasterData {
   parsingStatus: 'success' | 'partial' | 'failed';
   parsingErrors?: string[];
   totalBatchCount?: number; // Total batches across all product codes in this MFC
+  uniqueBatchNumbers?: string[]; // Array of unique batch numbers
+  allBatchNumbers?: string[]; // Array of all batch numbers, including duplicates
   rmDataMatched?: number;   // Number of batches with RM (Raw Material) requisition data
   rmDataUnmatched?: number; // Number of batches without RM requisition data
   ppmDataMatched?: number;  // Number of batches with PPM (Primary Packing Material) requisition data

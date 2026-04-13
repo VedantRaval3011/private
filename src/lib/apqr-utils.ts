@@ -484,7 +484,9 @@ function buildFinish532Tables(finishCoas: any[], batchOrder: string[]): any[] {
 
     // Build parameter columns separated into qualitative and quantitative groups.
     // Sterility is intentionally excluded — it is handled in Section 5.3.3.
-    type Col532 = { name: string; subHeader: string; limitText: string };
+    // valKey: internal lookup key in the vals map (may differ from subHeader when
+    // duplicate compound names exist across assay rows — keyed by index instead).
+    type Col532 = { name: string; subHeader: string; limitText: string; valKey: string };
 
     // ── Qualitative parameters: Description, Identification, Related Substance ──
     const qualCols: Col532[] = [];
@@ -492,7 +494,7 @@ function buildFinish532Tables(finishCoas: any[], batchOrder: string[]): any[] {
     // Description
     const descLim = getCritLimit(/^DESCRIPTION$/);
     if (refFd.description || descLim) {
-      qualCols.push({ name: 'Description', subHeader: '', limitText: descLim });
+      qualCols.push({ name: 'Description', subHeader: '', limitText: descLim, valKey: 'Description' });
     }
 
     // Identification tests (one column per compound)
@@ -501,6 +503,7 @@ function buildFinish532Tables(finishCoas: any[], batchOrder: string[]): any[] {
         name: 'Identification',
         subHeader: idTest.compound || '',
         limitText: idTest.specification || 'Complies',
+        valKey: `Identification::${idTest.compound}`,
       });
     }
 
@@ -510,7 +513,7 @@ function buildFinish532Tables(finishCoas: any[], batchOrder: string[]): any[] {
     );
     if (hplcEntries.length > 0) {
       const hplcGroupLimit = hplcEntries[0]?.groupLimit || '';
-      qualCols.push({ name: 'Related Substance', subHeader: '', limitText: hplcGroupLimit });
+      qualCols.push({ name: 'Related Substance', subHeader: '', limitText: hplcGroupLimit, valKey: 'Related Substance' });
     }
 
     // ── Quantitative parameters: pH, Uniformity of Volume, Capping, Assay ──
@@ -520,27 +523,27 @@ function buildFinish532Tables(finishCoas: any[], batchOrder: string[]): any[] {
     // pH
     const phLim = getCritLimit(/\bPH\b/);
     if (phLim || ((refFd.criticalParameters as any[]) || []).some((p: any) => /\bPH\b/.test((p.name || '').toUpperCase()))) {
-      quantCols.push({ name: 'pH', subHeader: '', limitText: phLim });
+      quantCols.push({ name: 'pH', subHeader: '', limitText: phLim, valKey: 'pH' });
     }
 
     // Uniformity of Volume
     const uniLim = refFd.uniformityOfVolume?.limits || getCritLimit(/UNIFORMITY/);
     if (uniLim || refFd.uniformityOfVolume?.result) {
-      quantCols.push({ name: 'Uniformity of Volume', subHeader: '', limitText: uniLim });
+      quantCols.push({ name: 'Uniformity of Volume', subHeader: '', limitText: uniLim, valKey: 'Uniformity of Volume' });
     }
 
     // Capping
     const capLim = refFd.capping?.limits || getCritLimit(/CAPPING/);
     if (capLim || refFd.capping?.result) {
-      quantCols.push({ name: 'Capping', subHeader: '', limitText: capLim });
+      quantCols.push({ name: 'Capping', subHeader: '', limitText: capLim, valKey: 'Capping' });
     }
 
-    // Assay (one column per compound)
-    for (const assay of (refFd.assayResults as any[] || [])) {
+    // Assay (one column per entry, keyed by index to handle duplicate compound names)
+    (refFd.assayResults as any[] || []).forEach((assay: any, i: number) => {
       const assayLim = assay.specification
         || (assay.limitMin && assay.limitMax ? `${assay.limitMin} to ${assay.limitMax}` : '');
-      quantCols.push({ name: 'Assay (%)', subHeader: assay.compound || '', limitText: assayLim });
-    }
+      quantCols.push({ name: 'Assay (%)', subHeader: assay.compound || '', limitText: assayLim, valKey: `Assay (%)::${i}` });
+    });
 
     const allCols = [...qualCols, ...quantCols];
     if (allCols.length === 0) continue;
@@ -576,9 +579,9 @@ function buildFinish532Tables(finishCoas: any[], batchOrder: string[]): any[] {
       vals['Capping'] = fd.capping?.result || getCrit(/CAPPING/);
       // Sterility intentionally excluded — handled in Section 5.3.3
 
-      for (const assay of (fd.assayResults as any[] || [])) {
-        vals[`Assay (%)::${assay.compound}`] = assay.result || '';
-      }
+      (fd.assayResults as any[] || []).forEach((assay: any, i: number) => {
+        vals[`Assay (%)::${i}`] = assay.result || '';
+      });
 
       batchValMap.set(key, {
         batchNumber: coa.batchNumber,
@@ -606,16 +609,19 @@ function buildFinish532Tables(finishCoas: any[], batchOrder: string[]): any[] {
       for (let start = 0; start < cols.length; start += 3) {
         const colGroup = cols.slice(start, start + 3);
 
-        const dataRows = orderedRows.map((bv: BatchValues) => ({
+        // Identification columns in this group
+        const idCols = colGroup.filter(col => col.name === 'Identification' && col.subHeader);
+
+        const dataRows = orderedRows
+          .filter((bv: BatchValues) => {
+            // Exclude batches where ALL Identification columns in this group are empty
+            if (idCols.length === 0) return true;
+            return idCols.some(col => (bv.vals[col.valKey] || '').trim() !== '');
+          })
+          .map((bv: BatchValues) => ({
           batchNumber: bv.batchNumber,
           arNumber: bv.arNumber,
-          values: colGroup.map(col => {
-            if (col.name === 'Identification' && col.subHeader)
-              return bv.vals[`Identification::${col.subHeader}`] || '';
-            if (col.name === 'Assay (%)' && col.subHeader)
-              return bv.vals[`Assay (%)::${col.subHeader}`] || '';
-            return bv.vals[col.name] || '';
-          }),
+          values: colGroup.map(col => bv.vals[col.valKey] || ''),
         }));
 
         tables.push({

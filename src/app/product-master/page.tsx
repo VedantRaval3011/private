@@ -8,7 +8,7 @@
 
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
-import * as XLSX from 'xlsx';
+import * as XLSX from 'xlsx-js-style';
 
 interface ProductMaster {
   _id: string;
@@ -44,7 +44,20 @@ interface MissingProduct {
 
 type ViewMode = 'mfc' | 'product' | 'effective-batch' | 'batch';
 type SortField = 'therapeuticCategory' | 'productName' | 'productCode' | 'genericName' | 'department' | 'masterCardNo' | 'storageCondition' | 'productType' | 'specification' | 'effectiveBatchNo' | 'srNo' | 'status';
+
+function isPlaceboOrMediafillProductName(name: string | null | undefined): boolean {
+  const n = (name ?? '').trim();
+  if (!n) return false;
+  return /\b(placebo|media\s*fill|mediafill)\b/i.test(n);
+}
 type SortDirection = 'asc' | 'desc' | null;
+
+type MfgStatusFilter = 'manufactured' | 'non-manufactured' | 'all';
+type YearFilter = 'all' | string;
+type ErrorPrimaryFilter = 'none' | 'all' | 'missing' | 'mismatch';
+type MismatchSubtypeFilter = null | 'storage' | 'therapeutic' | 'effective-batch';
+
+type BatchSummary = { batchCount: number; years: string[]; minMfgDate?: string };
 
 // Helper to check if a field has missing/invalid data
 const MISSING_VALUES = new Set(['n/a', 'na', 'nil', 'null', 'none', '-', '--', 'n.a.', 'n.a', '0', 'undefined', 'not available', 'not applicable']);
@@ -59,19 +72,215 @@ const isMissingData = (value: string | undefined | null): boolean => {
   return false;
 };
 
-// Helper to get all missing fields
-const getMissingFields = (item: ProductMaster) => {
-  const errors: string[] = [];
-  if (isMissingData(item.therapeuticCategory)) errors.push('Therapeutic Category');
-  if (isMissingData(item.productName)) errors.push('Product Name');
-  if (isMissingData(item.productCode)) errors.push('Product Code');
-  // Generic name is optional, so we don't flag it as error if missing
-  if (isMissingData(item.department)) errors.push('Department');
-  if (isMissingData(item.masterCardNo)) errors.push('Master Card No');
-  if (isMissingData(item.storageCondition)) errors.push('Storage Condition');
-  if (isMissingData(item.productType)) errors.push('Product Type');
-  return errors;
+// Separate validity check for Effective Batch — '0' is the root of the hierarchy and must NOT
+// be treated as missing. All other N/A-like placeholders are still invalid.
+const EFF_BATCH_MISSING_VALUES = new Set(['n/a', 'na', 'nil', 'null', 'none', '-', '--', 'n.a.', 'n.a', 'undefined', 'not available', 'not applicable']);
+const isValidEffBatch = (value: string | undefined | null): boolean => {
+  if (value === null || value === undefined) return false;
+  const trimmed = value.trim();
+  if (trimmed === '') return false;
+  if (EFF_BATCH_MISSING_VALUES.has(trimmed.toLowerCase())) return false;
+  if (!/\w/.test(trimmed)) return false;
+  return true;
 };
+
+// Dynamic column config — all table fields to be checked for missing data.
+// Adding a new field here is the ONLY change needed to include it in the Missing filter.
+// Provide an optional `check` function to override the default isMissingData logic for a field.
+const TABLE_FIELD_CONFIG: Array<{
+  key: keyof ProductMaster;
+  label: string;
+  check?: (val: string | undefined | null) => boolean;
+}> = [
+  { key: 'productCode',         label: 'Product Code' },
+  { key: 'genericName',         label: 'Generic Name' },
+  { key: 'masterCardNo',        label: 'Master Card No' },
+  { key: 'therapeuticCategory', label: 'Therapeutic Category' },
+  { key: 'productName',         label: 'Product Name' },
+  { key: 'department',          label: 'Department' },
+  { key: 'storageCondition',    label: 'Storage Condition' },
+  { key: 'productType',         label: 'Product Type' },
+  { key: 'specification',       label: 'Specification' },
+  // '0' is a valid root-level eff. batch — use isValidEffBatch instead of isMissingData
+  { key: 'effectiveBatchNo',    label: 'Effective Batch No', check: v => !isValidEffBatch(v) },
+  { key: 'mfgLicenseNo',        label: 'Mfg License No' },
+];
+
+// Dynamic: returns all fields in TABLE_FIELD_CONFIG that have missing/invalid data.
+// Uses each field's custom `check` function if provided, otherwise falls back to isMissingData.
+const getMissingFields = (item: ProductMaster): string[] =>
+  TABLE_FIELD_CONFIG
+    .filter(({ key, check }) => {
+      const val = item[key] as string | undefined | null;
+      return check ? check(val) : isMissingData(val);
+    })
+    .map(({ label }) => label);
+
+const normalizeForCompare = (value: string | undefined | null): string => {
+  if (value === null || value === undefined) return '';
+  return String(value).trim().toLowerCase();
+};
+
+const normalizeEffBatch = (value: string | undefined | null): string => {
+  const s = value === null || value === undefined ? '' : String(value).trim();
+  return s;
+};
+
+const effBatchConnected = (aRaw: string | undefined | null, bRaw: string | undefined | null): boolean => {
+  const a = normalizeEffBatch(aRaw);
+  const b = normalizeEffBatch(bRaw);
+  if (!a || !b) return false;
+  if (a === b) return true;
+  return a.startsWith(b) || b.startsWith(a);
+};
+
+const compareEffBatchForParent = (aRaw: string | undefined | null, bRaw: string | undefined | null): number => {
+  const a = normalizeEffBatch(aRaw);
+  const b = normalizeEffBatch(bRaw);
+  if (!a && !b) return 0;
+  if (!a) return 1;
+  if (!b) return -1;
+  const ai = Number.parseInt(a, 10);
+  const bi = Number.parseInt(b, 10);
+  const aNumOk = Number.isFinite(ai);
+  const bNumOk = Number.isFinite(bi);
+  if (aNumOk && bNumOk && ai !== bi) return ai - bi;
+  if (a.length !== b.length) return a.length - b.length;
+  return a.localeCompare(b);
+};
+
+function computeMismatchMap(items: ProductMaster[]) {
+  // Returns per-productCode mismatch flags + group membership.
+  //
+  // Storage Condition & Therapeutic Category:  majority-vote within each MFC group.
+  //   - Products whose value differs from the majority are flagged (wrong).
+  //   - Products whose value matches the majority are NOT flagged (correct/green).
+  //   - All products in a group with any mismatch get inStorageGroup / inTherapeuticGroup
+  //     so they can be shown in context (correct ones in green, wrong ones in amber).
+  //
+  // Effective Batch: parent-based hierarchy connectivity check.
+  //   - Parent = product with the smallest effectiveBatch, then lexicographically first code.
+  //   - Any product whose effectiveBatch is not "connected" to the parent's is flagged.
+  //
+  // Only products with a valid (non-N/A) masterCardNo are grouped.
+
+  const byMfc = new Map<string, ProductMaster[]>();
+  for (const it of items) {
+    const mfc = (it.masterCardNo || '').trim();
+    if (!mfc || isMissingData(mfc)) continue;
+    if (!byMfc.has(mfc)) byMfc.set(mfc, []);
+    byMfc.get(mfc)!.push(it);
+  }
+
+  const mismatchByCode = new Map<string, {
+    any: boolean;
+    storage: boolean;
+    therapeutic: boolean;
+    effectiveBatch: boolean;
+    inStorageGroup: boolean;
+    inTherapeuticGroup: boolean;
+    inEffBatchGroup: boolean;
+  }>();
+
+  const ensure = (code: string) => {
+    if (!mismatchByCode.has(code)) {
+      mismatchByCode.set(code, {
+        any: false, storage: false, therapeutic: false, effectiveBatch: false,
+        inStorageGroup: false, inTherapeuticGroup: false, inEffBatchGroup: false,
+      });
+    }
+    return mismatchByCode.get(code)!;
+  };
+
+  // Returns the most frequent value from an array of normalised strings.
+  const getMajority = (values: string[]): string | null => {
+    if (values.length === 0) return null;
+    const counts = new Map<string, number>();
+    for (const v of values) counts.set(v, (counts.get(v) ?? 0) + 1);
+    let max = 0;
+    let majority: string | null = null;
+    for (const [v, c] of counts) { if (c > max) { max = c; majority = v; } }
+    return majority;
+  };
+
+  for (const [, group] of byMfc) {
+    if (group.length < 2) continue;
+
+    // ── Storage Condition ─────────────────────────────────────────────────────
+    const validStorages = group
+      .filter(g => !isMissingData(g.storageCondition))
+      .map(g => normalizeForCompare(g.storageCondition));
+    const hasStorageMismatch = new Set(validStorages).size > 1;
+    const majorityStorage = hasStorageMismatch ? getMajority(validStorages) : null;
+
+    // ── Therapeutic Category ──────────────────────────────────────────────────
+    const validTheras = group
+      .filter(g => !isMissingData(g.therapeuticCategory))
+      .map(g => normalizeForCompare(g.therapeuticCategory));
+    const hasTherapeuticMismatch = new Set(validTheras).size > 1;
+    const majorityThera = hasTherapeuticMismatch ? getMajority(validTheras) : null;
+
+    // ── Effective Batch: parent-based ─────────────────────────────────────────
+    let smallest = group[0].effectiveBatchNo;
+    for (const g of group) {
+      if (compareEffBatchForParent(g.effectiveBatchNo, smallest) < 0) smallest = g.effectiveBatchNo;
+    }
+    const smallestSet = group.filter(g => compareEffBatchForParent(g.effectiveBatchNo, smallest) === 0);
+    smallestSet.sort((a, b) => (a.productCode || '').localeCompare(b.productCode || ''));
+    const parent = smallestSet[0];
+    const pEffOk = isValidEffBatch(parent.effectiveBatchNo);
+    const pEff   = normalizeEffBatch(parent.effectiveBatchNo);
+
+    let hasEffBatchMismatch = false;
+    for (const g of group) {
+      if (pEffOk && isValidEffBatch(g.effectiveBatchNo)) {
+        if (!effBatchConnected(normalizeEffBatch(g.effectiveBatchNo), pEff)) {
+          hasEffBatchMismatch = true;
+          break;
+        }
+      }
+    }
+
+    // ── Flag every product in the group ──────────────────────────────────────
+    for (const g of group) {
+      const code = (g.productCode || '').trim();
+      if (!code) continue;
+      const entry = ensure(code);
+
+      if (hasStorageMismatch) {
+        entry.inStorageGroup = true;
+        if (!isMissingData(g.storageCondition)) {
+          if (normalizeForCompare(g.storageCondition) !== majorityStorage) {
+            entry.storage = true;
+            entry.any = true;
+          }
+        }
+      }
+
+      if (hasTherapeuticMismatch) {
+        entry.inTherapeuticGroup = true;
+        if (!isMissingData(g.therapeuticCategory)) {
+          if (normalizeForCompare(g.therapeuticCategory) !== majorityThera) {
+            entry.therapeutic = true;
+            entry.any = true;
+          }
+        }
+      }
+
+      if (hasEffBatchMismatch) {
+        entry.inEffBatchGroup = true;
+        if (pEffOk && isValidEffBatch(g.effectiveBatchNo)) {
+          if (!effBatchConnected(normalizeEffBatch(g.effectiveBatchNo), pEff)) {
+            entry.effectiveBatch = true;
+            entry.any = true;
+          }
+        }
+      }
+    }
+  }
+
+  return mismatchByCode;
+}
 
 // Helper to export to Excel
 const exportToExcel = (
@@ -80,19 +289,18 @@ const exportToExcel = (
   totalCount: number,
   filters: {
     searchTerm: string;
-    batchFilter: 'all' | 'mfg' | 'not-mfg';
-    errorFilter: string | null;
-  }
+    mfgStatus: MfgStatusFilter;
+    year: YearFilter;
+    errorPrimary: ErrorPrimaryFilter;
+    errorDetail: string | null;
+    mismatchSubtype: MismatchSubtypeFilter;
+  },
+  mismatchMap?: ReturnType<typeof computeMismatchMap>
 ) => {
   if (data.length === 0) {
     alert('No data to export');
     return;
   }
-
-  const exportDate = new Date().toLocaleString('en-IN', {
-    day: '2-digit', month: 'short', year: 'numeric',
-    hour: '2-digit', minute: '2-digit', hour12: true,
-  });
 
   const viewLabel: Record<ViewMode, string> = {
     product: 'Product Code-Wise',
@@ -101,43 +309,26 @@ const exportToExcel = (
     batch: 'Batch-Wise',
   };
 
-  const batchFilterLabel: Record<'all' | 'mfg' | 'not-mfg', string> = {
-    all: 'All Products',
-    mfg: 'Manufactured Only',
-    'not-mfg': 'Not Manufactured Only',
-  };
-
   const errorFilterLabels: Record<string, string> = {
     'mfg-missing': 'MFG Missing',
     'has-errors': 'Has Field Errors',
-    'missing-therapeutic': 'Missing Therapeutic Category',
-    'missing-product-name': 'Missing Product Name',
-    'missing-department': 'Missing Department',
-    'missing-master-card': 'Missing Master Card No',
-    'missing-storage': 'Missing Storage Condition',
-    'missing-product-type': 'Missing Product Type',
+  };
+  // Dynamically resolve field-key error detail labels from TABLE_FIELD_CONFIG
+  const getErrorDetailLabel = (detail: string | null): string => {
+    if (!detail) return '';
+    if (errorFilterLabels[detail]) return errorFilterLabels[detail];
+    const field = TABLE_FIELD_CONFIG.find(f => f.key === detail);
+    return field ? `Missing ${field.label}` : detail;
   };
 
   const activeFilters: string[] = [];
   if (filters.searchTerm) activeFilters.push(`Search: "${filters.searchTerm}"`);
-  if (filters.batchFilter !== 'all') activeFilters.push(`Batch Filter: ${batchFilterLabel[filters.batchFilter]}`);
-  if (filters.errorFilter) activeFilters.push(`Error Filter: ${errorFilterLabels[filters.errorFilter] ?? filters.errorFilter}`);
-
-  // Build summary block
+  if (filters.mfgStatus !== 'manufactured') activeFilters.push(`Manufacturing Status: ${filters.mfgStatus}`);
+  if (filters.year !== 'all') activeFilters.push(`Manufacturing Year: ${filters.year}`);
+  if (filters.errorPrimary !== 'none') activeFilters.push(`Error Type: ${filters.errorPrimary}`);
+  if (filters.errorDetail) activeFilters.push(`Error Detail: ${getErrorDetailLabel(filters.errorDetail)}`);
+  if (filters.mismatchSubtype) activeFilters.push(`Mismatch Detail: ${filters.mismatchSubtype}`);
   const q = (s: string) => `"${String(s).replace(/"/g, '""')}"`;
-  const summaryRows = [
-    [q('PRODUCT MASTER — EXPORT SUMMARY'), '', '', '', '', '', '', '', '', '', '', ''],
-    [q('Report Generated'), q(exportDate), '', '', '', '', '', '', '', '', '', ''],
-    [q('View Mode'), q(viewLabel[viewMode]), '', '', '', '', '', '', '', '', '', ''],
-    [q('Total Records in DB'), q(String(totalCount)), '', '', '', '', '', '', '', '', '', ''],
-    [q('Records Exported'), q(String(data.length)), '', '', '', '', '', '', '', '', '', ''],
-    [
-      q('Active Filters'),
-      q(activeFilters.length > 0 ? activeFilters.join(' | ') : 'None (all records)'),
-      '', '', '', '', '', '', '', '', '', '',
-    ],
-    ['', '', '', '', '', '', '', '', '', '', '', ''], // blank separator row
-  ];
 
   const headers = [
     'SR No',
@@ -157,9 +348,16 @@ const exportToExcel = (
   const rows = data.map((item, index) => {
     const errors = getMissingFields(item);
     const notMfg = item.sourceFile === 'added-from-batch-data';
+    const code = (item.productCode || '').trim();
+    const m = mismatchMap?.get(code);
+    const mismatches: string[] = [];
+    if (m?.storage) mismatches.push('Storage Condition');
+    if (m?.therapeutic) mismatches.push('Therapeutic Category');
+    if (m?.effectiveBatch) mismatches.push('Effective Batch');
     const statusParts: string[] = [];
     if (notMfg) statusParts.push('MFG MISSING');
     if (errors.length > 0) statusParts.push(`MISSING: ${errors.join(', ')}`);
+    if (mismatches.length > 0) statusParts.push(`MISMATCH: ${mismatches.join(', ')}`);
     if (statusParts.length === 0) statusParts.push('OK');
 
     return [
@@ -178,8 +376,8 @@ const exportToExcel = (
     ];
   });
 
+  // Export only the table (no summary block)
   const csvContent = [
-    ...summaryRows.map(row => row.join(',')),
     headers.map(h => q(h)).join(','),
     ...rows.map(row => row.map(cell => q(String(cell))).join(','))
   ].join('\n');
@@ -204,7 +402,11 @@ const exportToExcel = (
 };
 
 // Export Effective Batch view as a real .xlsx file with one sheet per batch group
-const exportEffectiveBatchToExcel = (data: ProductMaster[], errorsOnly: boolean) => {
+const exportEffectiveBatchToExcel = (
+  data: ProductMaster[],
+  errorsOnly: boolean,
+  mismatchMap?: ReturnType<typeof computeMismatchMap>
+) => {
   if (data.length === 0) {
     alert('No data to export');
     return;
@@ -246,20 +448,67 @@ const exportEffectiveBatchToExcel = (data: ProductMaster[], errorsOnly: boolean)
 
   const wb = XLSX.utils.book_new();
 
+  // ARGB colors (xlsx-js-style uses 'AARRGGBB' format)
+  const CLR = {
+    red:        'FFEF4444',
+    amber:      'FFD97706',
+    green:      'FF059669',
+    bgRed:      'FFFEF2F2',
+    bgAmber:    'FFFEF3C7',
+    bgGreen:    'FFF0FDF4',
+    bgWhite:    'FFFFFFFF',
+    bgAlt:      'FFF8FAFC',
+    headerBg:   'FF1E293B',
+    headerFg:   'FFFFFFFF',
+    border:     'FFE2E8F0',
+  };
+
+  const baseFont = { name: 'Calibri', sz: 10 };
+  const baseBorder = {
+    top:    { style: 'thin', color: { rgb: CLR.border } },
+    bottom: { style: 'thin', color: { rgb: CLR.border } },
+    left:   { style: 'thin', color: { rgb: CLR.border } },
+    right:  { style: 'thin', color: { rgb: CLR.border } },
+  };
+
   sortedKeys.forEach(key => {
     const products = groupMap.get(key)!;
     const filtered = errorsOnly
-      ? products.filter(p => getMissingFields(p).length > 0 || p.sourceFile === 'added-from-batch-data')
+      ? products.filter(p => {
+          const code = (p.productCode || '').trim();
+          const m = mismatchMap?.get(code);
+          return getMissingFields(p).length > 0 || p.sourceFile === 'added-from-batch-data' || Boolean(m?.any);
+        })
       : products;
 
     if (filtered.length === 0) return; // skip empty sheets when errors-only
 
+    // Build per-row metadata for styling
+    type RowMeta = {
+      notMfg: boolean; hasMissing: boolean; hasMismatch: boolean;
+      storMismatch: boolean; theraMismatch: boolean; effMismatch: boolean;
+      missingFields: string[];
+    };
+    const rowMeta: RowMeta[] = [];
+
     const rows = filtered.map((item, idx) => {
       const errors = getMissingFields(item);
       const notMfg = item.sourceFile === 'added-from-batch-data';
+      const code = (item.productCode || '').trim();
+      const m = mismatchMap?.get(code);
+      const mismatches: string[] = [];
+      if (m?.storage) mismatches.push('Storage Condition');
+      if (m?.therapeutic) mismatches.push('Therapeutic Category');
+      if (m?.effectiveBatch) mismatches.push('Effective Batch');
+      rowMeta.push({
+        notMfg, hasMissing: errors.length > 0, hasMismatch: mismatches.length > 0,
+        storMismatch: Boolean(m?.storage), theraMismatch: Boolean(m?.therapeutic),
+        effMismatch: Boolean(m?.effectiveBatch), missingFields: errors,
+      });
       const statusParts: string[] = [];
       if (notMfg) statusParts.push('MFG MISSING');
       if (errors.length > 0) statusParts.push(`MISSING: ${errors.join(', ')}`);
+      if (mismatches.length > 0) statusParts.push(`MISMATCH: ${mismatches.join(', ')}`);
       if (statusParts.length === 0) statusParts.push('OK');
       return [
         idx + 1,
@@ -278,6 +527,80 @@ const exportEffectiveBatchToExcel = (data: ProductMaster[], errorsOnly: boolean)
     });
 
     const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+
+    // ── Apply cell styles ───────────────────────────────────
+    // Header row
+    for (let c = 0; c < headers.length; c++) {
+      const ref = XLSX.utils.encode_cell({ r: 0, c });
+      if (!ws[ref]) continue;
+      ws[ref].s = {
+        font: { ...baseFont, bold: true, color: { rgb: CLR.headerFg } },
+        fill: { patternType: 'solid', fgColor: { rgb: CLR.headerBg } },
+        alignment: { horizontal: 'center', wrapText: false },
+        border: baseBorder,
+      };
+    }
+
+    // Data rows
+    filtered.forEach((item, idx) => {
+      const meta = rowMeta[idx];
+      const r = idx + 1;
+
+      // Row background
+      let rowBg = idx % 2 === 0 ? CLR.bgWhite : CLR.bgAlt;
+      if (meta.hasMissing || meta.notMfg) rowBg = CLR.bgRed;
+      else if (meta.hasMismatch) rowBg = CLR.bgAmber;
+
+      for (let c = 0; c < headers.length; c++) {
+        const ref = XLSX.utils.encode_cell({ r, c });
+        if (!ws[ref]) ws[ref] = { t: 's', v: '' };
+
+        const cellFill = { patternType: 'solid', fgColor: { rgb: rowBg } };
+        let fontColor = ''; // empty = default (dark)
+        let cellOverrideFill: typeof cellFill | null = null;
+
+        // Column-specific overrides
+        if (c === 1 && isMissingData(item.productCode))   fontColor = CLR.red;
+        if (c === 3 && isMissingData(item.masterCardNo))  fontColor = CLR.red;
+        if (c === 5 && isMissingData(item.productName))   fontColor = CLR.red;
+        if (c === 6 && isMissingData(item.department))    fontColor = CLR.red;
+
+        // Therapeutic Category (col 4)
+        if (c === 4) {
+          if (isMissingData(item.therapeuticCategory)) { fontColor = CLR.red; }
+          else if (meta.theraMismatch) { fontColor = CLR.amber; cellOverrideFill = { patternType: 'solid', fgColor: { rgb: CLR.bgAmber } }; }
+        }
+        // Storage Condition (col 7)
+        if (c === 7) {
+          if (isMissingData(item.storageCondition)) { fontColor = CLR.red; }
+          else if (meta.storMismatch) { fontColor = CLR.amber; cellOverrideFill = { patternType: 'solid', fgColor: { rgb: CLR.bgAmber } }; }
+        }
+        // Effective Batch No (col 10)
+        if (c === 10) {
+          if (meta.effMismatch) { fontColor = CLR.amber; cellOverrideFill = { patternType: 'solid', fgColor: { rgb: CLR.bgAmber } }; }
+        }
+
+        // Status cell (col 11)
+        if (c === 11) {
+          const statusVal = String(ws[ref].v || '');
+          if (statusVal === 'OK') {
+            fontColor = CLR.green;
+            cellOverrideFill = { patternType: 'solid', fgColor: { rgb: CLR.bgGreen } };
+          } else if (statusVal.includes('MISSING')) {
+            fontColor = CLR.red;
+          } else if (statusVal.includes('MISMATCH')) {
+            fontColor = CLR.amber;
+          }
+        }
+
+        ws[ref].s = {
+          font: { ...baseFont, ...(fontColor ? { color: { rgb: fontColor }, bold: c === 11 } : {}) },
+          fill: cellOverrideFill ?? cellFill,
+          border: baseBorder,
+          alignment: c === 0 ? { horizontal: 'center' } : {},
+        };
+      }
+    });
 
     // Column widths
     ws['!cols'] = [
@@ -317,30 +640,30 @@ export default function ProductMasterPage() {
   // Export modal state (effective-batch view)
   const [showExportModal, setShowExportModal] = useState(false);
 
-  // Batch filter state
-  const [batchFilter, setBatchFilter] = useState<'all' | 'mfg' | 'not-mfg'>('all');
+  // Manufacturing status filter (top-down hierarchy)
+  const [mfgStatus, setMfgStatus] = useState<MfgStatusFilter>('manufactured');
+  const [mfgYear, setMfgYear] = useState<YearFilter>('all');
 
-  // Error type filter state
-  const [errorFilter, setErrorFilter] = useState<string | null>(null);
+  // Error filters (Missing / Mismatch)
+  const [errorPrimary, setErrorPrimary] = useState<ErrorPrimaryFilter>('none');
+  const [errorDetail, setErrorDetail] = useState<string | null>(null); // existing missing-detail keys
+  const [mismatchSubtype, setMismatchSubtype] = useState<MismatchSubtypeFilter>(null);
 
-  const toggleErrorFilter = (key: string) => {
-    setErrorFilter(prev => prev === key ? null : key);
+  // Batch summary (per productCode)
+  const [batchSummary, setBatchSummary] = useState<Record<string, BatchSummary>>({});
+  const [batchSummaryLoading, setBatchSummaryLoading] = useState(false);
+
+  const resetFiltersToDefault = () => {
+    setSearchTerm('');
+    setViewMode('product');
+    setSortField(null);
+    setSortDirection(null);
+    setMfgStatus('manufactured');
+    setMfgYear('all');
+    setErrorPrimary('none');
+    setErrorDetail(null);
+    setMismatchSubtype(null);
   };
-
-  // MFC grouped view — tracks which MFC folders are expanded
-  const [expandedMfcGroups, setExpandedMfcGroups] = useState<Set<string>>(new Set());
-
-  const toggleMfcGroup = (mfc: string) => {
-    setExpandedMfcGroups(prev => {
-      const next = new Set(prev);
-      if (next.has(mfc)) next.delete(mfc);
-      else next.add(mfc);
-      return next;
-    });
-  };
-
-  const expandAllMfcGroups = (groups: string[]) => setExpandedMfcGroups(new Set(groups));
-  const collapseAllMfcGroups = () => setExpandedMfcGroups(new Set());
 
   // Effective Batch grouped view — tracks which groups are expanded
   const [expandedEffBatchGroups, setExpandedEffBatchGroups] = useState<Set<string>>(new Set());
@@ -379,9 +702,9 @@ export default function ProductMasterPage() {
 
   useEffect(() => {
     if (viewMode !== 'batch' || data.length === 0) return;
-    if (batchLinkMap !== null) return; // already fetched
     const productCodes = [...new Set(data.map(d => d.productCode).filter(Boolean))];
     setBatchViewLoading(true);
+    setBatchLinkMap(null);
     fetch('/api/batch/by-codes', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -402,7 +725,7 @@ export default function ProductMasterPage() {
       })
       .catch(err => { console.error('Failed to fetch batch link data', err); setBatchLinkMap(new Map()); })
       .finally(() => setBatchViewLoading(false));
-  }, [viewMode, data, batchLinkMap]);
+  }, [viewMode, data]);
 
   // Missing products state
   const [missingProducts, setMissingProducts] = useState<MissingProduct[]>([]);
@@ -481,8 +804,9 @@ export default function ProductMasterPage() {
       const res = await fetch(`/api/product-master?page=1&limit=10000&search=${encodeURIComponent(search)}`);
       const json = await res.json();
       if (json.success) {
-        setData(json.data);
-        setTotal(json.pagination.total);
+        const filtered = (json.data as ProductMaster[]).filter((item) => !isPlaceboOrMediafillProductName(item.productName));
+        setData(filtered);
+        setTotal(filtered.length);
       }
     } catch (err) {
       console.error('Failed to fetch data', err);
@@ -493,6 +817,38 @@ export default function ProductMasterPage() {
   useEffect(() => {
     fetchData(searchTerm);
   }, [searchTerm]);
+
+  // Fetch per-product batch summary (batchCount + years)
+  useEffect(() => {
+    if (data.length === 0) {
+      setBatchSummary({});
+      return;
+    }
+    const productCodes = [...new Set(data.map(d => d.productCode).filter(Boolean))];
+    if (productCodes.length === 0) {
+      setBatchSummary({});
+      return;
+    }
+    setBatchSummaryLoading(true);
+    fetch('/api/batch/summary-by-codes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ productCodes }),
+    })
+      .then(r => r.json())
+      .then(json => {
+        if (json?.success && json?.data && typeof json.data === 'object') {
+          setBatchSummary(json.data as Record<string, BatchSummary>);
+        } else {
+          setBatchSummary({});
+        }
+      })
+      .catch(err => {
+        console.error('Failed to fetch batch summary', err);
+        setBatchSummary({});
+      })
+      .finally(() => setBatchSummaryLoading(false));
+  }, [data]);
 
   const handleSearch = (e: React.ChangeEvent<HTMLInputElement>) => {
     setSearchTerm(e.target.value);
@@ -515,12 +871,16 @@ export default function ProductMasterPage() {
   };
 
   // Sort data based on view mode and column sorting
-  // A product is "not manufactured" if it was added from batch data (no proper PM entry)
-  const isNotManufactured = (item: ProductMaster) => item.sourceFile === 'added-from-batch-data';
+  const getBatchCount = (itemCode: string | undefined | null) => {
+    const code = (itemCode || '').trim();
+    return code ? (batchSummary[code]?.batchCount ?? 0) : 0;
+  };
+  const isManufactured = (item: ProductMaster) => getBatchCount(item.productCode) > 0;
+  const isNonManufactured = (item: ProductMaster) => getBatchCount(item.productCode) === 0;
 
   const getStatusValue = (item: ProductMaster): number => {
-    // Status sort order: OK (0) > MFG MISSING (1) > Errors (2)
-    if (isNotManufactured(item)) return 1;
+    // Status sort order: OK (0) > Non-manufactured (1) > Errors (2)
+    if (isNonManufactured(item)) return 1;
     if (getMissingFields(item).length > 0) return 2;
     return 0;
   };
@@ -543,6 +903,15 @@ export default function ProductMasterPage() {
           const aStatus = getStatusValue(a);
           const bStatus = getStatusValue(b);
           comparison = aStatus - bStatus;
+        } else if (sortField === 'effectiveBatchNo') {
+          // null/missing first → shorter length first → lexicographic within same length
+          const aVal = normalizeEffBatch(a.effectiveBatchNo);
+          const bVal = normalizeEffBatch(b.effectiveBatchNo);
+          if (!aVal && !bVal) comparison = 0;
+          else if (!aVal) comparison = -1;
+          else if (!bVal) comparison = 1;
+          else if (aVal.length !== bVal.length) comparison = aVal.length - bVal.length;
+          else comparison = aVal.localeCompare(bVal);
         } else {
           const aValue = (a[sortField as keyof ProductMaster] || 'ZZZ').toString().toLowerCase();
           const bValue = (b[sortField as keyof ProductMaster] || 'ZZZ').toString().toLowerCase();
@@ -570,57 +939,139 @@ export default function ProductMasterPage() {
       }
     }
 
-    // Always float "not manufactured" (MFG missing) records to the top
-    sorted.sort((a, b) => {
-      const aNotMfg = isNotManufactured(a) ? 0 : 1;
-      const bNotMfg = isNotManufactured(b) ? 0 : 1;
-      return aNotMfg - bNotMfg;
-    });
-
     return sorted;
   };
 
-  const sortedData = getSortedData().filter(item => {
-    if (batchFilter === 'not-mfg' && !isNotManufactured(item)) return false;
-    if (batchFilter === 'mfg' && isNotManufactured(item)) return false;
-    if (errorFilter === 'mfg-missing') return isNotManufactured(item);
-    if (errorFilter === 'has-errors') return getMissingFields(item).length > 0;
-    if (errorFilter === 'missing-therapeutic') return isMissingData(item.therapeuticCategory);
-    if (errorFilter === 'missing-product-name') return isMissingData(item.productName);
-    if (errorFilter === 'missing-department') return isMissingData(item.department);
-    if (errorFilter === 'missing-master-card') return isMissingData(item.masterCardNo);
-    if (errorFilter === 'missing-storage') return isMissingData(item.storageCondition);
-    if (errorFilter === 'missing-product-type') return isMissingData(item.productType);
+  const baseSorted = getSortedData();
+  const tableColSpan = viewMode === 'batch' ? 11 : 12;
+
+  // Manufacturing status counts (based on current dataset + batch summary)
+  const manufacturedCount = baseSorted.filter(isManufactured).length;
+  const nonManufacturedCount = baseSorted.filter(isNonManufactured).length;
+
+  // Year counts (manufactured only)
+  const yearToCount = new Map<string, number>();
+  for (const it of baseSorted) {
+    if (!isManufactured(it)) continue;
+    const code = (it.productCode || '').trim();
+    const years = batchSummary[code]?.years ?? [];
+    for (const y of years) {
+      yearToCount.set(y, (yearToCount.get(y) ?? 0) + 1);
+    }
+  }
+  const availableYears = [...yearToCount.entries()]
+    .sort(([a], [b]) => b.localeCompare(a))
+    .map(([year, count]) => ({ year, count }));
+
+  const mfgScoped = baseSorted.filter(item => {
+    if (mfgStatus === 'manufactured') return isManufactured(item);
+    if (mfgStatus === 'non-manufactured') return isNonManufactured(item);
     return true;
   });
 
-  // Count not-manufactured records (added from batch, missing proper PM entry)
-  const notManufacturedCount = data.filter(isNotManufactured).length;
-  const manufacturedCount = data.length - notManufacturedCount;
+  const yearScoped = mfgScoped.filter(item => {
+    if (mfgYear === 'all') return true;
+    const code = (item.productCode || '').trim();
+    return (batchSummary[code]?.years ?? []).includes(mfgYear);
+  });
 
-  // Calculate error statistics
-  const errorStats = data.reduce((acc, item) => {
-    let hasError = false;
-    if (isMissingData(item.therapeuticCategory)) hasError = true;
-    if (isMissingData(item.productName)) hasError = true;
-    if (isMissingData(item.productCode)) hasError = true;
-    if (isMissingData(item.department)) hasError = true;
-    if (isMissingData(item.masterCardNo)) hasError = true;
-    if (isMissingData(item.storageCondition)) hasError = true;
-    if (isMissingData(item.productType)) hasError = true;
-    return hasError ? acc + 1 : acc;
-  }, 0);
+  const mismatchMap = computeMismatchMap(yearScoped);
 
-  // Per-field error counts
-  const fieldErrorCounts = {
-    mfgMissing: notManufacturedCount,
-    hasErrors: data.filter(item => getMissingFields(item).length > 0).length,
-    missingTherapeutic: data.filter(item => isMissingData(item.therapeuticCategory)).length,
-    missingProductName: data.filter(item => isMissingData(item.productName)).length,
-    missingDepartment: data.filter(item => isMissingData(item.department)).length,
-    missingMasterCard: data.filter(item => isMissingData(item.masterCardNo)).length,
-    missingStorage: data.filter(item => isMissingData(item.storageCondition)).length,
-    missingProductType: data.filter(item => isMissingData(item.productType)).length,
+  // Dynamic: compute missing count per field — only fields that actually have missing records appear.
+  // Uses each field's custom `check` fn if provided (e.g. effectiveBatchNo treats '0' as valid).
+  const missingFieldCounts = TABLE_FIELD_CONFIG
+    .map(({ key, label, check }) => ({
+      key: key as string,
+      label,
+      count: yearScoped.filter(item => {
+        const val = item[key] as string | undefined | null;
+        return check ? check(val) : isMissingData(val);
+      }).length,
+    }))
+    .filter(x => x.count > 0);
+  const missingTotal = yearScoped.filter(item => getMissingFields(item).length > 0).length;
+
+  // Mismatch counts on current scope
+  let mismatchTotal = 0;
+  let storageMismatchCount = 0;
+  let therapeuticMismatchCount = 0;
+  let effectiveBatchMismatchCount = 0;
+  for (const it of yearScoped) {
+    const code = (it.productCode || '').trim();
+    if (!code) continue;
+    const m = mismatchMap.get(code);
+    if (!m?.any) continue;
+    mismatchTotal += 1;
+    if (m.storage) storageMismatchCount += 1;
+    if (m.therapeutic) therapeuticMismatchCount += 1;
+    if (m.effectiveBatch) effectiveBatchMismatchCount += 1;
+  }
+
+  const scopedFiltered = yearScoped.filter(item => {
+    if (errorPrimary === 'all') {
+      const code = (item.productCode || '').trim();
+      const m = code ? mismatchMap.get(code) : undefined;
+      return getMissingFields(item).length > 0 || Boolean(m?.any);
+    }
+    if (errorPrimary === 'missing') {
+      if (!errorDetail || errorDetail === 'has-errors') return getMissingFields(item).length > 0;
+      // Dynamic field key: use the field's custom check fn if defined, else isMissingData
+      const fieldCfg = TABLE_FIELD_CONFIG.find(f => f.key === errorDetail);
+      const val = item[errorDetail as keyof ProductMaster] as string | undefined | null;
+      return fieldCfg?.check ? fieldCfg.check(val) : isMissingData(val);
+    }
+    if (errorPrimary === 'mismatch') {
+      const code = (item.productCode || '').trim();
+      const m = code ? mismatchMap.get(code) : undefined;
+      if (!m) return false;
+      // Show ALL products in the relevant mismatch group — both wrong (amber) and correct (green).
+      // Counts only include wrong ones (m.any / m.storage / m.therapeutic / m.effectiveBatch).
+      if (mismatchSubtype === 'storage') return Boolean(m.inStorageGroup);
+      if (mismatchSubtype === 'therapeutic') return Boolean(m.inTherapeuticGroup);
+      if (mismatchSubtype === 'effective-batch') return Boolean(m.inEffBatchGroup);
+      return m.inStorageGroup || m.inTherapeuticGroup || m.inEffBatchGroup;
+    }
+    return true; // should never reach
+  });
+
+  // Calculate top-level error statistics (Missing + Mismatch) on current scope
+  const errorStats = missingTotal + mismatchTotal;
+
+  // ── Mismatch cell-style helper ──────────────────────────────────────────────
+  // Returns { bg, color } for therapeutic, storage, or effectiveBatch cells.
+  // When the active filter highlights that field:
+  //   wrong value  → amber/yellow   (counts toward mismatch total)
+  //   correct value → green         (in mismatch group but matches majority — not counted)
+  // When the filter does not target that field → returns null (use default style).
+  type MismatchCellField = 'storage' | 'therapeutic' | 'effBatch';
+  const getMfcCellStyle = (
+    item: ProductMaster,
+    field: MismatchCellField,
+  ): { bg: string; color: string } | null => {
+    if (errorPrimary !== 'mismatch') return null;
+    const fieldActive =
+      mismatchSubtype === null ||
+      (field === 'storage'      && mismatchSubtype === 'storage') ||
+      (field === 'therapeutic'  && mismatchSubtype === 'therapeutic') ||
+      (field === 'effBatch'     && mismatchSubtype === 'effective-batch');
+    if (!fieldActive) return null;
+
+    const code = (item.productCode || '').trim();
+    const m = code ? mismatchMap.get(code) : undefined;
+    if (!m) return null;
+
+    const inGroup = field === 'storage'     ? m.inStorageGroup
+                  : field === 'therapeutic' ? m.inTherapeuticGroup
+                  : m.inEffBatchGroup;
+    if (!inGroup) return null;
+
+    const isWrong = field === 'storage'     ? m.storage
+                  : field === 'therapeutic' ? m.therapeutic
+                  : m.effectiveBatch;
+
+    return isWrong
+      ? { bg: 'rgba(245,158,11,0.18)', color: '#d97706' }   // wrong  → amber
+      : { bg: 'rgba(16,185,129,0.12)', color: '#059669' };  // correct → green
   };
 
   return (
@@ -783,7 +1234,7 @@ export default function ProductMasterPage() {
               </div>
             </div>
 
-            {notManufacturedCount > 0 && (
+            {nonManufacturedCount > 0 && (
               <div style={{
                 padding: '0.3rem 0.75rem',
                 borderRadius: 'var(--radius-md)',
@@ -798,8 +1249,8 @@ export default function ProductMasterPage() {
                   <line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" />
                 </svg>
                 <div>
-                  <div style={{ fontSize: '0.6rem', color: 'var(--muted-foreground)' }}>MFG Missing</div>
-                  <div style={{ fontSize: '0.9rem', fontWeight: '700', color: '#f59e0b' }}>{notManufacturedCount}</div>
+                  <div style={{ fontSize: '0.6rem', color: 'var(--muted-foreground)' }}>Non-Manufactured</div>
+                  <div style={{ fontSize: '0.9rem', fontWeight: '700', color: '#f59e0b' }}>{nonManufacturedCount}</div>
                 </div>
               </div>
             )}
@@ -828,128 +1279,551 @@ export default function ProductMasterPage() {
           </div>
         </div>
 
-        {/* Error Filter Chips */}
+        {/* Top-down Filter Hierarchy */}
         {data.length > 0 && (
-          <div style={{ marginBottom: '0.4rem' }}>
-            <div style={{ display: 'flex', gap: '0.3rem', flexWrap: 'wrap', alignItems: 'center' }}>
-              <span style={{ fontSize: '0.6rem', fontWeight: '600', color: 'var(--muted-foreground)', textTransform: 'uppercase', letterSpacing: '0.05em', marginRight: '0.2rem' }}>
-                Filter by error:
-              </span>
-              {([
-                { key: 'mfg-missing',          label: 'MFG Missing',          count: fieldErrorCounts.mfgMissing,        color: '#f59e0b', bg: 'rgba(245,158,11,0.12)',  border: 'rgba(245,158,11,0.35)' },
-                { key: 'has-errors',            label: 'Has Field Errors',     count: fieldErrorCounts.hasErrors,          color: '#ef4444', bg: 'rgba(239,68,68,0.12)',   border: 'rgba(239,68,68,0.35)' },
-                { key: 'missing-therapeutic',   label: 'Therapeutic Cat.',     count: fieldErrorCounts.missingTherapeutic, color: '#ec4899', bg: 'rgba(236,72,153,0.12)',  border: 'rgba(236,72,153,0.35)' },
-                { key: 'missing-product-name',  label: 'Product Name',         count: fieldErrorCounts.missingProductName, color: '#f97316', bg: 'rgba(249,115,22,0.12)',  border: 'rgba(249,115,22,0.35)' },
-                { key: 'missing-department',    label: 'Department',           count: fieldErrorCounts.missingDepartment,  color: '#8b5cf6', bg: 'rgba(139,92,246,0.12)',  border: 'rgba(139,92,246,0.35)' },
-                { key: 'missing-master-card',   label: 'Master Card No',       count: fieldErrorCounts.missingMasterCard,  color: '#6366f1', bg: 'rgba(99,102,241,0.12)',  border: 'rgba(99,102,241,0.35)' },
-                { key: 'missing-storage',       label: 'Storage Condition',    count: fieldErrorCounts.missingStorage,     color: '#14b8a6', bg: 'rgba(20,184,166,0.12)',  border: 'rgba(20,184,166,0.35)' },
-                { key: 'missing-product-type',  label: 'Product Type',         count: fieldErrorCounts.missingProductType, color: '#64748b', bg: 'rgba(100,116,139,0.12)', border: 'rgba(100,116,139,0.35)' },
-              ] as const).filter(({ count }) => count > 0).map(({ key, label, count, color, bg, border }) => {
-                const isActive = errorFilter === key;
-                return (
-                  <button
-                    key={key}
-                    onClick={() => toggleErrorFilter(key)}
-                    title={`Filter: ${label}`}
-                    style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: '0.25rem',
-                      padding: '0.15rem 0.5rem',
-                      background: isActive ? bg : 'var(--card)',
-                      border: `1px solid ${isActive ? border : 'var(--border)'}`,
-                      borderRadius: '9999px',
-                      cursor: 'pointer',
-                      fontSize: '0.6rem',
-                      fontWeight: isActive ? '700' : '500',
-                      color: isActive ? color : 'var(--muted-foreground)',
-                      transition: 'all var(--transition-fast)',
-                      boxShadow: isActive ? `0 0 0 2px ${border}` : 'none',
-                    }}
-                  >
-                    {label}
-                    <span style={{
-                      padding: '0.05rem 0.35rem',
-                      background: isActive ? color : 'var(--muted)',
-                      color: isActive ? 'white' : 'var(--muted-foreground)',
-                      borderRadius: '9999px',
-                      fontSize: '0.6rem',
-                      fontWeight: '700',
-                    }}>
-                      {count}
-                    </span>
-                  </button>
-                );
-              })}
-              {errorFilter && (
+          <div style={{
+            display: 'grid',
+            gap: '0.55rem',
+            marginBottom: '0.7rem',
+            padding: '0.65rem 0.75rem',
+            borderRadius: 'var(--radius-lg)',
+            border: '1px solid rgba(148, 163, 184, 0.35)',
+            background: 'linear-gradient(180deg, rgba(248, 250, 252, 0.95) 0%, rgba(241, 245, 249, 0.75) 100%)',
+            boxShadow: '0 10px 28px rgba(2, 6, 23, 0.06)',
+            backdropFilter: 'blur(8px)',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.5rem' }}>
+              <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                <div style={{
+                  padding: '0.25rem 0.6rem',
+                  borderRadius: '9999px',
+                  background: 'rgba(139, 92, 246, 0.12)',
+                  border: '1px solid rgba(139, 92, 246, 0.35)',
+                  color: '#8b5cf6',
+                  fontSize: '0.7rem',
+                  fontWeight: 700,
+                }}>
+                  All ({total})
+                </div>
+
+                {/* Reset filters just after "All" */}
                 <button
-                  onClick={() => setErrorFilter(null)}
+                  onClick={resetFiltersToDefault}
                   style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '0.2rem',
-                    padding: '0.15rem 0.5rem',
-                    background: 'var(--muted)',
-                    border: '1px solid var(--border)',
+                    padding: '0.22rem 0.6rem',
+                    background: 'rgba(2, 6, 23, 0.04)',
+                    border: '1px solid rgba(148, 163, 184, 0.55)',
                     borderRadius: '9999px',
                     cursor: 'pointer',
-                    fontSize: '0.6rem',
-                    fontWeight: '600',
-                    color: 'var(--muted-foreground)',
+                    fontSize: '0.68rem',
+                    fontWeight: 900,
+                    color: 'rgba(30, 41, 59, 0.9)',
                   }}
+                  title="Clear all filters and restore defaults"
                 >
-                  <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
-                    <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
-                  </svg>
-                  Clear
+                  Reset filters
                 </button>
+
+                {batchSummaryLoading && (
+                  <div style={{ fontSize: '0.65rem', color: 'var(--muted-foreground)' }}>Updating manufacturing counts…</div>
+                )}
+              </div>
+            </div>
+
+            {/* Manufacturing Status */}
+            <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', alignItems: 'center' }}>
+              <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
+              {([
+                { key: 'manufactured', label: 'Manufactured', count: manufacturedCount, color: '#10b981', bg: 'rgba(16, 185, 129, 0.1)', border: 'rgba(16, 185, 129, 0.3)' },
+                { key: 'non-manufactured', label: 'Non-Manufactured', count: nonManufacturedCount, color: '#f59e0b', bg: 'rgba(245, 158, 11, 0.1)', border: 'rgba(245, 158, 11, 0.3)' },
+              ] as const).map(({ key, label, count, color, bg, border }) => (
+                <button
+                  key={key}
+                  onClick={() => { setMfgStatus(key); setMfgYear('all'); }}
+                  style={{
+                    padding: '0.3rem 0.75rem',
+                    background: mfgStatus === key ? bg : 'var(--card)',
+                    border: `2px solid ${mfgStatus === key ? border : 'var(--border)'}`,
+                    borderRadius: 'var(--radius-md)',
+                    color: mfgStatus === key ? color : 'var(--muted-foreground)',
+                    cursor: 'pointer',
+                    fontSize: '0.8rem',
+                    fontWeight: mfgStatus === key ? '700' : '600',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.4rem',
+                    transition: 'all var(--transition-fast)',
+                    boxShadow: mfgStatus === key ? `0 0 0 2px ${border}` : 'none',
+                  }}
+                  title={`${label} product codes`}
+                >
+                  {label}
+                  <span style={{
+                    padding: '0.125rem 0.5rem',
+                    background: mfgStatus === key ? color : 'var(--muted)',
+                    color: mfgStatus === key ? 'white' : 'var(--muted-foreground)',
+                    borderRadius: '9999px',
+                    fontSize: '0.7rem',
+                    fontWeight: '800',
+                    minWidth: '24px',
+                    textAlign: 'center',
+                  }}>
+                    {count}
+                  </span>
+                </button>
+              ))}
+              </div>
+            </div>
+
+            {/* Manufacturing Year (only meaningful for Manufactured) */}
+            <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap', alignItems: 'center' }}>
+              <span style={{ fontSize: '0.6rem', fontWeight: 700, color: 'var(--muted-foreground)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                Year:
+              </span>
+              <button
+                onClick={() => setMfgYear('all')}
+                disabled={mfgStatus !== 'manufactured'}
+                style={{
+                  padding: '0.15rem 0.55rem',
+                  background: mfgYear === 'all' ? 'rgba(139, 92, 246, 0.12)' : 'var(--card)',
+                  border: `1px solid ${mfgYear === 'all' ? 'rgba(139, 92, 246, 0.35)' : 'var(--border)'}`,
+                  borderRadius: '9999px',
+                  cursor: mfgStatus === 'manufactured' ? 'pointer' : 'not-allowed',
+                  opacity: mfgStatus === 'manufactured' ? 1 : 0.6,
+                    fontSize: '0.75rem',
+                  fontWeight: 800,
+                  color: mfgYear === 'all' ? '#8b5cf6' : 'var(--muted-foreground)',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.35rem',
+                }}
+                title={mfgStatus !== 'manufactured' ? 'Year filter applies to Manufactured only' : 'All manufactured years'}
+              >
+                All ({manufacturedCount})
+              </button>
+              {availableYears.map(({ year, count }) => (
+                <button
+                  key={year}
+                  onClick={() => setMfgYear(year)}
+                  disabled={mfgStatus !== 'manufactured'}
+                  style={{
+                    padding: '0.15rem 0.55rem',
+                    background: mfgYear === year ? 'rgba(16, 185, 129, 0.12)' : 'var(--card)',
+                    border: `1px solid ${mfgYear === year ? 'rgba(16, 185, 129, 0.35)' : 'var(--border)'}`,
+                    borderRadius: '9999px',
+                    cursor: mfgStatus === 'manufactured' ? 'pointer' : 'not-allowed',
+                    opacity: mfgStatus === 'manufactured' ? 1 : 0.6,
+                    fontSize: '0.75rem',
+                    fontWeight: mfgYear === year ? 900 : 800,
+                    color: mfgYear === year ? '#10b981' : 'var(--muted-foreground)',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '0.35rem',
+                  }}
+                  title={`Manufactured in ${year}`}
+                >
+                  {year} ({count})
+                </button>
+              ))}
+            </div>
+
+            {/* Error Filters: Missing / Mismatch */}
+            <div style={{ display: 'grid', gap: '0.3rem' }}>
+              {/* Primary row: All Errors / Missing / Mismatch */}
+              <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                <span style={{ fontSize: '0.6rem', fontWeight: 700, color: 'var(--muted-foreground)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                  Errors:
+                </span>
+                <button
+                  onClick={() => { setErrorPrimary(errorPrimary === 'all' ? 'none' : 'all'); setErrorDetail(null); setMismatchSubtype(null); }}
+                  style={{
+                    padding: '0.2rem 0.6rem',
+                    background: errorPrimary === 'all' ? 'rgba(239,68,68,0.15)' : 'var(--card)',
+                    border: `1px solid ${errorPrimary === 'all' ? 'rgba(239,68,68,0.5)' : 'rgba(239,68,68,0.3)'}`,
+                    borderRadius: '9999px',
+                    cursor: 'pointer',
+                    fontSize: '0.75rem',
+                    fontWeight: 900,
+                    color: '#ef4444',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '0.35rem',
+                  }}
+                  title="Show all records with any error"
+                >
+                  All Errors ({errorStats})
+                </button>
+                <button
+                  onClick={() => { setErrorPrimary('missing'); setErrorDetail(null); setMismatchSubtype(null); }}
+                  style={{
+                    padding: '0.2rem 0.6rem',
+                    background: errorPrimary === 'missing' ? 'rgba(239,68,68,0.15)' : 'var(--card)',
+                    border: `1px solid ${errorPrimary === 'missing' ? 'rgba(239,68,68,0.5)' : 'var(--border)'}`,
+                    borderRadius: '9999px',
+                    cursor: 'pointer',
+                    fontSize: '0.75rem',
+                    fontWeight: 900,
+                    color: errorPrimary === 'missing' ? '#ef4444' : 'var(--muted-foreground)',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '0.35rem',
+                    boxShadow: errorPrimary === 'missing' ? '0 0 0 2px rgba(239,68,68,0.12)' : 'none',
+                  }}
+                  title="Missing field errors"
+                >
+                  Missing ({missingTotal})
+                </button>
+                <button
+                  onClick={() => { setErrorPrimary('mismatch'); setErrorDetail(null); setMismatchSubtype(null); }}
+                  style={{
+                    padding: '0.2rem 0.6rem',
+                    background: errorPrimary === 'mismatch' ? 'rgba(245,158,11,0.12)' : 'var(--card)',
+                    border: `1px solid ${errorPrimary === 'mismatch' ? 'rgba(245,158,11,0.35)' : 'var(--border)'}`,
+                    borderRadius: '9999px',
+                    cursor: 'pointer',
+                    fontSize: '0.75rem',
+                    fontWeight: 900,
+                    color: errorPrimary === 'mismatch' ? '#f59e0b' : 'var(--muted-foreground)',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '0.35rem',
+                  }}
+                  title="Mismatch errors within the same MFC"
+                >
+                  Mismatch ({mismatchTotal})
+                </button>
+              </div>
+
+              {/* Sub-filters for "All Errors": show missing fields (red) + mismatch subtypes (amber) together */}
+              {errorPrimary === 'all' && (
+                <div style={{ display: 'flex', gap: '0.3rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                  {missingFieldCounts.map(({ key, label, count }) => (
+                    <button
+                      key={key}
+                      onClick={() => { setErrorPrimary('missing'); setErrorDetail(key); }}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '0.25rem',
+                        padding: '0.15rem 0.5rem',
+                        background: 'var(--card)',
+                        border: '1px solid rgba(239,68,68,0.3)',
+                        borderRadius: '9999px',
+                        cursor: 'pointer',
+                        fontSize: '0.7rem',
+                        fontWeight: 700,
+                        color: '#ef4444',
+                      }}
+                      title={`Filter: records missing ${label}`}
+                    >
+                      {label} <span style={{ fontWeight: 900 }}>({count})</span>
+                    </button>
+                  ))}
+                  {([
+                    { key: 'storage' as const, label: 'Storage Mismatch', count: storageMismatchCount },
+                    { key: 'therapeutic' as const, label: 'Therapeutic Mismatch', count: therapeuticMismatchCount },
+                    { key: 'effective-batch' as const, label: 'Eff. Batch Mismatch', count: effectiveBatchMismatchCount },
+                  ]).filter(x => x.count > 0).map(x => (
+                    <button
+                      key={x.key}
+                      onClick={() => { setErrorPrimary('mismatch'); setMismatchSubtype(x.key); }}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '0.25rem',
+                        padding: '0.15rem 0.5rem',
+                        background: 'var(--card)',
+                        border: '1px solid rgba(245,158,11,0.35)',
+                        borderRadius: '9999px',
+                        cursor: 'pointer',
+                        fontSize: '0.7rem',
+                        fontWeight: 700,
+                        color: '#d97706',
+                      }}
+                      title={`Filter: ${x.label}`}
+                    >
+                      {x.label} <span style={{ fontWeight: 900 }}>({x.count})</span>
+                    </button>
+                  ))}
+                </div>
               )}
+
+              {/* Sub-filters for "Missing": per-field red pills */}
+              {errorPrimary === 'missing' && (
+                <div style={{ display: 'flex', gap: '0.3rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                  {missingFieldCounts.map(({ key, label, count }) => {
+                    const active = errorDetail === key;
+                    return (
+                      <button
+                        key={key}
+                        onClick={() => setErrorDetail(prev => prev === key ? null : key)}
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '0.25rem',
+                          padding: '0.15rem 0.5rem',
+                          background: active ? 'rgba(239,68,68,0.12)' : 'var(--card)',
+                          border: `1px solid ${active ? 'rgba(239,68,68,0.45)' : 'rgba(239,68,68,0.25)'}`,
+                          borderRadius: '9999px',
+                          cursor: 'pointer',
+                          fontSize: '0.7rem',
+                          fontWeight: active ? '900' : '700',
+                          color: active ? '#dc2626' : '#ef4444',
+                          boxShadow: active ? '0 0 0 2px rgba(239,68,68,0.12)' : 'none',
+                        }}
+                        title={`Filter: records missing ${label}`}
+                      >
+                        {label} <span style={{ fontWeight: 900, opacity: 0.95 }}>({count})</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Sub-filters for "Mismatch": amber pills */}
+              {errorPrimary === 'mismatch' && (
+                <div style={{ display: 'flex', gap: '0.3rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                  <button
+                    onClick={() => setMismatchSubtype(null)}
+                    style={{
+                      padding: '0.15rem 0.5rem',
+                      background: mismatchSubtype === null ? 'rgba(245,158,11,0.12)' : 'var(--card)',
+                      border: `1px solid ${mismatchSubtype === null ? 'rgba(245,158,11,0.35)' : 'var(--border)'}`,
+                      borderRadius: '9999px',
+                      cursor: 'pointer',
+                      fontSize: '0.7rem',
+                      fontWeight: 900,
+                      color: mismatchSubtype === null ? '#f59e0b' : 'var(--muted-foreground)',
+                    }}
+                    title="All mismatch types"
+                  >
+                    Mismatch ({mismatchTotal})
+                  </button>
+                  {([
+                    { key: 'storage' as const, label: 'Storage Condition Mismatch', count: storageMismatchCount },
+                    { key: 'therapeutic' as const, label: 'Therapeutic Category Mismatch', count: therapeuticMismatchCount },
+                    { key: 'effective-batch' as const, label: 'Effective Batch Mismatch', count: effectiveBatchMismatchCount },
+                  ]).filter(x => x.count > 0).map(x => (
+                    <button
+                      key={x.key}
+                      onClick={() => setMismatchSubtype(prev => prev === x.key ? null : x.key)}
+                      style={{
+                        padding: '0.15rem 0.5rem',
+                        background: mismatchSubtype === x.key ? 'rgba(245,158,11,0.12)' : 'var(--card)',
+                        border: `1px solid ${mismatchSubtype === x.key ? 'rgba(245,158,11,0.35)' : 'var(--border)'}`,
+                        borderRadius: '9999px',
+                        cursor: 'pointer',
+                        fontSize: '0.7rem',
+                        fontWeight: mismatchSubtype === x.key ? 950 : 800,
+                        color: mismatchSubtype === x.key ? '#f59e0b' : 'var(--muted-foreground)',
+                      }}
+                      title={`Filter: ${x.label}`}
+                    >
+                      {x.label} ({x.count})
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Active Filters */}
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: '0.6rem',
+              flexWrap: 'wrap',
+              paddingTop: '0.15rem',
+            }}>
+              <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                <span style={{
+                  fontSize: '0.6rem',
+                  fontWeight: 900,
+                  color: 'rgba(30, 41, 59, 0.75)',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.08em',
+                }}>
+                  Active Filters
+                </span>
+
+                {/* Manufacturing status tag */}
+                {mfgStatus !== 'manufactured' && (
+                  <span style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '0.35rem',
+                    padding: '0.22rem 0.55rem',
+                    background: 'rgba(16, 185, 129, 0.08)',
+                    border: '1px solid rgba(16, 185, 129, 0.25)',
+                    borderRadius: '9999px',
+                    fontSize: '0.68rem',
+                    fontWeight: 800,
+                    color: 'rgba(15, 23, 42, 0.85)',
+                  }}>
+                    Mfg status: {mfgStatus === 'non-manufactured' ? 'Non-Manufactured' : mfgStatus}
+                    <button
+                      onClick={() => { setMfgStatus('manufactured'); setMfgYear('all'); }}
+                      style={{
+                        background: 'transparent',
+                        border: 'none',
+                        cursor: 'pointer',
+                        fontSize: '0.85rem',
+                        lineHeight: 1,
+                        color: 'rgba(15, 23, 42, 0.65)',
+                        padding: 0,
+                      }}
+                      aria-label="Remove manufacturing status filter"
+                      title="Remove"
+                    >
+                      ×
+                    </button>
+                  </span>
+                )}
+
+                {/* Year tag */}
+                {mfgYear !== 'all' && (
+                  <span style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '0.35rem',
+                    padding: '0.22rem 0.55rem',
+                    background: 'rgba(139, 92, 246, 0.08)',
+                    border: '1px solid rgba(139, 92, 246, 0.25)',
+                    borderRadius: '9999px',
+                    fontSize: '0.68rem',
+                    fontWeight: 800,
+                    color: 'rgba(15, 23, 42, 0.85)',
+                  }}>
+                    Mfg year: {String(mfgYear).slice(-2)}
+                    <button
+                      onClick={() => setMfgYear('all')}
+                      style={{
+                        background: 'transparent',
+                        border: 'none',
+                        cursor: 'pointer',
+                        fontSize: '0.85rem',
+                        lineHeight: 1,
+                        color: 'rgba(15, 23, 42, 0.65)',
+                        padding: 0,
+                      }}
+                      aria-label="Remove manufacturing year filter"
+                      title="Remove"
+                    >
+                      ×
+                    </button>
+                  </span>
+                )}
+
+                {/* Error tag(s) */}
+                {(errorPrimary === 'missing' || errorPrimary === 'mismatch') && (() => {
+                  // Build human-readable label for the active error filter
+                  let errorLabel = errorPrimary === 'missing' ? 'Missing' : 'Mismatch';
+                  if (errorDetail && errorDetail !== 'has-errors') {
+                    const field = TABLE_FIELD_CONFIG.find(f => f.key === errorDetail);
+                    errorLabel += ` / ${field?.label ?? errorDetail}`;
+                  } else if (errorDetail === 'has-errors') {
+                    errorLabel += ' / Has Field Errors';
+                  }
+                  if (mismatchSubtype) errorLabel += ` / ${mismatchSubtype}`;
+                  return (
+                    <span style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '0.35rem',
+                      padding: '0.22rem 0.55rem',
+                      background: errorPrimary === 'missing' ? 'rgba(239, 68, 68, 0.08)' : 'rgba(245, 158, 11, 0.10)',
+                      border: errorPrimary === 'missing' ? '1px solid rgba(239, 68, 68, 0.3)' : '1px solid rgba(245, 158, 11, 0.25)',
+                      borderRadius: '9999px',
+                      fontSize: '0.68rem',
+                      fontWeight: 800,
+                      color: errorPrimary === 'missing' ? '#dc2626' : '#d97706',
+                    }}>
+                      {errorLabel}
+                      <button
+                        onClick={() => { setErrorPrimary('none'); setErrorDetail(null); setMismatchSubtype(null); }}
+                        style={{
+                          background: 'transparent',
+                          border: 'none',
+                          cursor: 'pointer',
+                          fontSize: '0.85rem',
+                          lineHeight: 1,
+                          color: 'rgba(15, 23, 42, 0.65)',
+                          padding: 0,
+                        }}
+                        aria-label="Remove error filter"
+                        title="Remove"
+                      >
+                        ×
+                      </button>
+                    </span>
+                  );
+                })()}
+
+                {/* Search tag */}
+                {searchTerm && (
+                  <span style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '0.35rem',
+                    padding: '0.22rem 0.55rem',
+                    background: 'rgba(2, 132, 199, 0.08)',
+                    border: '1px solid rgba(2, 132, 199, 0.25)',
+                    borderRadius: '9999px',
+                    fontSize: '0.68rem',
+                    fontWeight: 800,
+                    color: 'rgba(15, 23, 42, 0.85)',
+                    maxWidth: '520px',
+                  }}>
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={searchTerm}>
+                      Search: {searchTerm}
+                    </span>
+                    <button
+                      onClick={() => setSearchTerm('')}
+                      style={{
+                        background: 'transparent',
+                        border: 'none',
+                        cursor: 'pointer',
+                        fontSize: '0.85rem',
+                        lineHeight: 1,
+                        color: 'rgba(15, 23, 42, 0.65)',
+                        padding: 0,
+                      }}
+                      aria-label="Remove search filter"
+                      title="Remove"
+                    >
+                      ×
+                    </button>
+                  </span>
+                )}
+
+                {/* If nothing is active beyond defaults */}
+                {mfgStatus === 'manufactured' && mfgYear === 'all' && errorPrimary === 'all' && !searchTerm && (
+                  <span style={{ fontSize: '0.68rem', fontWeight: 700, color: 'rgba(30, 41, 59, 0.55)' }}>
+                    None (default view)
+                  </span>
+                )}
+              </div>
+
+              <button
+                onClick={resetFiltersToDefault}
+                style={{
+                  padding: '0.32rem 0.75rem',
+                  borderRadius: 'var(--radius-md)',
+                  border: '1px solid rgba(99, 102, 241, 0.35)',
+                  background: 'rgba(99, 102, 241, 0.08)',
+                  color: 'rgba(67, 56, 202, 0.95)',
+                  cursor: 'pointer',
+                  fontSize: '0.72rem',
+                  fontWeight: 900,
+                  whiteSpace: 'nowrap',
+                }}
+                title="Clear/Remove Filters"
+              >
+                Clear/Remove Filters
+              </button>
             </div>
           </div>
         )}
-
-        {/* Batch Filter Buttons */}
-        <div style={{ display: 'flex', gap: '0.4rem', marginBottom: '0.4rem', flexWrap: 'wrap' }}>
-          {([
-            { key: 'all', label: 'All Batches', count: data.length, color: '#8b5cf6', bg: 'rgba(139, 92, 246, 0.1)', border: 'rgba(139, 92, 246, 0.3)' },
-            { key: 'mfg', label: 'Manufactured', count: manufacturedCount, color: '#10b981', bg: 'rgba(16, 185, 129, 0.1)', border: 'rgba(16, 185, 129, 0.3)' },
-            { key: 'not-mfg', label: 'Not Manufactured', count: notManufacturedCount, color: '#f59e0b', bg: 'rgba(245, 158, 11, 0.1)', border: 'rgba(245, 158, 11, 0.3)' },
-          ] as const).map(({ key, label, count, color, bg, border }) => (
-            <button
-              key={key}
-              onClick={() => setBatchFilter(key)}
-              style={{
-                padding: '0.3rem 0.75rem',
-                background: batchFilter === key ? bg : 'var(--card)',
-                border: `2px solid ${batchFilter === key ? border : 'var(--border)'}`,
-                borderRadius: 'var(--radius-md)',
-                color: batchFilter === key ? color : 'var(--muted-foreground)',
-                cursor: 'pointer',
-                fontSize: '0.7rem',
-                fontWeight: batchFilter === key ? '700' : '500',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.4rem',
-                transition: 'all var(--transition-fast)',
-                boxShadow: batchFilter === key ? `0 0 0 2px ${border}` : 'none',
-              }}
-            >
-              {label}
-              <span style={{
-                padding: '0.125rem 0.5rem',
-                background: batchFilter === key ? color : 'var(--muted)',
-                color: batchFilter === key ? 'white' : 'var(--muted-foreground)',
-                borderRadius: '9999px',
-                fontSize: '0.7rem',
-                fontWeight: '700',
-                minWidth: '24px',
-                textAlign: 'center',
-              }}>
-                {count}
-              </span>
-            </button>
-          ))}
-        </div>
 
         {/* View Mode Toggle and Export Buttons */}
         <div style={{
@@ -1002,22 +1876,6 @@ export default function ProductMasterPage() {
               MFC
             </button>
             <button
-              onClick={() => setViewMode('effective-batch')}
-              style={{
-                padding: '0.3rem 0.75rem',
-                background: viewMode === 'effective-batch' ? 'var(--gradient-primary)' : 'transparent',
-                color: viewMode === 'effective-batch' ? 'white' : 'var(--foreground)',
-                border: 'none',
-                borderRadius: 'var(--radius-sm)',
-                cursor: 'pointer',
-                fontWeight: '500',
-                fontSize: '0.7rem',
-                transition: 'all var(--transition-fast)',
-              }}
-            >
-              Eff. Batch
-            </button>
-            <button
               onClick={() => setViewMode('batch')}
               style={{
                 padding: '0.3rem 0.75rem',
@@ -1035,82 +1893,42 @@ export default function ProductMasterPage() {
             </button>
           </div>
 
-          {/* Check Missing & Export Buttons Container */}
+          {/* Export Buttons Container */}
           <div style={{
             display: 'flex',
             gap: '0.5rem',
             alignItems: 'center',
           }}>
-            {/* Check Missing Products Button */}
-            <button
-              onClick={checkMissingProducts}
-              disabled={checkingMissing}
-              style={{
-                padding: '0.35rem 0.875rem',
-                background: showMissingPanel
-                  ? 'linear-gradient(135deg, #f59e0b 0%, #fbbf24 100%)'
-                  : 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
-                border: 'none',
-                borderRadius: 'var(--radius-md)',
-                color: 'white',
-                cursor: checkingMissing ? 'not-allowed' : 'pointer',
-                fontSize: '0.7rem',
-                fontWeight: '600',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.4rem',
-                boxShadow: 'var(--shadow-lg)',
-                transition: 'all var(--transition-fast)',
-                opacity: checkingMissing ? 0.7 : 1,
-              }}
-            >
-              {checkingMissing ? (
-                <svg className="animate-spin" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M21 12a9 9 0 11-6.219-8.56" strokeLinecap="round" />
-                </svg>
-              ) : (
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" />
-                  <line x1="11" y1="8" x2="11" y2="14" /><line x1="8" y1="11" x2="14" y2="11" />
-                </svg>
-              )}
-              {checkingMissing ? 'Checking...' : showMissingPanel ? 'Hide Missing' : 'Check Missing'}
-              {missingStats && missingStats.totalMissing > 0 && !showMissingPanel && (
-                <span style={{
-                  background: 'rgba(255,255,255,0.3)',
-                  borderRadius: '9999px',
-                  padding: '0.125rem 0.5rem',
-                  fontSize: '0.7rem',
-                  fontWeight: '700',
-                }}>
-                  {missingStats.totalMissing}
-                </span>
-              )}
-            </button>
-
             {/* Export Button */}
             <button
             onClick={() => {
               if (viewMode === 'effective-batch') {
                 setShowExportModal(true);
               } else {
-                exportToExcel(sortedData, viewMode, total, { searchTerm, batchFilter, errorFilter });
+                exportToExcel(scopedFiltered, viewMode, total, {
+                  searchTerm,
+                  mfgStatus,
+                  year: mfgYear,
+                  errorPrimary,
+                  errorDetail,
+                  mismatchSubtype,
+                }, mismatchMap);
               }
             }}
-            disabled={sortedData.length === 0}
+            disabled={scopedFiltered.length === 0}
             style={{
               padding: '0.35rem 0.875rem',
-              background: sortedData.length === 0 ? 'var(--muted)' : 'linear-gradient(135deg, #10b981 0%, #34d399 100%)',
+              background: scopedFiltered.length === 0 ? 'var(--muted)' : 'linear-gradient(135deg, #10b981 0%, #34d399 100%)',
               border: 'none',
               borderRadius: 'var(--radius-md)',
-              color: sortedData.length === 0 ? 'var(--muted-foreground)' : 'white',
-              cursor: sortedData.length === 0 ? 'not-allowed' : 'pointer',
+              color: scopedFiltered.length === 0 ? 'var(--muted-foreground)' : 'white',
+              cursor: scopedFiltered.length === 0 ? 'not-allowed' : 'pointer',
               fontSize: '0.7rem',
               fontWeight: '600',
               display: 'flex',
               alignItems: 'center',
               gap: '0.4rem',
-              boxShadow: sortedData.length === 0 ? 'none' : 'var(--shadow-lg)',
+              boxShadow: scopedFiltered.length === 0 ? 'none' : 'var(--shadow-lg)',
               transition: 'all var(--transition-fast)',
             }}
           >
@@ -1169,7 +1987,7 @@ export default function ProductMasterPage() {
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                 <button
-                  onClick={() => { exportEffectiveBatchToExcel(sortedData, false); setShowExportModal(false); }}
+                  onClick={() => { exportEffectiveBatchToExcel(scopedFiltered, false, mismatchMap); setShowExportModal(false); }}
                   style={{
                     padding: '0.75rem 1rem',
                     background: 'linear-gradient(135deg, #10b981 0%, #34d399 100%)',
@@ -1193,7 +2011,7 @@ export default function ProductMasterPage() {
                 </button>
 
                 <button
-                  onClick={() => { exportEffectiveBatchToExcel(sortedData, true); setShowExportModal(false); }}
+                  onClick={() => { exportEffectiveBatchToExcel(scopedFiltered, true, mismatchMap); setShowExportModal(false); }}
                   style={{
                     padding: '0.75rem 1rem',
                     background: 'linear-gradient(135deg, #ef4444 0%, #f87171 100%)',
@@ -1525,7 +2343,7 @@ export default function ProductMasterPage() {
               fontSize: '0.7rem',
               fontWeight: '600',
             }}>
-              Showing {sortedData.length} of {total}
+              Showing {scopedFiltered.length} of {baseSorted.length} (All {total})
             </span>
           </div>
 
@@ -1544,6 +2362,100 @@ export default function ProductMasterPage() {
                 zIndex: 2,
               }}>
                 <tr>
+                  {viewMode === 'mfc' ? (
+                    <>
+                      {([
+                        { key: 'masterCardNo', label: 'Master Card No', width: '170px' },
+                        { key: 'srNo', label: 'SR No', width: '52px' },
+                        { key: 'productCode', label: 'Product Code', width: '120px' },
+                        { key: 'genericName', label: 'Generic Name', width: '160px' },
+                        { key: 'therapeuticCategory', label: 'Therapeutic Category', width: '170px' },
+                        { key: 'productName', label: 'Product Name', width: '260px' },
+                        { key: 'department', label: 'Department', width: '160px' },
+                        { key: 'storageCondition', label: 'Storage Condition', width: '190px' },
+                        { key: 'productType', label: 'Product Type', width: '120px' },
+                        { key: 'specification', label: 'Spec', width: '120px' },
+                        { key: 'effectiveBatchNo', label: 'Eff. Batch No', width: '110px' },
+                        { key: 'status', label: 'Status', width: '220px' },
+                      ] as const).map(({ key, label, width }) => (
+                        <th
+                          key={key}
+                          onClick={() => handleSort(key as SortField)}
+                          style={{
+                            padding: '0.28rem 0.4rem',
+                            textAlign: 'left',
+                            fontSize: '0.62rem',
+                            fontWeight: '800',
+                            color: 'var(--muted-foreground)',
+                            textTransform: 'uppercase',
+                            letterSpacing: '0.05em',
+                            whiteSpace: 'nowrap',
+                            width,
+                            borderRight: key === 'status' ? undefined : '1px solid var(--border)',
+                            cursor: 'pointer',
+                            userSelect: 'none',
+                            transition: 'background-color var(--transition-fast)',
+                          }}
+                          onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'rgba(0,0,0,0.05)'}
+                          onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                            {label}
+                            <span style={{ opacity: sortField === (key as SortField) ? 1 : 0.35 }}>
+                              {sortField === (key as SortField) ? (sortDirection === 'asc' ? '↑' : '↓') : '↕'}
+                            </span>
+                          </div>
+                        </th>
+                      ))}
+                    </>
+                  ) : viewMode === 'batch' ? (
+                    <>
+                      {([
+                        { key: 'batchNo', label: 'Batch No', width: '130px', sortable: false },
+                        { key: 'productCode', label: 'Product Code', width: '130px', sortable: true },
+                        { key: 'genericName', label: 'Generic Name', width: '180px', sortable: true },
+                        { key: 'masterCardNo', label: 'MFC No', width: '180px', sortable: true },
+                        { key: 'therapeuticCategory', label: 'Therapeutic Category', width: '190px', sortable: true },
+                        { key: 'productName', label: 'Product Name', width: '280px', sortable: true },
+                        { key: 'department', label: 'Department', width: '170px', sortable: true },
+                        { key: 'storageCondition', label: 'Storage Condition', width: '220px', sortable: true },
+                        { key: 'specification', label: 'Spec', width: '120px', sortable: true },
+                        { key: 'effectiveBatchNo', label: 'Eff. Batch No', width: '120px', sortable: true },
+                        { key: 'status', label: 'Status', width: '220px', sortable: true },
+                      ] as const).map(({ key, label, width, sortable }) => (
+                        <th
+                          key={key}
+                          onClick={sortable ? () => handleSort(key as SortField) : undefined}
+                          style={{
+                            padding: '0.28rem 0.4rem',
+                            textAlign: 'left',
+                            fontSize: '0.62rem',
+                            fontWeight: '800',
+                            color: sortable && sortField === key ? 'var(--foreground)' : 'var(--muted-foreground)',
+                            textTransform: 'uppercase',
+                            letterSpacing: '0.05em',
+                            whiteSpace: 'nowrap',
+                            width,
+                            borderRight: key === 'status' ? undefined : '1px solid var(--border)',
+                            userSelect: 'none',
+                            cursor: sortable ? 'pointer' : 'default',
+                          }}
+                          onMouseEnter={sortable ? (e) => { e.currentTarget.style.backgroundColor = 'rgba(0,0,0,0.05)'; } : undefined}
+                          onMouseLeave={sortable ? (e) => { e.currentTarget.style.backgroundColor = 'transparent'; } : undefined}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                            {label}
+                            {sortable && (
+                              <span style={{ opacity: sortField === key ? 1 : 0.35 }}>
+                                {sortField === key ? (sortDirection === 'asc' ? '↑' : '↓') : '↕'}
+                              </span>
+                            )}
+                          </div>
+                        </th>
+                      ))}
+                    </>
+                  ) : (
+                    <>
                   <th
                     onClick={() => handleSort('srNo')}
                     style={{
@@ -1846,12 +2758,14 @@ export default function ProductMasterPage() {
                       </span>
                     </div>
                   </th>
+                    </>
+                  )}
                 </tr>
               </thead>
               <tbody>
                 {loading ? (
                   <tr>
-                    <td colSpan={12} style={{
+                    <td colSpan={tableColSpan} style={{
                       padding: '3rem',
                       textAlign: 'center',
                       color: 'var(--muted-foreground)',
@@ -1862,9 +2776,9 @@ export default function ProductMasterPage() {
                       <div>Loading products...</div>
                     </td>
                   </tr>
-                ) : sortedData.length === 0 ? (
+                ) : scopedFiltered.length === 0 ? (
                   <tr>
-                    <td colSpan={12} style={{
+                    <td colSpan={tableColSpan} style={{
                       padding: '3rem',
                       textAlign: 'center',
                       color: 'var(--muted-foreground)',
@@ -1880,184 +2794,170 @@ export default function ProductMasterPage() {
                     </td>
                   </tr>
                 ) : viewMode === 'mfc' ? (() => {
-                  // Build grouped structure: { mfc -> products[] }
+                  // MFC view with merged "Master Card No" (rowSpan) but ALL columns shown.
                   const groups: { mfc: string; products: ProductMaster[] }[] = [];
                   const seen = new Map<string, number>();
-                  sortedData.forEach(item => {
+                  scopedFiltered.forEach(item => {
                     const mfc = item.masterCardNo || 'N/A';
                     if (!seen.has(mfc)) { seen.set(mfc, groups.length); groups.push({ mfc, products: [] }); }
                     groups[seen.get(mfc)!].products.push(item);
                   });
-                  const allMfcKeys = groups.map(g => g.mfc);
+
+                  let sr = 0;
+                  const cellBase: React.CSSProperties = {
+                    padding: '0.2rem 0.4rem',
+                    fontSize: '0.66rem',
+                    borderRight: '1px solid var(--border)',
+                    verticalAlign: 'top',
+                  };
 
                   return (
                     <>
-                      {/* Expand/Collapse All row */}
-                      <tr>
-                        <td colSpan={12} style={{ padding: '0.25rem 0.5rem', background: 'var(--muted)', borderBottom: '1px solid var(--border)' }}>
-                          <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
-                            <span style={{ fontSize: '0.7rem', color: 'var(--muted-foreground)', fontWeight: '600' }}>
-                              {groups.length} MFC group{groups.length !== 1 ? 's' : ''}
-                            </span>
-                            <button onClick={() => expandAllMfcGroups(allMfcKeys)} style={{ fontSize: '0.7rem', color: '#8b5cf6', background: 'none', border: 'none', cursor: 'pointer', fontWeight: '600', padding: '0.125rem 0.5rem', borderRadius: 'var(--radius-sm)' }}>
-                              Expand All
-                            </button>
-                            <span style={{ color: 'var(--border)' }}>|</span>
-                            <button onClick={() => collapseAllMfcGroups()} style={{ fontSize: '0.7rem', color: 'var(--muted-foreground)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: '600', padding: '0.125rem 0.5rem', borderRadius: 'var(--radius-sm)' }}>
-                              Collapse All
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
+                      {groups.flatMap((group, groupIdx) =>
+                        group.products.map((item, idx) => {
+                          sr += 1;
+                          const errors = getMissingFields(item);
+                          const hasError = errors.length > 0;
+                          const notMfg = isNonManufactured(item);
 
-                      {groups.map((group) => {
-                        const isOpen = expandedMfcGroups.has(group.mfc);
-                        const groupHasError = group.products.some(p => getMissingFields(p).length > 0);
-                        const groupNotMfg = group.products.every(p => isNotManufactured(p));
+                          const groupZebraBg = groupIdx % 2 === 0 ? 'white' : 'rgba(0, 0, 0, 0.03)';
 
-                        return (
-                          <React.Fragment key={group.mfc}>
-                            {/* MFC folder row */}
+                          return (
                             <tr
-                              onClick={() => toggleMfcGroup(group.mfc)}
+                              key={item._id}
                               style={{
                                 borderBottom: '1px solid var(--border)',
-                                background: groupNotMfg
-                                  ? 'rgba(245, 158, 11, 0.08)'
-                                  : groupHasError
-                                    ? 'rgba(239, 68, 68, 0.06)'
-                                    : 'rgba(139, 92, 246, 0.06)',
-                                borderLeft: groupNotMfg ? '4px solid #f59e0b' : groupHasError ? '4px solid #ef4444' : '4px solid #8b5cf6',
-                                cursor: 'pointer',
+                                transition: 'background-color var(--transition-fast)',
+                                background: groupZebraBg,
                               }}
-                              onMouseEnter={(e) => e.currentTarget.style.opacity = '0.85'}
-                              onMouseLeave={(e) => e.currentTarget.style.opacity = '1'}
+                              onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--muted)'; }}
+                              onMouseLeave={(e) => { e.currentTarget.style.background = groupZebraBg; }}
                             >
-                              <td style={{ padding: '0.3rem 0.5rem', width: '80px' }}>
-                                <svg
-                                  width="16" height="16" viewBox="0 0 24 24" fill="none"
-                                  stroke={groupNotMfg ? '#f59e0b' : '#8b5cf6'} strokeWidth="2.5"
-                                  style={{ transition: 'transform 0.15s', transform: isOpen ? 'rotate(90deg)' : 'rotate(0deg)', display: 'block' }}
+                              {/* MASTER CARD NO (rowspan / merged) */}
+                              {idx === 0 && (
+                                <td
+                                  rowSpan={group.products.length}
+                                  style={{
+                                    ...cellBase,
+                                    width: '170px',
+                                    fontFamily: 'monospace',
+                                    fontWeight: 950,
+                                    color: isMissingData(group.mfc) ? '#ef4444' : 'var(--foreground)',
+                                    background: groupZebraBg,
+                                  }}
                                 >
-                                  <polyline points="9 18 15 12 9 6" />
-                                </svg>
-                              </td>
-                              <td colSpan={10} style={{ padding: '0.3rem 0.5rem' }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-                                  <svg width="18" height="18" viewBox="0 0 24 24" fill={isOpen ? '#8b5cf6' : 'none'} stroke={groupNotMfg ? '#f59e0b' : '#8b5cf6'} strokeWidth="2">
-                                    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-                                  </svg>
-                                  <span style={{ fontFamily: 'monospace', fontWeight: '700', fontSize: '0.85rem', color: groupNotMfg ? '#f59e0b' : 'var(--foreground)' }}>
-                                    {group.mfc}
-                                  </span>
-                                  <span style={{
-                                    padding: '0.15rem 0.5rem',
-                                    background: 'rgba(139, 92, 246, 0.12)',
-                                    color: '#8b5cf6',
-                                    borderRadius: '9999px',
-                                    fontSize: '0.65rem',
-                                    fontWeight: '700',
-                                  }}>
-                                    {group.products.length} product{group.products.length !== 1 ? 's' : ''}
-                                  </span>
-                                  {groupNotMfg && (
-                                    <span style={{ padding: '0.15rem 0.5rem', background: 'rgba(245,158,11,0.15)', color: '#f59e0b', borderRadius: '9999px', fontSize: '0.65rem', fontWeight: '700' }}>
-                                      MFG MISSING
-                                    </span>
-                                  )}
-                                  {groupHasError && !groupNotMfg && (
-                                    <span style={{ padding: '0.15rem 0.5rem', background: 'rgba(239,68,68,0.1)', color: '#ef4444', borderRadius: '9999px', fontSize: '0.65rem', fontWeight: '700' }}>
-                                      HAS ERRORS
-                                    </span>
-                                  )}
-                                </div>
-                              </td>
-                              <td style={{ padding: '0.3rem 0.5rem', textAlign: 'right', color: 'var(--muted-foreground)', fontSize: '0.65rem' }}>
-                                {isOpen ? 'Collapse' : 'Expand'}
-                              </td>
-                            </tr>
+                                  {group.mfc}
+                                </td>
+                              )}
 
-                            {/* Product rows inside folder */}
-                            {isOpen && group.products.map((item, idx) => {
-                              const errors = getMissingFields(item);
-                              const hasError = errors.length > 0;
-                              const notMfg = isNotManufactured(item);
-                              return (
-                                <tr key={item._id} style={{
-                                  borderBottom: '1px solid var(--border)',
-                                  background: (notMfg && hasError) ? 'rgba(239,68,68,0.04)' : notMfg ? 'rgba(245,158,11,0.04)' : hasError ? 'rgba(239,68,68,0.04)' : idx % 2 === 0 ? 'rgba(0,0,0,0.01)' : 'transparent',
-                                  borderLeft: (notMfg && hasError) ? '4px solid rgba(239,68,68,0.5)' : notMfg ? '4px solid rgba(245,158,11,0.4)' : hasError ? '4px solid rgba(239,68,68,0.3)' : '4px solid rgba(139,92,246,0.2)',
-                                }}
-                                  onMouseEnter={(e) => e.currentTarget.style.background = 'var(--muted)'}
-                                  onMouseLeave={(e) => e.currentTarget.style.background = notMfg ? 'rgba(245,158,11,0.04)' : hasError ? 'rgba(239,68,68,0.04)' : idx % 2 === 0 ? 'rgba(0,0,0,0.01)' : 'transparent'}
-                                >
-                                  {/* Indent + tree connector */}
-                                  <td style={{ padding: '0.25rem 0.5rem', color: 'var(--muted-foreground)', fontSize: '0.7rem', fontFamily: 'monospace', borderRight: '1px solid var(--border)' }}>
-                                    <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', paddingLeft: '0.5rem' }}>
-                                      <span style={{ color: '#8b5cf6', opacity: 0.5 }}>{idx === group.products.length - 1 ? '└' : '├'}</span>
-                                    </span>
-                                  </td>
-                                  <td style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', color: notMfg ? '#f59e0b' : isMissingData(item.productCode) ? '#ef4444' : 'var(--foreground)', fontFamily: 'monospace', fontWeight: '600', borderRight: '1px solid var(--border)' }}>
-                                    {item.productCode || 'N/A'}
-                                  </td>
-                                  <td style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem', color: 'var(--foreground)', borderRight: '1px solid var(--border)' }}>{item.genericName || '-'}</td>
-                                  <td style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem', color: isMissingData(item.masterCardNo) ? '#ef4444' : 'var(--muted-foreground)', fontFamily: 'monospace', borderRight: '1px solid var(--border)' }}>{item.masterCardNo || 'N/A'}</td>
-                                  <td style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem', borderRight: '1px solid var(--border)' }}>
-                                    <span style={{ padding: '0.2rem 0.5rem', background: isMissingData(item.therapeuticCategory) ? 'rgba(239,68,68,0.1)' : 'rgba(245,158,11,0.1)', color: isMissingData(item.therapeuticCategory) ? '#ef4444' : '#f59e0b', borderRadius: 'var(--radius-sm)', fontSize: '0.7rem', fontWeight: '600' }}>
+                              {/* SR NO */}
+                              <td style={{ ...cellBase, width: '52px', fontFamily: 'monospace', fontWeight: 800 }}>{sr}</td>
+
+                              {/* PRODUCT CODE */}
+                              <td style={{ ...cellBase, width: '120px', fontFamily: 'monospace', fontWeight: 800, color: isMissingData(item.productCode) ? '#ef4444' : 'var(--foreground)' }}>
+                                {item.productCode || 'N/A'}
+                              </td>
+
+                              {/* GENERIC NAME */}
+                              <td style={{ ...cellBase, width: '160px', color: 'var(--foreground)' }}>{item.genericName || '-'}</td>
+
+                              {(() => {
+                                const theraStyle = getMfcCellStyle(item, 'therapeutic');
+                                const missingThera = isMissingData(item.therapeuticCategory);
+                                const theraBg = missingThera ? 'rgba(239,68,68,0.12)' : theraStyle ? theraStyle.bg : 'rgba(245,158,11,0.10)';
+                                const theraColor = missingThera ? '#ef4444' : theraStyle ? theraStyle.color : '#f59e0b';
+                                return (
+                                  <td style={{ ...cellBase, width: '170px' }}>
+                                    <span style={{ padding: '0.06rem 0.3rem', background: theraBg, color: theraColor, borderRadius: '6px', fontSize: '0.62rem', fontWeight: 900 }}>
                                       {item.therapeuticCategory || 'N/A'}
                                     </span>
                                   </td>
-                                  <td style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem', fontWeight: '500', color: isMissingData(item.productName) ? '#ef4444' : 'var(--foreground)', borderRight: '1px solid var(--border)' }}>{item.productName || 'N/A'}</td>
-                                  <td style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem', color: isMissingData(item.department) ? '#ef4444' : 'var(--foreground)', borderRight: '1px solid var(--border)' }}>{item.department || 'N/A'}</td>
-                                  <td style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem', color: isMissingData(item.storageCondition) ? '#ef4444' : 'var(--muted-foreground)', maxWidth: '200px', borderRight: '1px solid var(--border)' }}>
-                                    <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item.storageCondition || 'N/A'}>{item.storageCondition || 'N/A'}</div>
+                                );
+                              })()}
+
+                              <td style={{ ...cellBase, width: '260px', whiteSpace: 'normal' }}>
+                                <span style={{ fontWeight: 800, color: isMissingData(item.productName) ? '#ef4444' : 'var(--foreground)' }}>
+                                  {item.productName || 'N/A'}
+                                </span>
+                              </td>
+
+                              <td style={{ ...cellBase, width: '160px', whiteSpace: 'normal', color: isMissingData(item.department) ? '#ef4444' : 'var(--foreground)' }}>
+                                {item.department || 'N/A'}
+                              </td>
+
+                              {(() => {
+                                const storStyle = getMfcCellStyle(item, 'storage');
+                                const missingStorage = isMissingData(item.storageCondition);
+                                return (
+                                  <td style={{ ...cellBase, width: '190px', whiteSpace: 'normal', background: missingStorage ? 'rgba(239,68,68,0.06)' : storStyle ? storStyle.bg : undefined, color: missingStorage ? '#ef4444' : storStyle ? storStyle.color : 'var(--muted-foreground)' }}>
+                                    {item.storageCondition || 'N/A'}
                                   </td>
-                                  <td style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem', borderRight: '1px solid var(--border)' }}>
-                                    <span style={{ padding: '0.2rem 0.5rem', background: isMissingData(item.productType) ? 'rgba(239,68,68,0.1)' : item.productType === 'EXPORT' ? 'rgba(20,184,166,0.1)' : 'rgba(139,92,246,0.1)', color: isMissingData(item.productType) ? '#ef4444' : item.productType === 'EXPORT' ? '#14b8a6' : '#8b5cf6', borderRadius: 'var(--radius-sm)', fontSize: '0.7rem', fontWeight: '600' }}>
-                                      {item.productType || 'N/A'}
-                                    </span>
-                                  </td>
-                                  {/* Specification */}
-                                  <td style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem', borderRight: '1px solid var(--border)' }}>
-                                    {item.specification ? (
-                                      <span style={{ padding: '0.2rem 0.5rem', background: 'rgba(99,102,241,0.1)', color: '#6366f1', borderRadius: 'var(--radius-sm)', fontSize: '0.7rem', fontWeight: '700', fontFamily: 'monospace' }}>
-                                        {item.specification}
-                                      </span>
-                                    ) : <span style={{ color: 'var(--muted-foreground)' }}>—</span>}
-                                  </td>
-                                  {/* Effective Batch No */}
-                                  <td style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', fontFamily: 'monospace', color: item.effectiveBatchNo ? 'var(--foreground)' : 'var(--muted-foreground)', borderRight: '1px solid var(--border)' }}>
+                                );
+                              })()}
+
+                              <td style={{ ...cellBase, width: '120px' }}>
+                                <span style={{
+                                  padding: '0.06rem 0.3rem',
+                                  background: isMissingData(item.productType)
+                                    ? 'rgba(239, 68, 68, 0.12)'
+                                    : item.productType === 'EXPORT' ? 'rgba(20, 184, 166, 0.12)' : 'rgba(139, 92, 246, 0.12)',
+                                  color: isMissingData(item.productType)
+                                    ? '#ef4444'
+                                    : item.productType === 'EXPORT' ? '#14b8a6' : '#8b5cf6',
+                                  borderRadius: '9999px',
+                                  fontSize: '0.62rem',
+                                  fontWeight: 950,
+                                }}>
+                                  {item.productType || 'N/A'}
+                                </span>
+                              </td>
+
+                              <td style={{ ...cellBase, width: '120px' }}>
+                                {item.specification ? (
+                                  <span style={{ padding: '0.06rem 0.3rem', background: 'rgba(99, 102, 241, 0.10)', color: '#6366f1', borderRadius: '6px', fontSize: '0.62rem', fontWeight: 950, fontFamily: 'monospace' }}>
+                                    {item.specification}
+                                  </span>
+                                ) : (
+                                  <span style={{ color: 'var(--muted-foreground)' }}>—</span>
+                                )}
+                              </td>
+
+                              {(() => {
+                                const effStyle = getMfcCellStyle(item, 'effBatch');
+                                return (
+                                  <td style={{ ...cellBase, width: '110px', fontFamily: 'monospace', background: effStyle ? effStyle.bg : undefined, color: effStyle ? effStyle.color : item.effectiveBatchNo ? 'var(--foreground)' : 'var(--muted-foreground)' }}>
                                     {item.effectiveBatchNo || '—'}
                                   </td>
-                                  <td style={{ padding: '0.25rem 0.5rem', fontSize: '0.7rem', verticalAlign: 'top' }}>
-                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
-                                      {notMfg && (
-                                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', padding: '0.2rem 0.5rem', background: 'rgba(245,158,11,0.15)', color: '#f59e0b', borderRadius: 'var(--radius-sm)', fontSize: '0.65rem', fontWeight: '700' }}>
-                                          MFG MISSING
-                                        </span>
-                                      )}
-                                      {hasError && (
-                                        <div style={{ color: '#ef4444', fontWeight: '700', display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
-                                          <span>MISSING:</span>
-                                          <ul style={{ paddingLeft: '1rem', margin: 0, listStyleType: 'disc' }}>
-                                            {errors.map((e, i) => <li key={i}>{e}</li>)}
-                                          </ul>
-                                        </div>
-                                      )}
-                                      {!notMfg && !hasError && (
-                                        <span style={{ color: '#10b981', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-                                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><polyline points="20 6 9 17 4 12" /></svg>
-                                          OK
+                                );
+                              })()}
+
+                              <td style={{ padding: '0.2rem 0.4rem', fontSize: '0.64rem', verticalAlign: 'top' }}>
+                                {(() => {
+                                  const code = (item.productCode || '').trim();
+                                  const mfcMM = code ? mismatchMap.get(code) : undefined;
+                                  const mismatchFields: string[] = [];
+                                  if (mfcMM?.storage) mismatchFields.push('Storage Condition');
+                                  if (mfcMM?.therapeutic) mismatchFields.push('Therapeutic Category');
+                                  if (mfcMM?.effectiveBatch) mismatchFields.push('Effective Batch');
+                                  const hasMismatchHere = mismatchFields.length > 0;
+                                  if (!notMfg && !hasError && !hasMismatchHere) return <span style={{ color: '#10b981', fontWeight: 950 }}>OK</span>;
+                                  return (
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
+                                      {notMfg && <span style={{ color: '#f59e0b', fontWeight: 950 }}>MFG MISSING</span>}
+                                      {hasError && <span style={{ color: '#ef4444', fontWeight: 900 }}>MISSING: {errors.join(', ')}</span>}
+                                      {hasMismatchHere && (
+                                        <span style={{ color: '#d97706', fontWeight: 900 }}>
+                                          MISMATCH: {mismatchFields.join(', ')}
                                         </span>
                                       )}
                                     </div>
-                                  </td>
-                                </tr>
-                              );
-                            })}
-                          </React.Fragment>
-                        );
-                      })}
+                                  );
+                                })()}
+                              </td>
+                            </tr>
+                          );
+                        })
+                      )}
                     </>
                   );
                 })() : viewMode === 'effective-batch' ? (() => {
@@ -2066,7 +2966,7 @@ export default function ProductMasterPage() {
                   // "0" / 0   → '0' group (explicitly zero)
                   // Both go to the bottom; all other values sort ascending
                   const groupMap = new Map<string, ProductMaster[]>();
-                  sortedData.forEach(item => {
+                  scopedFiltered.forEach(item => {
                     const raw = item.effectiveBatchNo;
                     const normalized = (raw !== null && raw !== undefined)
                       ? String(raw).trim()
@@ -2076,23 +2976,12 @@ export default function ProductMasterPage() {
                     groupMap.get(key)!.push(item);
                   });
 
-                  const isBottomKey = (k: string) => k === '0' || k === '__null__';
-
-                  // Sort: real batches first (numeric), then "0", then null
+                  // Sort: __null__ first, then by string length (shorter first), then lexicographic
                   const sortedKeys = Array.from(groupMap.keys()).sort((a, b) => {
-                    const aBottom = isBottomKey(a);
-                    const bBottom = isBottomKey(b);
-                    if (aBottom && bBottom) {
-                      // null comes after 0
-                      if (a === '__null__' && b !== '__null__') return 1;
-                      if (b === '__null__' && a !== '__null__') return -1;
-                      return 0;
-                    }
-                    if (aBottom) return 1;
-                    if (bBottom) return -1;
-                    const aNum = parseFloat(a);
-                    const bNum = parseFloat(b);
-                    if (!isNaN(aNum) && !isNaN(bNum)) return aNum - bNum;
+                    if (a === '__null__' && b === '__null__') return 0;
+                    if (a === '__null__') return -1;
+                    if (b === '__null__') return 1;
+                    if (a.length !== b.length) return a.length - b.length;
                     return a.localeCompare(b);
                   });
 
@@ -2102,7 +2991,7 @@ export default function ProductMasterPage() {
                     <>
                       {/* Expand/Collapse All row */}
                       <tr>
-                        <td colSpan={12} style={{ padding: '0.25rem 0.5rem', background: 'var(--muted)', borderBottom: '1px solid var(--border)' }}>
+                        <td colSpan={tableColSpan} style={{ padding: '0.25rem 0.5rem', background: 'var(--muted)', borderBottom: '1px solid var(--border)' }}>
                           <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
                             <span style={{ fontSize: '0.7rem', color: 'var(--muted-foreground)', fontWeight: '600' }}>
                               {groups.length} Effective Batch group{groups.length !== 1 ? 's' : ''}
@@ -2120,24 +3009,20 @@ export default function ProductMasterPage() {
 
                       {groups.map((group) => {
                         const isOpen = expandedEffBatchGroups.has(group.key);
-                        const isZeroBatch = group.key === '0';
                         const isNullBatch = group.key === '__null__';
-                        const isBottomGroup = isZeroBatch || isNullBatch;
-                        const groupIssueCount = group.products.filter(p => getMissingFields(p).length > 0 || isNotManufactured(p)).length;
+                        const groupIssueCount = group.products.filter(p => getMissingFields(p).length > 0 || isNonManufactured(p)).length;
                         const hasIssues = groupIssueCount > 0;
 
-                        const headerBg = isBottomGroup
+                        const headerBg = isNullBatch
                           ? 'rgba(100, 116, 139, 0.08)'
                           : hasIssues
                             ? 'rgba(239, 68, 68, 0.06)'
                             : 'rgba(99, 102, 241, 0.06)';
-                        const headerAccent = isBottomGroup ? '#64748b' : hasIssues ? '#ef4444' : '#6366f1';
+                        const headerAccent = isNullBatch ? '#64748b' : hasIssues ? '#ef4444' : '#6366f1';
 
                         const groupLabel = isNullBatch
                           ? 'No Effective Batch (—)'
-                          : isZeroBatch
-                            ? 'Effective Batch: 0'
-                            : `Eff. Batch: ${group.key}`;
+                          : `Eff. Batch: ${group.key}`;
 
                         return (
                           <React.Fragment key={group.key}>
@@ -2169,7 +3054,7 @@ export default function ProductMasterPage() {
                                     <line x1="8" y1="2" x2="8" y2="6" />
                                     <line x1="3" y1="10" x2="21" y2="10" />
                                   </svg>
-                                  <span style={{ fontFamily: 'monospace', fontWeight: '700', fontSize: '0.85rem', color: isBottomGroup ? '#64748b' : 'var(--foreground)' }}>
+                                  <span style={{ fontFamily: 'monospace', fontWeight: '700', fontSize: '0.85rem', color: isNullBatch ? '#64748b' : 'var(--foreground)' }}>
                                     {groupLabel}
                                   </span>
                                   <span style={{
@@ -2200,7 +3085,7 @@ export default function ProductMasterPage() {
                                       </svg>
                                       {groupIssueCount} issue{groupIssueCount !== 1 ? 's' : ''}
                                     </span>
-                                  ) : !isBottomGroup ? (
+                                  ) : !isNullBatch ? (
                                     <span style={{
                                       padding: '0.15rem 0.6rem',
                                       background: 'rgba(16,185,129,0.12)',
@@ -2218,11 +3103,6 @@ export default function ProductMasterPage() {
                                       No issue found
                                     </span>
                                   ) : null}
-                                  {isZeroBatch && (
-                                    <span style={{ padding: '0.15rem 0.5rem', background: 'rgba(100,116,139,0.15)', color: '#64748b', borderRadius: '9999px', fontSize: '0.65rem', fontWeight: '700' }}>
-                                      ZERO BATCH
-                                    </span>
-                                  )}
                                   {isNullBatch && (
                                     <span style={{ padding: '0.15rem 0.5rem', background: 'rgba(100,116,139,0.15)', color: '#64748b', borderRadius: '9999px', fontSize: '0.65rem', fontWeight: '700' }}>
                                       NO BATCH
@@ -2239,7 +3119,7 @@ export default function ProductMasterPage() {
                             {isOpen && group.products.map((item, idx) => {
                               const errors = getMissingFields(item);
                               const hasError = errors.length > 0;
-                              const notMfg = isNotManufactured(item);
+                              const notMfg = isNonManufactured(item);
                               return (
                                 <tr key={item._id} style={{
                                   borderBottom: '1px solid var(--border)',
@@ -2259,16 +3139,28 @@ export default function ProductMasterPage() {
                                   </td>
                                   <td style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem', color: 'var(--foreground)', borderRight: '1px solid var(--border)' }}>{item.genericName || '-'}</td>
                                   <td style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem', color: isMissingData(item.masterCardNo) ? '#ef4444' : 'var(--muted-foreground)', fontFamily: 'monospace', borderRight: '1px solid var(--border)' }}>{item.masterCardNo || 'N/A'}</td>
-                                  <td style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem', borderRight: '1px solid var(--border)' }}>
-                                    <span style={{ padding: '0.2rem 0.5rem', background: isMissingData(item.therapeuticCategory) ? 'rgba(239,68,68,0.1)' : 'rgba(245,158,11,0.1)', color: isMissingData(item.therapeuticCategory) ? '#ef4444' : '#f59e0b', borderRadius: 'var(--radius-sm)', fontSize: '0.7rem', fontWeight: '600' }}>
-                                      {item.therapeuticCategory || 'N/A'}
-                                    </span>
-                                  </td>
+                                  {(() => {
+                                    const theraStyle2 = getMfcCellStyle(item, 'therapeutic');
+                                    const missingThera2 = isMissingData(item.therapeuticCategory);
+                                    return (
+                                      <td style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem', borderRight: '1px solid var(--border)' }}>
+                                        <span style={{ padding: '0.2rem 0.5rem', background: missingThera2 ? 'rgba(239,68,68,0.1)' : theraStyle2 ? theraStyle2.bg : 'rgba(245,158,11,0.1)', color: missingThera2 ? '#ef4444' : theraStyle2 ? theraStyle2.color : '#f59e0b', borderRadius: 'var(--radius-sm)', fontSize: '0.7rem', fontWeight: '600' }}>
+                                          {item.therapeuticCategory || 'N/A'}
+                                        </span>
+                                      </td>
+                                    );
+                                  })()}
                                   <td style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem', fontWeight: '500', color: isMissingData(item.productName) ? '#ef4444' : 'var(--foreground)', borderRight: '1px solid var(--border)' }}>{item.productName || 'N/A'}</td>
                                   <td style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem', color: isMissingData(item.department) ? '#ef4444' : 'var(--foreground)', borderRight: '1px solid var(--border)' }}>{item.department || 'N/A'}</td>
-                                  <td style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem', color: isMissingData(item.storageCondition) ? '#ef4444' : 'var(--muted-foreground)', maxWidth: '200px', borderRight: '1px solid var(--border)' }}>
-                                    <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item.storageCondition || 'N/A'}>{item.storageCondition || 'N/A'}</div>
-                                  </td>
+                                  {(() => {
+                                    const storStyle2 = getMfcCellStyle(item, 'storage');
+                                    const missingStorage2 = isMissingData(item.storageCondition);
+                                    return (
+                                      <td style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem', maxWidth: '200px', borderRight: '1px solid var(--border)', background: missingStorage2 ? 'rgba(239,68,68,0.06)' : storStyle2 ? storStyle2.bg : undefined, color: missingStorage2 ? '#ef4444' : storStyle2 ? storStyle2.color : 'var(--muted-foreground)' }}>
+                                        <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item.storageCondition || 'N/A'}>{item.storageCondition || 'N/A'}</div>
+                                      </td>
+                                    );
+                                  })()}
                                   <td style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem', borderRight: '1px solid var(--border)' }}>
                                     <span style={{ padding: '0.2rem 0.5rem', background: isMissingData(item.productType) ? 'rgba(239,68,68,0.1)' : item.productType === 'EXPORT' ? 'rgba(20,184,166,0.1)' : 'rgba(139,92,246,0.1)', color: isMissingData(item.productType) ? '#ef4444' : item.productType === 'EXPORT' ? '#14b8a6' : '#8b5cf6', borderRadius: 'var(--radius-sm)', fontSize: '0.7rem', fontWeight: '600' }}>
                                       {item.productType || 'N/A'}
@@ -2281,9 +3173,14 @@ export default function ProductMasterPage() {
                                       </span>
                                     ) : <span style={{ color: 'var(--muted-foreground)' }}>—</span>}
                                   </td>
-                                  <td style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', fontFamily: 'monospace', color: item.effectiveBatchNo ? 'var(--foreground)' : 'var(--muted-foreground)', borderRight: '1px solid var(--border)' }}>
-                                    {item.effectiveBatchNo || '—'}
-                                  </td>
+                                  {(() => {
+                                    const effStyle2 = getMfcCellStyle(item, 'effBatch');
+                                    return (
+                                      <td style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', fontFamily: 'monospace', borderRight: '1px solid var(--border)', background: effStyle2 ? effStyle2.bg : undefined, color: effStyle2 ? effStyle2.color : item.effectiveBatchNo ? 'var(--foreground)' : 'var(--muted-foreground)' }}>
+                                        {item.effectiveBatchNo || '—'}
+                                      </td>
+                                    );
+                                  })()}
                                   <td style={{ padding: '0.25rem 0.5rem', fontSize: '0.7rem', verticalAlign: 'top' }}>
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
                                       {notMfg && (
@@ -2316,11 +3213,12 @@ export default function ProductMasterPage() {
                     </>
                   );
                 })() : viewMode === 'batch' ? (() => {
-                  // Batch-wise view: group products by real batch numbers from Batch collection
+                  // Batch-wise view: group products by Batch No (from Batch collection),
+                  // and render as a table with Batch No shown once (rowspan).
                   if (batchViewLoading || batchLinkMap === null) {
                     return (
                       <tr>
-                        <td colSpan={12} style={{ padding: '3rem', textAlign: 'center', color: 'var(--muted-foreground)' }}>
+                        <td colSpan={tableColSpan} style={{ padding: '3rem', textAlign: 'center', color: 'var(--muted-foreground)' }}>
                           <svg className="animate-spin" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ display: 'inline-block', marginBottom: '0.5rem' }}>
                             <path d="M21 12a9 9 0 11-6.219-8.56" strokeLinecap="round" />
                           </svg>
@@ -2330,216 +3228,220 @@ export default function ProductMasterPage() {
                     );
                   }
 
-                  // Build productCode → ProductMaster lookup
-                  const productMap = new Map<string, ProductMaster>();
-                  sortedData.forEach(item => { if (item.productCode) productMap.set(item.productCode, item); });
-
-                  // Build groups from batchLinkMap: batchNumber → ProductMaster[]
-                  // A product code may appear in multiple batches
-                  const groupMap = new Map<string, ProductMaster[]>();
+                  // Build code → batch numbers map so we can iterate scopedFiltered in sort order
+                  const codeToBatches = new Map<string, string[]>();
                   batchLinkMap.forEach((codes, batchNumber) => {
-                    const products: ProductMaster[] = [];
                     codes.forEach(code => {
-                      const pm = productMap.get(code);
-                      if (pm) products.push(pm);
+                      if (!codeToBatches.has(code)) codeToBatches.set(code, []);
+                      codeToBatches.get(code)!.push(batchNumber);
                     });
-                    if (products.length > 0) groupMap.set(batchNumber, products);
                   });
 
-                  // Products with no batch association
+                  // Build groups preserving scopedFiltered order (respects active filters + sorting)
+                  const groupMap = new Map<string, ProductMaster[]>();
                   const linkedCodes = new Set<string>();
                   batchLinkMap.forEach(codes => codes.forEach(c => linkedCodes.add(c)));
-                  const unlinked = sortedData.filter(item => !item.productCode || !linkedCodes.has(item.productCode));
+
+                  scopedFiltered.forEach(item => {
+                    const code = item.productCode;
+                    if (!code) return;
+                    const batches = codeToBatches.get(code);
+                    if (batches && batches.length > 0) {
+                      batches.forEach(batchNo => {
+                        if (!groupMap.has(batchNo)) groupMap.set(batchNo, []);
+                        groupMap.get(batchNo)!.push(item);
+                      });
+                    }
+                  });
+
+                  // Products with no batch association (also in scopedFiltered order)
+                  const unlinked = scopedFiltered.filter(item => !item.productCode || !linkedCodes.has(item.productCode));
                   if (unlinked.length > 0) groupMap.set('__no_batch__', unlinked);
 
-                  // Sort: real batch keys alphabetically, then "no batch" at end
+                  // Sort batch groups by Batch No asc (__no_batch__ last)
                   const sortedKeys = Array.from(groupMap.keys()).sort((a, b) => {
                     if (a === '__no_batch__') return 1;
                     if (b === '__no_batch__') return -1;
                     return a.localeCompare(b);
                   });
 
-                  const groups = sortedKeys.map(key => ({ key, products: groupMap.get(key)! }));
+                  const groups = sortedKeys.map(key => ({ key, products: groupMap.get(key) ?? [] }));
 
+                  let rowKey = 0;
                   return (
                     <>
-                      {/* Expand/Collapse All row */}
-                      <tr>
-                        <td colSpan={12} style={{ padding: '0.25rem 0.5rem', background: 'var(--muted)', borderBottom: '1px solid var(--border)' }}>
-                          <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
-                            <span style={{ fontSize: '0.7rem', color: 'var(--muted-foreground)', fontWeight: '600' }}>
-                              {groups.length} Batch group{groups.length !== 1 ? 's' : ''}
-                            </span>
-                            <button onClick={() => expandAllBatchGroups(sortedKeys)} style={{ fontSize: '0.7rem', color: '#14b8a6', background: 'none', border: 'none', cursor: 'pointer', fontWeight: '600', padding: '0.125rem 0.5rem', borderRadius: 'var(--radius-sm)' }}>
-                              Expand All
-                            </button>
-                            <span style={{ color: 'var(--border)' }}>|</span>
-                            <button onClick={() => collapseAllBatchGroups()} style={{ fontSize: '0.7rem', color: 'var(--muted-foreground)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: '600', padding: '0.125rem 0.5rem', borderRadius: 'var(--radius-sm)' }}>
-                              Collapse All
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-
-                      {groups.map((group) => {
-                        const isOpen = expandedBatchGroups.has(group.key);
+                      {groups.flatMap(group => {
                         const isNoBatch = group.key === '__no_batch__';
-                        const groupHasError = group.products.some(p => getMissingFields(p).length > 0 || isNotManufactured(p));
-                        const issueCount = group.products.filter(p => getMissingFields(p).length > 0 || isNotManufactured(p)).length;
-                        const accent = isNoBatch ? '#64748b' : groupHasError ? '#ef4444' : '#14b8a6';
-                        const headerBg = isNoBatch
-                          ? 'rgba(100,116,139,0.08)'
-                          : groupHasError
-                            ? 'rgba(239,68,68,0.06)'
-                            : 'rgba(20,184,166,0.06)';
+                        const batchLabel = isNoBatch ? 'NO BATCH' : group.key;
+                        const batchBg = isNoBatch ? 'rgba(100,116,139,0.08)' : 'rgba(99,102,241,0.06)';
+                        const batchColor = isNoBatch ? '#64748b' : '#4f46e5';
+                        const batchBorder = isNoBatch ? 'rgba(100,116,139,0.25)' : 'rgba(79,70,229,0.25)';
 
-                        return (
-                          <React.Fragment key={group.key}>
-                            {/* Batch folder row */}
-                            <tr
-                              onClick={() => toggleBatchGroup(group.key)}
-                              style={{
-                                borderBottom: '1px solid var(--border)',
-                                borderLeft: `4px solid ${accent}`,
-                                cursor: 'pointer',
-                              }}
-                              onMouseEnter={(e) => e.currentTarget.style.opacity = '0.85'}
-                              onMouseLeave={(e) => e.currentTarget.style.opacity = '1'}
-                            >
-                              <td style={{ padding: '0.3rem 0.5rem', width: '80px', background: headerBg }}>
-                                <svg
-                                  width="16" height="16" viewBox="0 0 24 24" fill="none"
-                                  stroke={accent} strokeWidth="2.5"
-                                  style={{ transition: 'transform 0.15s', transform: isOpen ? 'rotate(90deg)' : 'rotate(0deg)', display: 'block' }}
-                                >
-                                  <polyline points="9 18 15 12 9 6" />
-                                </svg>
-                              </td>
-                              <td colSpan={10} style={{ padding: '0.3rem 0.5rem', background: headerBg }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-                                  <svg width="18" height="18" viewBox="0 0 24 24" fill={isOpen ? accent : 'none'} stroke={accent} strokeWidth="2">
-                                    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-                                  </svg>
-                                  <span style={{ fontFamily: 'monospace', fontWeight: '700', fontSize: '0.85rem', color: isNoBatch ? '#64748b' : 'var(--foreground)' }}>
-                                    {isNoBatch ? 'No Batch Assigned' : `Batch No: ${group.key}`}
-                                  </span>
-                                  <span style={{ padding: '0.15rem 0.5rem', background: 'rgba(20,184,166,0.12)', color: '#14b8a6', borderRadius: '9999px', fontSize: '0.65rem', fontWeight: '700' }}>
-                                    {group.products.length} product{group.products.length !== 1 ? 's' : ''}
-                                  </span>
-                                  {isNoBatch && (
-                                    <span style={{ padding: '0.15rem 0.5rem', background: 'rgba(100,116,139,0.15)', color: '#64748b', borderRadius: '9999px', fontSize: '0.65rem', fontWeight: '700' }}>
-                                      NO BATCH
-                                    </span>
-                                  )}
-                                  {groupHasError && !isNoBatch && (
-                                    <span style={{ padding: '0.15rem 0.6rem', background: 'rgba(239,68,68,0.12)', color: '#ef4444', borderRadius: '9999px', fontSize: '0.65rem', fontWeight: '700', display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}>
-                                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
-                                        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
-                                        <line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" />
-                                      </svg>
-                                      {issueCount} issue{issueCount !== 1 ? 's' : ''}
-                                    </span>
-                                  )}
-                                  {!groupHasError && !isNoBatch && (
-                                    <span style={{ padding: '0.15rem 0.6rem', background: 'rgba(16,185,129,0.12)', color: '#10b981', borderRadius: '9999px', fontSize: '0.65rem', fontWeight: '700', display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}>
-                                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><polyline points="20 6 9 17 4 12" /></svg>
-                                      All OK
-                                    </span>
-                                  )}
-                                </div>
-                              </td>
-                              <td style={{ padding: '0.3rem 0.5rem', textAlign: 'right', color: 'var(--muted-foreground)', fontSize: '0.65rem', background: headerBg }}>
-                                {isOpen ? 'Collapse' : 'Expand'}
-                              </td>
-                            </tr>
+                        return group.products.map((item, idx) => {
+                          const errors = getMissingFields(item);
+                          const hasMissing = errors.length > 0;
+                          const notMfg = isNonManufactured(item);
+                          const code = (item.productCode || '').trim();
+                          const m = code ? mismatchMap.get(code) : undefined;
+                          const hasMismatch = Boolean(m?.any);
+                          const rowHasError = hasMissing || notMfg || hasMismatch;
 
-                            {/* Child product rows */}
-                            {isOpen && group.products.map((item, idx) => {
-                              const errors = getMissingFields(item);
-                              const hasError = errors.length > 0;
-                              const notMfg = isNotManufactured(item);
-                              return (
-                                <tr key={item._id} style={{
-                                  borderBottom: '1px solid var(--border)',
-                                  background: (notMfg && hasError) ? 'rgba(239,68,68,0.04)' : notMfg ? 'rgba(245,158,11,0.04)' : hasError ? 'rgba(239,68,68,0.04)' : idx % 2 === 0 ? 'rgba(0,0,0,0.01)' : 'transparent',
-                                  borderLeft: (notMfg && hasError) ? '4px solid rgba(239,68,68,0.5)' : notMfg ? '4px solid rgba(245,158,11,0.4)' : hasError ? '4px solid rgba(239,68,68,0.3)' : '4px solid rgba(20,184,166,0.2)',
-                                }}
-                                  onMouseEnter={(e) => e.currentTarget.style.background = 'var(--muted)'}
-                                  onMouseLeave={(e) => e.currentTarget.style.background = notMfg ? 'rgba(245,158,11,0.04)' : hasError ? 'rgba(239,68,68,0.04)' : idx % 2 === 0 ? 'rgba(0,0,0,0.01)' : 'transparent'}
+                          return (
+                            <tr key={`${group.key}-${item._id}-${rowKey++}`} style={{
+                              borderBottom: '1px solid var(--border)',
+                              background: rowHasError ? 'rgba(239, 68, 68, 0.035)' : idx % 2 === 0 ? 'transparent' : 'rgba(0, 0, 0, 0.015)',
+                            }}>
+                              {/* Batch No (rowspan) */}
+                              {idx === 0 && (
+                                <td
+                                  rowSpan={group.products.length}
+                                  style={{
+                                    padding: '0.35rem 0.5rem',
+                                    verticalAlign: 'top',
+                                    borderRight: '1px solid var(--border)',
+                                    background: batchBg,
+                                    minWidth: '120px',
+                                  }}
                                 >
-                                  <td style={{ padding: '0.25rem 0.5rem', color: 'var(--muted-foreground)', fontSize: '0.7rem', fontFamily: 'monospace' }}>
-                                    <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', paddingLeft: '0.5rem' }}>
-                                      <span style={{ color: '#14b8a6', opacity: 0.6 }}>{idx === group.products.length - 1 ? '└' : '├'}</span>
-                                    </span>
-                                  </td>
-                                  <td style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', color: notMfg ? '#f59e0b' : isMissingData(item.productCode) ? '#ef4444' : 'var(--foreground)', fontFamily: 'monospace', fontWeight: '600', borderRight: '1px solid var(--border)' }}>
-                                    {item.productCode || 'N/A'}
-                                  </td>
-                                  <td style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem', color: 'var(--foreground)', borderRight: '1px solid var(--border)' }}>{item.genericName || '-'}</td>
-                                  <td style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem', color: isMissingData(item.masterCardNo) ? '#ef4444' : 'var(--muted-foreground)', fontFamily: 'monospace', borderRight: '1px solid var(--border)' }}>{item.masterCardNo || 'N/A'}</td>
+                                  <span style={{
+                                    display: 'inline-flex',
+                                    padding: '0.2rem 0.5rem',
+                                    borderRadius: '9999px',
+                                    background: 'rgba(255,255,255,0.75)',
+                                    border: `1px solid ${batchBorder}`,
+                                    color: batchColor,
+                                    fontWeight: 800,
+                                    fontSize: '0.7rem',
+                                    fontFamily: 'monospace',
+                                  }}>
+                                    {batchLabel}
+                                  </span>
+                                </td>
+                              )}
+
+                              {/* Product Code */}
+                              <td style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', fontFamily: 'monospace', fontWeight: 700, color: isMissingData(item.productCode) ? '#ef4444' : 'var(--foreground)', borderRight: '1px solid var(--border)' }}>
+                                {item.productCode || 'N/A'}
+                              </td>
+
+                              {/* Generic Name */}
+                              <td style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem', color: isMissingData(item.genericName) ? '#ef4444' : 'var(--foreground)', borderRight: '1px solid var(--border)' }}>
+                                {item.genericName || '—'}
+                              </td>
+
+                              {/* MFC No */}
+                              <td style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', fontFamily: 'monospace', color: isMissingData(item.masterCardNo) ? '#ef4444' : 'var(--muted-foreground)', borderRight: '1px solid var(--border)' }}>
+                                {item.masterCardNo || 'N/A'}
+                              </td>
+
+                              {/* Therapeutic Category (supports mismatch highlight like MFC view) */}
+                              {(() => {
+                                const theraStyle = getMfcCellStyle(item, 'therapeutic');
+                                const missingThera = isMissingData(item.therapeuticCategory);
+                                return (
                                   <td style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem', borderRight: '1px solid var(--border)' }}>
-                                    <span style={{ padding: '0.2rem 0.5rem', background: isMissingData(item.therapeuticCategory) ? 'rgba(239,68,68,0.1)' : 'rgba(245,158,11,0.1)', color: isMissingData(item.therapeuticCategory) ? '#ef4444' : '#f59e0b', borderRadius: 'var(--radius-sm)', fontSize: '0.7rem', fontWeight: '600' }}>
+                                    <span style={{
+                                      padding: '0.2rem 0.5rem',
+                                      background: missingThera ? 'rgba(239,68,68,0.1)' : theraStyle ? theraStyle.bg : 'rgba(245,158,11,0.1)',
+                                      color: missingThera ? '#ef4444' : theraStyle ? theraStyle.color : '#f59e0b',
+                                      borderRadius: 'var(--radius-sm)',
+                                      fontSize: '0.7rem',
+                                      fontWeight: '600',
+                                    }}>
                                       {item.therapeuticCategory || 'N/A'}
                                     </span>
                                   </td>
-                                  <td style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem', fontWeight: '500', color: isMissingData(item.productName) ? '#ef4444' : 'var(--foreground)', borderRight: '1px solid var(--border)' }}>{item.productName || 'N/A'}</td>
-                                  <td style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem', color: isMissingData(item.department) ? '#ef4444' : 'var(--foreground)', borderRight: '1px solid var(--border)' }}>{item.department || 'N/A'}</td>
-                                  <td style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem', color: isMissingData(item.storageCondition) ? '#ef4444' : 'var(--muted-foreground)', maxWidth: '200px', borderRight: '1px solid var(--border)' }}>
-                                    <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item.storageCondition || 'N/A'}>{item.storageCondition || 'N/A'}</div>
-                                  </td>
-                                  <td style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem', borderRight: '1px solid var(--border)' }}>
-                                    <span style={{ padding: '0.2rem 0.5rem', background: isMissingData(item.productType) ? 'rgba(239,68,68,0.1)' : item.productType === 'EXPORT' ? 'rgba(20,184,166,0.1)' : 'rgba(139,92,246,0.1)', color: isMissingData(item.productType) ? '#ef4444' : item.productType === 'EXPORT' ? '#14b8a6' : '#8b5cf6', borderRadius: 'var(--radius-sm)', fontSize: '0.7rem', fontWeight: '600' }}>
-                                      {item.productType || 'N/A'}
-                                    </span>
-                                  </td>
-                                  <td style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem', borderRight: '1px solid var(--border)' }}>
-                                    {item.specification ? (
-                                      <span style={{ padding: '0.2rem 0.5rem', background: 'rgba(99,102,241,0.1)', color: '#6366f1', borderRadius: 'var(--radius-sm)', fontSize: '0.7rem', fontWeight: '700', fontFamily: 'monospace' }}>
-                                        {item.specification}
-                                      </span>
-                                    ) : <span style={{ color: 'var(--muted-foreground)' }}>—</span>}
-                                  </td>
-                                  <td style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', fontFamily: 'monospace', color: item.effectiveBatchNo ? 'var(--foreground)' : 'var(--muted-foreground)', borderRight: '1px solid var(--border)' }}>
-                                    {item.effectiveBatchNo || '—'}
-                                  </td>
-                                  <td style={{ padding: '0.25rem 0.5rem', fontSize: '0.7rem', verticalAlign: 'top' }}>
-                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
-                                      {notMfg && (
-                                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', padding: '0.2rem 0.5rem', background: 'rgba(245,158,11,0.15)', color: '#f59e0b', borderRadius: 'var(--radius-sm)', fontSize: '0.65rem', fontWeight: '700' }}>
-                                          MFG MISSING
-                                        </span>
-                                      )}
-                                      {hasError && (
-                                        <div style={{ color: '#ef4444', fontWeight: '700', display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
-                                          <span>MISSING:</span>
-                                          <ul style={{ paddingLeft: '1rem', margin: 0, listStyleType: 'disc' }}>
-                                            {errors.map((e, i) => <li key={i}>{e}</li>)}
-                                          </ul>
-                                        </div>
-                                      )}
-                                      {!notMfg && !hasError && (
-                                        <span style={{ color: '#10b981', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-                                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><polyline points="20 6 9 17 4 12" /></svg>
-                                          OK
-                                        </span>
-                                      )}
+                                );
+                              })()}
+
+                              {/* Product Name */}
+                              <td style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem', fontWeight: 600, color: isMissingData(item.productName) ? '#ef4444' : 'var(--foreground)', borderRight: '1px solid var(--border)' }}>
+                                {item.productName || 'N/A'}
+                              </td>
+
+                              {/* Department */}
+                              <td style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem', color: isMissingData(item.department) ? '#ef4444' : 'var(--foreground)', borderRight: '1px solid var(--border)' }}>
+                                {item.department || 'N/A'}
+                              </td>
+
+                              {/* Storage Condition (supports mismatch highlight like MFC view) */}
+                              {(() => {
+                                const storStyle = getMfcCellStyle(item, 'storage');
+                                const missingStorage = isMissingData(item.storageCondition);
+                                return (
+                                  <td style={{
+                                    padding: '0.25rem 0.5rem',
+                                    fontSize: '0.8rem',
+                                    maxWidth: '220px',
+                                    borderRight: '1px solid var(--border)',
+                                    background: missingStorage ? 'rgba(239,68,68,0.06)' : storStyle ? storStyle.bg : undefined,
+                                    color: missingStorage ? '#ef4444' : storStyle ? storStyle.color : 'var(--muted-foreground)',
+                                  }}>
+                                    <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item.storageCondition || 'N/A'}>
+                                      {item.storageCondition || 'N/A'}
                                     </div>
                                   </td>
-                                </tr>
-                              );
-                            })}
-                          </React.Fragment>
-                        );
+                                );
+                              })()}
+
+                              {/* Spec */}
+                              <td style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem', borderRight: '1px solid var(--border)' }}>
+                                {item.specification ? (
+                                  <span style={{ padding: '0.2rem 0.5rem', background: 'rgba(99,102,241,0.1)', color: '#6366f1', borderRadius: 'var(--radius-sm)', fontSize: '0.7rem', fontWeight: '800', fontFamily: 'monospace' }}>
+                                    {item.specification}
+                                  </span>
+                                ) : <span style={{ color: 'var(--muted-foreground)' }}>—</span>}
+                              </td>
+
+                              {/* Effective Batch No (supports mismatch highlight like MFC view) */}
+                              {(() => {
+                                const effStyle = getMfcCellStyle(item, 'effBatch');
+                                const effMissing = !isValidEffBatch(item.effectiveBatchNo);
+                                return (
+                                  <td style={{
+                                    padding: '0.25rem 0.5rem',
+                                    fontSize: '0.75rem',
+                                    fontFamily: 'monospace',
+                                    borderRight: '1px solid var(--border)',
+                                    background: effMissing ? 'rgba(239,68,68,0.06)' : effStyle ? effStyle.bg : undefined,
+                                    color: effMissing ? '#ef4444' : effStyle ? effStyle.color : item.effectiveBatchNo ? 'var(--foreground)' : 'var(--muted-foreground)',
+                                  }}>
+                                    {item.effectiveBatchNo || '—'}
+                                  </td>
+                                );
+                              })()}
+
+                              {/* Status */}
+                              {(() => {
+                                const statusParts: string[] = [];
+                                if (notMfg) statusParts.push('MFG MISSING');
+                                if (hasMissing) statusParts.push('MISSING');
+                                if (hasMismatch) statusParts.push('MISMATCH');
+                                if (statusParts.length === 0) statusParts.push('OK');
+                                const status = statusParts.join(' | ');
+                                const statusColor =
+                                  status === 'OK' ? '#10b981'
+                                  : status.includes('MISSING') ? '#ef4444'
+                                  : '#f59e0b';
+                                return (
+                                  <td style={{ padding: '0.25rem 0.5rem', fontSize: '0.7rem', color: statusColor }}>
+                                    {status}
+                                  </td>
+                                );
+                              })()}
+                            </tr>
+                          );
+                        });
                       })}
                     </>
                   );
                 })() : (
-                  sortedData.map((item, index) => {
+                  scopedFiltered.map((item, index) => {
                     // Check if row has errors
                     const errors = getMissingFields(item);
                     const hasError = errors.length > 0;
 
-                    const notMfg = isNotManufactured(item);
+                    const notMfg = isNonManufactured(item);
 
                     return (
                       <tr key={item._id} style={{
@@ -2599,23 +3501,17 @@ export default function ProductMasterPage() {
                         }}>{item.masterCardNo || 'N/A'}</td>
 
                         {/* Therapeutic Category */}
-                        <td style={{
-                          padding: '0.25rem 0.5rem',
-                          fontSize: '0.7rem',
-                          color: 'var(--foreground)',
-                          borderRight: '1px solid var(--border)',
-                        }}>
-                          <span style={{
-                            padding: '0.1rem 0.4rem',
-                            background: isMissingData(item.therapeuticCategory) ? 'rgba(239, 68, 68, 0.1)' : 'rgba(245, 158, 11, 0.1)',
-                            color: isMissingData(item.therapeuticCategory) ? '#ef4444' : '#f59e0b',
-                            borderRadius: 'var(--radius-sm)',
-                            fontSize: '0.65rem',
-                            fontWeight: '600',
-                          }}>
-                            {item.therapeuticCategory || 'N/A'}
-                          </span>
-                        </td>
+                        {(() => {
+                          const theraStyle4 = getMfcCellStyle(item, 'therapeutic');
+                          const missingThera4 = isMissingData(item.therapeuticCategory);
+                          return (
+                            <td style={{ padding: '0.25rem 0.5rem', fontSize: '0.7rem', color: 'var(--foreground)', borderRight: '1px solid var(--border)' }}>
+                              <span style={{ padding: '0.1rem 0.4rem', background: missingThera4 ? 'rgba(239,68,68,0.1)' : theraStyle4 ? theraStyle4.bg : 'rgba(245,158,11,0.1)', color: missingThera4 ? '#ef4444' : theraStyle4 ? theraStyle4.color : '#f59e0b', borderRadius: 'var(--radius-sm)', fontSize: '0.65rem', fontWeight: '600' }}>
+                                {item.therapeuticCategory || 'N/A'}
+                              </span>
+                            </td>
+                          );
+                        })()}
 
                         {/* Product Name */}
                         <td style={{
@@ -2635,21 +3531,17 @@ export default function ProductMasterPage() {
                         }}>{item.department || 'N/A'}</td>
 
                         {/* Storage Condition */}
-                        <td style={{
-                          padding: '0.25rem 0.5rem',
-                          fontSize: '0.7rem',
-                          color: isMissingData(item.storageCondition) ? '#ef4444' : 'var(--muted-foreground)',
-                          maxWidth: '200px',
-                          borderRight: '1px solid var(--border)',
-                        }}>
-                          <div style={{
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap',
-                          }} title={item.storageCondition || 'N/A'}>
-                            {item.storageCondition || 'N/A'}
-                          </div>
-                        </td>
+                        {(() => {
+                          const storStyle4 = getMfcCellStyle(item, 'storage');
+                          const missingStorage4 = isMissingData(item.storageCondition);
+                          return (
+                            <td style={{ padding: '0.25rem 0.5rem', fontSize: '0.7rem', maxWidth: '200px', borderRight: '1px solid var(--border)', background: missingStorage4 ? 'rgba(239,68,68,0.06)' : storStyle4 ? storStyle4.bg : undefined, color: missingStorage4 ? '#ef4444' : storStyle4 ? storStyle4.color : 'var(--muted-foreground)' }}>
+                              <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item.storageCondition || 'N/A'}>
+                                {item.storageCondition || 'N/A'}
+                              </div>
+                            </td>
+                          );
+                        })()}
 
                         {/* Product Type */}
                         <td style={{
@@ -2694,57 +3586,82 @@ export default function ProductMasterPage() {
                         </td>
 
                         {/* Effective Batch No */}
-                        <td style={{ padding: '0.25rem 0.5rem', fontSize: '0.7rem', fontFamily: 'monospace', color: item.effectiveBatchNo ? 'var(--foreground)' : 'var(--muted-foreground)', borderRight: '1px solid var(--border)' }}>
-                          {item.effectiveBatchNo || '—'}
-                        </td>
+                        {(() => {
+                          const effStyle4 = getMfcCellStyle(item, 'effBatch');
+                          return (
+                            <td style={{ padding: '0.25rem 0.5rem', fontSize: '0.7rem', fontFamily: 'monospace', borderRight: '1px solid var(--border)', background: effStyle4 ? effStyle4.bg : undefined, color: effStyle4 ? effStyle4.color : item.effectiveBatchNo ? 'var(--foreground)' : 'var(--muted-foreground)' }}>
+                              {item.effectiveBatchNo || '—'}
+                            </td>
+                          );
+                        })()}
 
-                        {/* Status (Errors / MFG Missing) */}
-                        <td style={{
-                          padding: '0.25rem 0.5rem',
-                          fontSize: '0.65rem',
-                          fontWeight: '600',
-                          verticalAlign: 'middle',
-                        }}>
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
-                            {notMfg && (
-                              <span style={{
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: '0.3rem',
-                                padding: '0.2rem 0.5rem',
-                                background: 'rgba(245, 158, 11, 0.15)',
-                                color: '#f59e0b',
-                                borderRadius: 'var(--radius-sm)',
-                                fontSize: '0.7rem',
-                                fontWeight: '700',
-                              }}>
-                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                                  <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
-                                  <line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" />
-                                </svg>
-                                MFG MISSING
-                              </span>
-                            )}
-                            {hasError && (
-                              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', color: '#ef4444' }}>
-                                <span style={{ fontWeight: '700' }}>MISSING:</span>
-                                <ul style={{ paddingLeft: '1rem', margin: 0, listStyleType: 'disc' }}>
-                                  {errors.map((err: string, i: number) => (
-                                    <li key={i}>{err}</li>
-                                  ))}
-                                </ul>
+                        {/* Status (Errors / MFG Missing / Mismatch) */}
+                        {(() => {
+                          const prodCode = (item.productCode || '').trim();
+                          const prodMM = prodCode ? mismatchMap.get(prodCode) : undefined;
+                          const mismatchFields4: string[] = [];
+                          if (prodMM?.storage) mismatchFields4.push('Storage Condition');
+                          if (prodMM?.therapeutic) mismatchFields4.push('Therapeutic Category');
+                          if (prodMM?.effectiveBatch) mismatchFields4.push('Effective Batch');
+                          const hasMismatch4 = mismatchFields4.length > 0;
+                          const isOK = !notMfg && !hasError && !hasMismatch4;
+                          return (
+                            <td style={{
+                              padding: '0.25rem 0.5rem',
+                              fontSize: '0.65rem',
+                              fontWeight: '600',
+                              verticalAlign: 'middle',
+                            }}>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
+                                {notMfg && (
+                                  <span style={{
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '0.3rem',
+                                    padding: '0.2rem 0.5rem',
+                                    background: 'rgba(245, 158, 11, 0.15)',
+                                    color: '#f59e0b',
+                                    borderRadius: 'var(--radius-sm)',
+                                    fontSize: '0.7rem',
+                                    fontWeight: '700',
+                                  }}>
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                                      <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                                      <line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" />
+                                    </svg>
+                                    MFG MISSING
+                                  </span>
+                                )}
+                                {hasError && (
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', color: '#ef4444' }}>
+                                    <span style={{ fontWeight: '700' }}>MISSING:</span>
+                                    <ul style={{ paddingLeft: '1rem', margin: 0, listStyleType: 'disc' }}>
+                                      {errors.map((err: string, i: number) => (
+                                        <li key={i}>{err}</li>
+                                      ))}
+                                    </ul>
+                                  </div>
+                                )}
+                                {hasMismatch4 && (
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
+                                    <span style={{ fontWeight: '700', color: '#d97706' }}>MISMATCH:</span>
+                                    <ul style={{ paddingLeft: '1rem', margin: 0, listStyleType: 'disc', color: '#d97706' }}>
+                                      {mismatchFields4.map((f, i) => <li key={i}>{f}</li>)}
+                                    </ul>
+                                  </div>
+                                )}
+                                {isOK && (
+                                  <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', color: '#10b981' }}>
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+                                      <polyline points="20 6 9 17 4 12" />
+                                    </svg>
+                                    OK
+                                  </span>
+                                )}
                               </div>
-                            )}
-                            {!notMfg && !hasError && (
-                              <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', color: '#10b981' }}>
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
-                                  <polyline points="20 6 9 17 4 12" />
-                                </svg>
-                                OK
-                              </span>
-                            )}
-                          </div>
-                        </td>
+                            </td>
+                          );
+                        })()}
                       </tr>
                     );
                   })

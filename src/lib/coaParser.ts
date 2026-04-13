@@ -18,6 +18,8 @@ import type {
   CriticalParameter,
   RelatedSubstance,
   QASignature,
+  COATestItem,
+  TestStandard,
 } from '@/types/coa';
 
 // ============================================
@@ -540,6 +542,116 @@ function checkCompliance(result: string, limits: string): boolean {
 }
 
 // ============================================
+// FINISH COA Table (IP/USP grouping + hierarchy)
+// ============================================
+
+function detectStandardMarker(raw: string): TestStandard | null {
+  const s = (raw || '').toUpperCase();
+  if (!s) return null;
+
+  // Typical Oracle Reports markers seen in XML/PDF-derived COA headers
+  // Examples:
+  // - "[ALL TEST MENTION BELOW AS PER IP]"
+  // - "[ALL SPECIFICATION BELOW ARE AS PER USP]"
+  // - "[ALL SPECIFICATION BELOW ARE AS PER USP/NF]"
+  if (s.includes('AS PER IP')) return 'IP';
+  if (s.includes('AS PER USP')) return 'USP';
+
+  return null;
+}
+
+function isSectionMarkerTestName(raw: string): boolean {
+  const s = (raw || '').trim();
+  if (!s) return false;
+  if (!s.includes('AS PER')) return false;
+  // Commonly wrapped in [] in XML
+  return s.startsWith('[') || s.toUpperCase().includes('ALL SPECIFICATION');
+}
+
+function makeCoaTestId(seed: string): string {
+  // Stable-enough deterministic id for storage/rendering
+  return crypto.createHash('md5').update(seed).digest('hex');
+}
+
+function buildFinishCoaTests(g1Data: unknown): COATestItem[] {
+  const testGroups = getTestGroups(g1Data);
+
+  const items: COATestItem[] = [];
+  let currentStandard: TestStandard = 'OTHER';
+  let sortOrder = 0;
+
+  // Major-number parent mapping using TSTSRNO like "1", "1.01", "2.03"
+  const parentByMajor = new Map<string, string>();
+
+  for (const group of testGroups) {
+    const details = getTestDetails(group);
+    for (const detail of details) {
+      if (!detail || typeof detail !== 'object') continue;
+      const dRecord = detail as Record<string, unknown>;
+
+      const testNameRaw =
+        findValueCI(dRecord, ['PROTEST1', 'PROTEST'], '').trim();
+      const resultRaw = findValueCI(dRecord, ['RESULT'], '').trim();
+      const specRaw =
+        findValueCI(dRecord, ['LIMITS1', 'LIMITS'], '').trim();
+      const tstSrNo = findValueCI(dRecord, ['TSTSRNO'], '').trim();
+
+      if (!testNameRaw || testNameRaw === '.') continue;
+
+      // Detect and apply standard section changes
+      const markerStd = detectStandardMarker(testNameRaw);
+      if (markerStd && isSectionMarkerTestName(testNameRaw)) {
+        currentStandard = markerStd;
+        // Do not store this as a test row; it will be rendered as a dynamic header.
+        continue;
+      }
+
+      // Determine hierarchy using TSTSRNO if available
+      let parentId: string | null = null;
+      const major = tstSrNo ? tstSrNo.split('.')[0] : '';
+      const isChild = tstSrNo.includes('.') && major;
+
+      // Consider header rows (result/spec are '.' or empty) as parents for that major index
+      const looksLikeHeader =
+        (resultRaw === '.' || resultRaw === '' || resultRaw === '. ') &&
+        (specRaw === '.' || specRaw === '' || specRaw === '. ');
+
+      if (looksLikeHeader && major) {
+        const headerId = makeCoaTestId(`${currentStandard}|${major}|${testNameRaw}|${sortOrder}`);
+        parentByMajor.set(major, headerId);
+        items.push({
+          id: headerId,
+          parentId: null,
+          standard: currentStandard,
+          test: testNameRaw.toUpperCase(),
+          result: '.',
+          specification: '.',
+          sortOrder: sortOrder++,
+        });
+        continue;
+      }
+
+      if (isChild && major && parentByMajor.has(major)) {
+        parentId = parentByMajor.get(major) || null;
+      }
+
+      const id = makeCoaTestId(`${currentStandard}|${tstSrNo}|${testNameRaw}|${resultRaw}|${specRaw}|${sortOrder}`);
+      items.push({
+        id,
+        parentId,
+        standard: currentStandard,
+        test: testNameRaw.toUpperCase(),
+        result: resultRaw || '',
+        specification: specRaw || '',
+        sortOrder: sortOrder++,
+      });
+    }
+  }
+
+  return items;
+}
+
+// ============================================
 // BULK Data Extraction
 // ============================================
 
@@ -943,6 +1055,9 @@ function extractFinishData(g1Data: unknown, rootData: unknown): FinishStageData 
       }
     }
   }
+
+  // Preserve full COA table ordering + IP/USP grouping + hierarchy for "View COA"
+  const coaTests = buildFinishCoaTests(g1Data);
   
   // Get QA info
   const qaData = getQAFooter(rootData);
@@ -970,6 +1085,7 @@ function extractFinishData(g1Data: unknown, rootData: unknown): FinishStageData 
     criticalParameters,
     identificationTests,
     relatedSubstances,
+    coaTests,
     assayResults,
     sterility,
     uniformityOfVolume,

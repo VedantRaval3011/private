@@ -101,6 +101,9 @@ function parsePhLimit(limit: string): { min: number | null; max: number | null }
   // Range: "6.0 - 7.0", "6.0-7.0", or "6.0 to 7.0"
   const rangeMatch = s.match(/^(\d+(?:\.\d+)?)\s*(?:[-–]|to)\s*(\d+(?:\.\d+)?)$/i);
   if (rangeMatch) return { min: parseFloat(rangeMatch[1]), max: parseFloat(rangeMatch[2]) };
+  // Range: "Between 6.0 to 7.5" (common in COA)
+  const betweenMatch = s.match(/^between\s*(\d+(?:\.\d+)?)\s*(?:[-–]|to|and)\s*(\d+(?:\.\d+)?)$/i);
+  if (betweenMatch) return { min: parseFloat(betweenMatch[1]), max: parseFloat(betweenMatch[2]) };
   // NMT (Not More Than)
   const nmtMatch = s.match(/^NMT\s*(\d+(?:\.\d+)?)/i);
   if (nmtMatch) return { min: null, max: parseFloat(nmtMatch[1]) };
@@ -142,13 +145,14 @@ function computeYearStats(
       const mfgD = parseMfgDate(batch.mfgDate);
       if (mfgYear !== null && (!mfgD || mfgD.getFullYear() !== mfgYear)) continue;
       batchCount++;
+      const hasNoCOA = batch.phParams.length === 0;
       if (requiredMonths.length > 0 && requiredMonths.every(m =>
-        cellIsFilled(saved[cellKey(batch.batchNumber, batch.itemCode, m)])
+        cellIsFilled(saved[cellKey(batch.batchNumber, batch.itemCode, m)], hasNoCOA)
       )) fullyCompleted++;
       if (!mfgD) continue;
       for (const m of requiredMonths) {
         const key = cellKey(batch.batchNumber, batch.itemCode, m);
-        const isFilled = cellIsFilled(saved[key]);
+        const isFilled = cellIsFilled(saved[key], hasNoCOA);
         const status = getIntervalStatus(mfgD, m, isFilled, refDate);
         if (status === 'overdue') overdue++;
         else if (status === 'due-this-month') pending++;
@@ -172,14 +176,15 @@ function computeMonthStats(
       const mfgD = parseMfgDate(batch.mfgDate);
       if (mfgYear !== null && (!mfgD || mfgD.getFullYear() !== mfgYear)) continue;
       batchCount++;
+      const hasNoCOA = batch.phParams.length === 0;
       if (requiredMonths.length > 0) {
-        if (requiredMonths.every(m => cellIsFilled(saved[cellKey(batch.batchNumber, batch.itemCode, m)])))
+        if (requiredMonths.every(m => cellIsFilled(saved[cellKey(batch.batchNumber, batch.itemCode, m)], hasNoCOA)))
           fullyCompleted++;
       }
       if (!mfgD) continue;
       for (const m of requiredMonths) {
         const key = cellKey(batch.batchNumber, batch.itemCode, m);
-        const isFilled = cellIsFilled(saved[key]);
+        const isFilled = cellIsFilled(saved[key], hasNoCOA);
         const status = getIntervalStatus(mfgD, m, isFilled, refDate);
         if (status === 'future') continue;
         if (status === 'completed') done++;
@@ -201,8 +206,10 @@ interface CellEdit {
   editHistory?: Array<{ pH: string; phValues: Array<{ label: string; value: string }>; description: string; recordedAt: string; savedBy?: EntryActor }>;
 }
 
-function cellIsFilled(edit: CellEdit | undefined): boolean {
+// hasNoCOA=true → pH is not available for this batch; description alone is sufficient.
+function cellIsFilled(edit: CellEdit | undefined, hasNoCOA?: boolean): boolean {
   if (!edit) return false;
+  if (hasNoCOA) return !!edit.description;
   return Object.values(edit.phValues).some(Boolean) && !!edit.description;
 }
 
@@ -272,6 +279,14 @@ function matchesAllTokens(haystack: string, tokens: string[]): boolean {
   return tokens.every((t) => h.includes(t));
 }
 
+function isPlaceboOrMediafill(group: { productName?: string | null; genericName?: string | null; mfcNo?: string | null }): boolean {
+  const fields = [group.productName, group.genericName, group.mfcNo];
+  return fields.some((f) => {
+    const s = (f ?? '').trim();
+    return s !== '' && /\b(placebo|media\s*fill|mediafill)\b/i.test(s);
+  });
+}
+
 /** Returns a copy of the group with batches narrowed to matches, or null if nothing matches. */
 function narrowGroupForSearch(group: MFCGroup, tokens: string[]): MFCGroup | null {
   if (tokens.length === 0) return group;
@@ -306,9 +321,10 @@ function getPendingBatches(
       if (!mfgD) continue;
 
       const pendingIntervals: number[] = [];
+      const hasNoCOA = batch.phParams.length === 0;
       for (const m of requiredMonths) {
         const key = cellKey(batch.batchNumber, batch.itemCode, m);
-        const isFilled = cellIsFilled(saved[key]);
+        const isFilled = cellIsFilled(saved[key], hasNoCOA);
         const status = getIntervalStatus(mfgD, m, isFilled, refDate);
 
         if (status === 'overdue' || status === 'due-this-month') {
@@ -521,9 +537,10 @@ export default function RetainedSamplePage() {
         const mfgD = parseMfgDate(batch.mfgDate);
         if (!mfgD) continue;
 
+        const hasNoCOA = batch.phParams.length === 0;
         const hasPending = requiredMonths.some((m) => {
           const key = cellKey(batch.batchNumber, batch.itemCode, m);
-          const isFilled = cellIsFilled(savedState[key]);
+          const isFilled = cellIsFilled(savedState[key], hasNoCOA);
           const status = getIntervalStatus(mfgD, m, isFilled, pendingRefDate);
           if (status !== 'overdue' && status !== 'due-this-month') return false;
           if (!monthConstraint) return true;
@@ -559,20 +576,22 @@ export default function RetainedSamplePage() {
     const mfgD = parseMfgDate(batch.mfgDate);
     if (!mfgD) return false;
 
+    const hasNoCOA = batch.phParams.length === 0;
     const has = (key: StatusKey): boolean => {
       if (key === 'fully-completed') {
         return requiredMonths.length > 0 && requiredMonths.every((m) =>
-          cellIsFilled(savedState[cellKey(batch.batchNumber, batch.itemCode, m)])
+          cellIsFilled(savedState[cellKey(batch.batchNumber, batch.itemCode, m)], hasNoCOA)
         );
       }
       return STABILITY_MONTHS.some((m) => {
-        const isFilled = cellIsFilled(savedState[cellKey(batch.batchNumber, batch.itemCode, m)]);
+        const isFilled = cellIsFilled(savedState[cellKey(batch.batchNumber, batch.itemCode, m)], hasNoCOA);
         const s = getIntervalStatus(mfgD, m, isFilled, ref);
         if (key === 'completed') return s === 'completed';
         if (key === 'pending') return s === 'due-this-month';
         if (key === 'overdue') return s === 'overdue';
         if (key === 'desc-pending') return cellHasPhOnly(savedState[cellKey(batch.batchNumber, batch.itemCode, m)]);
-        if (key === 'ph-pending') return cellHasDescOnly(savedState[cellKey(batch.batchNumber, batch.itemCode, m)]);
+        // For no-COA batches, description-only is fully complete, never "ph-pending"
+        if (key === 'ph-pending') return !hasNoCOA && cellHasDescOnly(savedState[cellKey(batch.batchNumber, batch.itemCode, m)]);
         return false;
       });
     };
@@ -679,11 +698,18 @@ export default function RetainedSamplePage() {
       const json = await res.json();
       if (!json.success) throw new Error(json.error || 'Failed to load data');
 
-      setMoreThan3(json.data.moreThan3);
-      setLessThan3(json.data.lessThan3);
+      const filteredMoreThan3 = (json.data.moreThan3 as MFCGroup[]).filter(
+        (g) => !isPlaceboOrMediafill(g)
+      );
+      const filteredLessThan3 = (json.data.lessThan3 as MFCGroup[]).filter(
+        (g) => !isPlaceboOrMediafill(g)
+      );
+
+      setMoreThan3(filteredMoreThan3);
+      setLessThan3(filteredLessThan3);
 
       const initialEdits: EditState = {};
-      const groups: MFCGroup[] = [...json.data.moreThan3, ...json.data.lessThan3];
+      const groups: MFCGroup[] = [...filteredMoreThan3, ...filteredLessThan3];
       for (const group of groups) {
         for (const batch of group.batches) {
           for (const entry of batch.stabilityEntries as StabilityEntry[]) {
@@ -758,6 +784,7 @@ export default function RetainedSamplePage() {
           productCode: group.productCode,
           productName: group.productName,
           batchNumber,
+          itemCode,
           month,
           pH: edit.phValues[''] || '',   // legacy compat: unlabelled pH
           phValues: phValuesArr,
@@ -897,7 +924,6 @@ export default function RetainedSamplePage() {
   ) {
     const key = cellKey(batch.batchNumber, batch.itemCode, month);
     const edit = editState[key] || { phValues: {}, description: '' };
-    const isFilled = cellIsFilled(savedState[key]);
     const isSaving = saving[key];
     const cellSaveStatus = saveStatus[key];
     const isLocked = intervalStatus === 'future' && !unlockedCells.has(key);
@@ -907,6 +933,7 @@ export default function RetainedSamplePage() {
       ? batch.phParams
       : [{ label: '', result: '', limit: '' }];
     const hasNoCOA = batch.phParams.length === 0;
+    const isFilled = cellIsFilled(savedState[key], hasNoCOA);
 
     // Warn if any entered pH is outside its limit (but still allow save)
     const hasOutOfRange = phParams.some((param) => {
@@ -930,6 +957,12 @@ export default function RetainedSamplePage() {
           ? `${styles.saveBtn} ${styles.saveBtnError}`
           : `${styles.saveBtn} ${styles.saveBtnDefault}`;
 
+    const mfgD = parseMfgDate(batch.mfgDate);
+    const cellDueDate = mfgD ? dueDate(mfgD, month) : null;
+    const cellDueLabel = cellDueDate
+      ? formatMonthLabel(cellDueDate.getMonth() + 1, cellDueDate.getFullYear())
+      : null;
+
     return (
       <td key={month} className={tdClass}>
         {intervalStatus === 'overdue' && (
@@ -943,6 +976,9 @@ export default function RetainedSamplePage() {
         )}
         {intervalStatus === 'future' && isFilled && (
           <div className={styles.doneTag}>✓ Filled</div>
+        )}
+        {cellDueLabel && (
+          <div className={styles.cellDueMonth}>{cellDueLabel}</div>
         )}
         <div className={styles.cellInner}>
           {isLocked ? (
@@ -1102,7 +1138,7 @@ export default function RetainedSamplePage() {
         total++;
         const key = cellKey(batch.batchNumber, batch.itemCode, m);
         const ed = editState[key];
-        if (cellIsFilled(ed)) filled++;
+        if (cellIsFilled(ed, batch.phParams.length === 0)) filled++;
         const mfgD = parseMfgDate(batch.mfgDate);
         if (mfgD) {
           const d = dueDate(mfgD, m);
@@ -1266,6 +1302,9 @@ export default function RetainedSamplePage() {
                           </td>
                           <td className={`${styles.tdBase} ${styles.tdProductName}`}>
                             <span className={styles.productNameText}>{group.productName || '—'}</span>
+                            <div className={styles.brandNameText}>
+                              {batch.brandName ? batch.brandName : '—'}
+                            </div>
                           </td>
                           <td className={`${styles.tdBase} ${styles.tdCoa}`}>
                             {!batch.coaFound ? (
@@ -1294,7 +1333,7 @@ export default function RetainedSamplePage() {
                             )}
                           </td>
                           {requiredMonths.map((m) => {
-                            const isFilled = cellIsFilled(savedState[cellKey(batch.batchNumber, batch.itemCode, m)]);
+                            const isFilled = cellIsFilled(savedState[cellKey(batch.batchNumber, batch.itemCode, m)], batch.phParams.length === 0);
                             const intervalStatus = mfgD
                               ? getIntervalStatus(mfgD, m, isFilled, refDate)
                               : 'future';
@@ -1714,7 +1753,7 @@ export default function RetainedSamplePage() {
               }}
             >
               <span className={[styles.legendDot, selectedYearSummaryStatuses.includes('fully-completed') ? styles.legendFullyCompleted : styles.legendDotInactive].join(' ')} />
-              Fully Completed: <strong>{yearOnlyStats.fullyCompleted}</strong>
+              Fully Completed: <strong className={styles.summaryCountFullyCompleted}>{yearOnlyStats.fullyCompleted}</strong>
             </button>
             <button
               className={`${styles.summaryChip} ${styles.summaryChipOrange} ${selectedYearSummaryStatuses.includes('pending') ? styles.summaryChipActive : ''}`}
@@ -1726,7 +1765,7 @@ export default function RetainedSamplePage() {
               }}
             >
               <span className={[styles.legendDot, selectedYearSummaryStatuses.includes('pending') ? styles.legendDue : styles.legendDotInactive].join(' ')} />
-              Pending: <strong>{yearOnlyStats.pending}</strong>
+              Pending: <strong className={styles.summaryCountPending}>{yearOnlyStats.pending}</strong>
             </button>
             <button
               className={`${styles.summaryChip} ${styles.summaryChipRed} ${selectedYearSummaryStatuses.includes('overdue') ? styles.summaryChipActive : ''}`}
@@ -1738,7 +1777,7 @@ export default function RetainedSamplePage() {
               }}
             >
               <span className={[styles.legendDot, selectedYearSummaryStatuses.includes('overdue') ? styles.legendOverdue : styles.legendDotInactive].join(' ')} />
-              Overdue: <strong>{yearOnlyStats.overdue}</strong>
+              Overdue: <strong className={styles.summaryCountOverdue}>{yearOnlyStats.overdue}</strong>
             </button>
             <button
               className={`${styles.summaryChip} ${styles.summaryChipOrange} ${pendingBatchesFilter === 'year' ? styles.summaryChipActive : ''}`}
@@ -1750,7 +1789,7 @@ export default function RetainedSamplePage() {
               }}
             >
               <span className={[styles.legendDot, pendingBatchesFilter === 'year' ? styles.legendDue : styles.legendDotInactive].join(' ')} />
-              Batches Pending: <strong>{pendingBatchesForYearOnly.length}</strong>
+              Batches Pending: <strong className={styles.summaryCountBatchesPending}>{pendingBatchesForYearOnly.length}</strong>
             </button>
           </div>
 
@@ -1801,7 +1840,7 @@ export default function RetainedSamplePage() {
               }}
             >
               <span className={[styles.legendDot, selectedMonthSummaryStatuses.includes('fully-completed') ? styles.legendFullyCompleted : styles.legendDotInactive].join(' ')} />
-              Fully Completed: <strong>{globalSummaryCounts.fullyCompleted}</strong>
+              Fully Completed: <strong className={styles.summaryCountFullyCompleted}>{globalSummaryCounts.fullyCompleted}</strong>
             </button>
             <button
               className={`${styles.summaryChip} ${styles.summaryChipGreen} ${selectedMonthSummaryStatuses.includes('completed') ? styles.summaryChipActive : ''}`}
@@ -1813,7 +1852,7 @@ export default function RetainedSamplePage() {
               }}
             >
               <span className={[styles.legendDot, selectedMonthSummaryStatuses.includes('completed') ? styles.legendCompleted : styles.legendDotInactive].join(' ')} />
-              Done: <strong>{globalSummaryCounts.done}</strong>
+              Done: <strong className={styles.summaryCountDone}>{globalSummaryCounts.done}</strong>
             </button>
             <button
               className={`${styles.summaryChip} ${styles.summaryChipOrange} ${selectedMonthSummaryStatuses.includes('pending') ? styles.summaryChipActive : ''}`}
@@ -1825,7 +1864,7 @@ export default function RetainedSamplePage() {
               }}
             >
               <span className={[styles.legendDot, selectedMonthSummaryStatuses.includes('pending') ? styles.legendDue : styles.legendDotInactive].join(' ')} />
-              Pending: <strong>{globalSummaryCounts.pending}</strong>
+              Pending: <strong className={styles.summaryCountPending}>{globalSummaryCounts.pending}</strong>
             </button>
             <button
               className={`${styles.summaryChip} ${styles.summaryChipRed} ${selectedMonthSummaryStatuses.includes('overdue') ? styles.summaryChipActive : ''}`}
@@ -1837,7 +1876,7 @@ export default function RetainedSamplePage() {
               }}
             >
               <span className={[styles.legendDot, selectedMonthSummaryStatuses.includes('overdue') ? styles.legendOverdue : styles.legendDotInactive].join(' ')} />
-              Overdue: <strong>{globalSummaryCounts.overdue}</strong>
+              Overdue: <strong className={styles.summaryCountOverdue}>{globalSummaryCounts.overdue}</strong>
             </button>
             <button
               className={`${styles.summaryChip} ${styles.summaryChipOrange} ${pendingBatchesFilter === 'month' ? styles.summaryChipActive : ''}`}
@@ -1849,7 +1888,7 @@ export default function RetainedSamplePage() {
               }}
             >
               <span className={[styles.legendDot, pendingBatchesFilter === 'month' ? styles.legendDue : styles.legendDotInactive].join(' ')} />
-              Batches Pending: <strong>{pendingBatchesForGlobal.length}</strong>
+              Batches Pending: <strong className={styles.summaryCountBatchesPending}>{pendingBatchesForGlobal.length}</strong>
             </button>
           </div>
         </div>
@@ -1880,14 +1919,6 @@ export default function RetainedSamplePage() {
             )}
           </div>
           <div className={styles.tableFilterBtns}>
-            {outOfRangeBatchKeys.size > 0 && (
-              <button
-                className={`${styles.outOfRangeFilterBtn} ${showOutOfRangeOnly ? styles.outOfRangeFilterBtnActive : ''}`}
-                onClick={() => setShowOutOfRangeOnly(p => !p)}
-              >
-                ⚠ pH Out of Range ({outOfRangeBatchKeys.size})
-              </button>
-            )}
             <button
               className={`${styles.missingCOABtn} ${showMissingCOA ? styles.missingCOABtnActive : ''}`}
               onClick={() => setShowMissingCOA(p => !p)}
