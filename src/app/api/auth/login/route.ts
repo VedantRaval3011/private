@@ -17,7 +17,7 @@ export async function POST(request: NextRequest) {
     await connectToDatabase();
 
     const user = await User.findOne({
-      username: username.trim()
+      username: username.trim().toLowerCase(),
     });
     if (!user) {
       return NextResponse.json(

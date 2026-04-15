@@ -49,6 +49,42 @@ const FILES_FOLDER = path.join(process.cwd(), 'files');
 // Maximum size for storing raw XML content in MongoDB (14MB to stay under 16MB BSON limit)
 const MAX_RAW_CONTENT_SIZE = 14 * 1024 * 1024;
 
+function toHumanErrorMessage(fileType: XmlFileType, fileName: string, raw: string): string {
+  const safeRaw = (raw || 'Unknown error').trim();
+
+  // COA: common operator errors
+  if (fileType === 'COA') {
+    if (safeRaw.toLowerCase().includes('missing batch number')) {
+      return [
+        `Could not process COA file: ${fileName}`,
+        `Reason: batch number is missing in the XML (no <BATCH> / <BATCH1> inside <G_1>).`,
+        `How to fix: re-export the COA from Oracle Reports (full export), or delete the incomplete/empty duplicate (often named \"copy\").`,
+      ].join('\n');
+    }
+    if (safeRaw.toLowerCase().includes('failed to parse') || safeRaw.toLowerCase().includes('parse error')) {
+      return [
+        `Could not process COA file: ${fileName}`,
+        `Reason: the XML could not be parsed (corrupt/truncated export).`,
+        `How to fix: export again and ensure the file contains <LIST_G_1><G_1>...</G_1></LIST_G_1>.`,
+      ].join('\n');
+    }
+  }
+
+  // Yield: common operator errors
+  if (fileType === 'YIELD') {
+    if (safeRaw.toLowerCase().includes('root element <yieldstatement> not found')) {
+      return [
+        `Could not process Yield file: ${fileName}`,
+        `Reason: this is not a Yield Statement XML (missing <YIELDSTATEMENT> root).`,
+        `How to fix: export the Yield Statement again, or move this file out of /files.`,
+      ].join('\n');
+    }
+  }
+
+  // Unknown / fallback
+  return `Could not process ${fileType} file: ${fileName}\nReason: ${safeRaw}\nHow to fix: re-export the report XML (full export) and try again.`;
+}
+
 /**
  * Clean up orphaned processing logs
  * Removes logs where the corresponding Batch/Formula record no longer exists
@@ -199,9 +235,33 @@ export async function processXmlFile(fileInfo: XmlFileInfo): Promise<IngestionRe
     console.log(`\n📁 Processing: ${fileName}`);
     console.log(`   Detected Type: ${fileType}`);
 
-    // Skip early if already processed for BATCH, COA, RM_COA, and REQUISITION (exact duplicates)
-    // BUT only if previous processing was NOT an error
-    if (existingLog && existingLog.status !== 'ERROR' && (fileType === 'BATCH' || fileType === 'COA' || fileType === 'RM_COA' || fileType === 'REQUISITION' || fileType === 'PRODUCT_MASTER')) {
+    const isHashSkipType =
+      fileType === 'BATCH' ||
+      fileType === 'COA' ||
+      fileType === 'RM_COA' ||
+      fileType === 'REQUISITION' ||
+      fileType === 'PRODUCT_MASTER' ||
+      fileType === 'YIELD';
+
+    // Skip early if this exact file (content hash) was already processed.
+    // If it previously FAILED, we still skip to prevent repeated work on every click.
+    // If you want to retry, the content must change (fix/re-export), which changes the hash.
+    if (existingLog && isHashSkipType) {
+      if (existingLog.status === 'ERROR') {
+        console.log(`   ❌ SKIPPED: Previously failed on ${existingLog.processedAt.toISOString()}`);
+        return {
+          fileName,
+          fileType: existingLog.fileType as XmlFileType,
+          status: 'ERROR',
+          message: toHumanErrorMessage(
+            existingLog.fileType as XmlFileType,
+            fileName,
+            existingLog.errorMessage || `File previously failed on ${existingLog.processedAt.toISOString()}`
+          ),
+          businessKey: existingLog.businessKey,
+        };
+      }
+
       console.log(`   ⚠️ SKIPPED: Already processed on ${existingLog.processedAt.toISOString()}`);
       return {
         fileName,
@@ -253,6 +313,7 @@ export async function processXmlFile(fileInfo: XmlFileInfo): Promise<IngestionRe
     // Step 4: Parse based on detected type
     let businessKey: string | undefined;
     let recordId: string | undefined;
+    let yieldItemStats: ItemLevelStats | undefined;
 
     if (fileType === 'BATCH') {
       const result = await processBatchXml(content, fileName, fileSize, contentHash);
@@ -577,50 +638,47 @@ export async function processXmlFile(fileInfo: XmlFileInfo): Promise<IngestionRe
     } else if (fileType === 'YIELD') {
       const result = await processYieldXml(content, fileName, fileSize, contentHash);
       businessKey = result.businessKey;
-
-      // No processing logs for YIELD - always re-process without duplicate errors
-      if (result.itemStats) {
-        return {
-          fileName,
-          fileType: 'YIELD',
-          status: 'SUCCESS',
-          message: `Processed ${result.itemStats.totalItems} yield records`,
-          businessKey,
-          itemStats: result.itemStats,
-        };
-      }
+      yieldItemStats = result.itemStats;
     }
 
     // Step 5: Log successful processing
     // Use findOneAndUpdate for all files to handle reprocessing and avoid duplicate key errors
-    // Skip persistent success log for YIELD files as requested by user
-    if (fileType !== 'YIELD') {
-      await ProcessingLog.findOneAndUpdate(
-        { contentHash },
-        {
-          contentHash,
-          fileName,
-          fileType,
-          status: 'SUCCESS',
-          businessKey,
-          fileSize,
-          processedAt: new Date(),
-        },
-        { upsert: true }
-      );
-    }
+    await ProcessingLog.findOneAndUpdate(
+      { contentHash },
+      {
+        contentHash,
+        fileName,
+        fileType,
+        status: 'SUCCESS',
+        businessKey,
+        fileSize,
+        processedAt: new Date(),
+        ...(yieldItemStats ? { itemStats: yieldItemStats } : {}),
+      },
+      { upsert: true }
+    );
+
+    const successMessage =
+      yieldItemStats != null
+        ? yieldItemStats.duplicateItems > 0
+          ? `Processed ${yieldItemStats.totalItems} yield row(s): ${yieldItemStats.newItems} new, ${yieldItemStats.duplicateItems} already existed (updated in place)`
+          : `Processed ${yieldItemStats.totalItems} yield records`
+        : `Successfully processed ${getFileTypeName(fileType)} file`;
 
     return {
       fileName,
       fileType,
       status: 'SUCCESS',
-      message: `Successfully processed ${getFileTypeName(fileType)} file`,
+      message: successMessage,
       businessKey,
       recordId,
+      ...(yieldItemStats ? { itemStats: yieldItemStats } : {}),
     };
 
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    const detectedType = detectXmlType(content);
+    const humanMessage = toHumanErrorMessage(detectedType, fileName, errorMessage);
 
     // Try to log the error
     try {
@@ -630,9 +688,9 @@ export async function processXmlFile(fileInfo: XmlFileInfo): Promise<IngestionRe
         {
           contentHash,
           fileName,
-          fileType: 'UNKNOWN',
+          fileType: detectedType,
           status: 'ERROR',
-          errorMessage,
+          errorMessage: humanMessage,
           fileSize,
           processedAt: new Date(),
         },
@@ -644,9 +702,9 @@ export async function processXmlFile(fileInfo: XmlFileInfo): Promise<IngestionRe
 
     return {
       fileName,
-      fileType: 'UNKNOWN',
+      fileType: detectedType,
       status: 'ERROR',
-      message: errorMessage,
+      message: humanMessage,
     };
   }
 }
@@ -1818,8 +1876,8 @@ async function processRmCoaXml(
 
 /**
  * Process Yield XML and store in database
- * Implements duplicate detection based on batchNo + productCode
- * Only new records are stored
+ * Tracks duplicates by batchNo + productCode (row already in DB before this upsert).
+ * Exact same file is skipped earlier via ProcessingLog + contentHash (no re-parse).
  */
 async function processYieldXml(
   content: string,
@@ -1840,10 +1898,15 @@ async function processYieldXml(
   const data = parseResult.data;
   const businessKey = `YIELD-${fileName}`;
 
-  // Always upsert all yield records so re-processing updates existing data with new fields
+  const duplicateDetails: DuplicateItemDetail[] = [];
   const successfulDetails: SuccessfulItemDetail[] = [];
 
   for (const record of data) {
+    const existing = await Yield.findOne({
+      batchNo: record.batchNo,
+      productCode: record.productCode,
+    }).lean();
+
     await Yield.findOneAndUpdate(
       { batchNo: record.batchNo, productCode: record.productCode },
       {
@@ -1855,26 +1918,37 @@ async function processYieldXml(
       { upsert: true, new: true }
     );
 
-    successfulDetails.push({
-      batchNumber: record.batchNo,
-      itemCode: record.productCode,
-      itemName: record.productName || 'N/A',
-      type: 'Yield'
-    });
+    if (existing) {
+      duplicateDetails.push({
+        batchNumber: record.batchNo,
+        itemCode: record.productCode,
+        itemName: record.productName || 'N/A',
+        type: 'Yield',
+        reason: 'Yield row already exists for this batch and product code',
+        existingFileName: existing.sourceFile || 'database',
+      });
+    } else {
+      successfulDetails.push({
+        batchNumber: record.batchNo,
+        itemCode: record.productCode,
+        itemName: record.productName || 'N/A',
+        type: 'Yield',
+      });
+    }
   }
 
   const itemStats: ItemLevelStats = {
     totalItems: data.length,
-    newItems: data.length,
-    duplicateItems: 0,
-    duplicateDetails: [],
-    successfulDetails
+    newItems: successfulDetails.length,
+    duplicateItems: duplicateDetails.length,
+    duplicateDetails,
+    successfulDetails,
   };
 
   return {
     businessKey,
     duplicate: false,
-    itemStats
+    itemStats,
   };
 }
 

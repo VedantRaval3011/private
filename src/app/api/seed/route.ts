@@ -16,7 +16,7 @@ export async function POST() {
       );
     }
 
-    const password = 'Admin@1234';
+    const password = 'admin1234';
     const hashed = await hashPassword(password);
 
     const user = await User.create({

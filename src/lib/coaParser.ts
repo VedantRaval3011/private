@@ -1199,7 +1199,6 @@ export async function parseCOAXml(
       manufacturer = bulkData.manufacturer;
       
       // Validation warnings
-      if (!batchNumber) warnings.push('Missing batch number');
       if (!arNumber) warnings.push('Missing AR number');
       if (bulkData.testParameters.length === 0) warnings.push('No test parameters found');
       
@@ -1213,9 +1212,19 @@ export async function parseCOAXml(
       manufacturer = finishData.manufacturer;
       
       // Validation warnings
-      if (!batchNumber) warnings.push('Missing batch number');
       if (!arNumber) warnings.push('Missing AR number');
       if (finishData.assayResults.length === 0) warnings.push('No assay results found');
+    }
+
+    if (!batchNumber.trim()) {
+      return {
+        success: false,
+        errors: [
+          'Missing batch number (no BATCH/BATCH1 in G_1). The XML is often truncated or an incomplete ' +
+            'Oracle export—re-export the full COA, or remove empty duplicate files (e.g. "copy" saves).',
+        ],
+        warnings,
+      };
     }
     
     const record: COARecord = {
