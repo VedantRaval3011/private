@@ -144,25 +144,35 @@ export async function GET(request: NextRequest): Promise<NextResponse<PmVerifica
       });
     }
 
-    // Batch Creation unique batch numbers (raw for counts, norm for matching)
-    const creationBatchSet = new Set<string>();
-    const creationBatchNormByRaw = new Map<string, string>();
-    const creationBatchMeta = new Map<string, { itemName: string; itemCode: string }>();
+    // Batch Creation records (do NOT dedupe by batch number)
+    type CreationRecord = {
+      recordId: string;
+      batchNumberRaw: string;
+      batchNorm: string;
+      itemName: string;
+      itemCode: string;
+    };
+    const creationRecords: CreationRecord[] = [];
 
     for (const doc of batchDocs as any[]) {
-      for (const b of doc.batches || []) {
+      const docId = doc?._id?.toString?.() ?? '';
+      const batches = Array.isArray(doc?.batches) ? doc.batches : [];
+      for (let i = 0; i < batches.length; i++) {
+        const b = batches[i];
         const y = effectiveBatchYear(b);
         if (!isAllYearsRequest && y !== yearParam) continue;
-        const bnRaw = (b.batchNumber || '').toString();
+        const bnRaw = (b?.batchNumber || '').toString();
         if (!bnRaw) continue;
-        creationBatchSet.add(bnRaw);
-        if (!creationBatchNormByRaw.has(bnRaw)) creationBatchNormByRaw.set(bnRaw, normalizeBatchNo(bnRaw));
-        if (!creationBatchMeta.has(bnRaw)) {
-          creationBatchMeta.set(bnRaw, {
-            itemName: (b.itemName || '').toString().trim() || '-',
-            itemCode: (b.itemCode || '').toString().trim() || '-',
-          });
-        }
+        const bnNorm = normalizeBatchNo(bnRaw);
+        if (!bnNorm) continue;
+        const recordId = [docId || 'batchdoc', b?.srNo ?? i, b?.itemCode ?? '', bnRaw].join('|');
+        creationRecords.push({
+          recordId,
+          batchNumberRaw: bnRaw,
+          batchNorm: bnNorm,
+          itemName: (b?.itemName || '').toString().trim() || '-',
+          itemCode: (b?.itemCode || '').toString().trim() || '-',
+        });
       }
     }
 
@@ -207,13 +217,6 @@ export async function GET(request: NextRequest): Promise<NextResponse<PmVerifica
       }
     }
 
-    // Requisition found batches = creation batches that exist in PM requisition (by normalized token)
-    const requisitionFoundRaw = new Set<string>();
-    for (const bRaw of creationBatchSet) {
-      const bnNorm = creationBatchNormByRaw.get(bRaw) || normalizeBatchNo(bRaw);
-      if (pmBatchSet.has(bnNorm)) requisitionFoundRaw.add(bRaw);
-    }
-
     // Build inward AR set
     const inwardArSet = new Set<string>();
     for (const ar of (inwardArNumbers as any[]) || []) {
@@ -239,107 +242,43 @@ export async function GET(request: NextRequest): Promise<NextResponse<PmVerifica
       if (ok) pmCoaBatchNormSet.add(bnNorm);
     }
 
-    const pmCoaFoundRaw = new Set<string>();
-    for (const bRaw of requisitionFoundRaw) {
-      const bnNorm = creationBatchNormByRaw.get(bRaw) || normalizeBatchNo(bRaw);
-      if (pmCoaBatchNormSet.has(bnNorm)) pmCoaFoundRaw.add(bRaw);
-    }
-
-    const totalBatchesCreation = creationBatchSet.size;
-    const requisitionFoundBatches = requisitionFoundRaw.size;
-    const requisitionMissingBatches = Math.max(0, totalBatchesCreation - requisitionFoundBatches);
-    const pmCoaFoundBatches = pmCoaFoundRaw.size;
-    const pmCoaMissingBatches = Math.max(0, requisitionFoundBatches - pmCoaFoundBatches);
-
     let rows: VerificationTableRow[] = [];
-    if (drill === 'total_batches') {
-      rows = [...creationBatchSet].sort().map(bnRaw => {
-        const bnNorm = creationBatchNormByRaw.get(bnRaw) || normalizeBatchNo(bnRaw);
-        const meta = creationBatchMeta.get(bnRaw) || { itemName: '-', itemCode: '-' };
-        const found = pmBatchSet.has(bnNorm);
-        const coaFound = found && pmCoaBatchNormSet.has(bnNorm);
-        const firstLine = pmLines.find(l => l.batchNorm === bnNorm);
-        return {
-          id: `total|${bnRaw}`,
-          matReqNo: firstLine?.matReqNo || '-',
-          materialName: firstLine?.materialName || meta.itemName,
-          materialCode: firstLine?.materialCode || meta.itemCode,
-          arNo: firstLine?.arNo || '',
-          batchNumber: bnRaw,
-          requisitionStatus: found ? 'Requisition Found' : 'Requisition Missing',
-          pmCoaStatus: found ? (coaFound ? 'PM COA Found' : 'PM COA Missing') : '-',
-        };
-      });
-    } else if (drill === 'requisition_found') {
-      rows = [...requisitionFoundRaw].sort().map(bnRaw => {
-        const bnNorm = creationBatchNormByRaw.get(bnRaw) || normalizeBatchNo(bnRaw);
-        const meta = creationBatchMeta.get(bnRaw) || { itemName: '-', itemCode: '-' };
-        const firstLine = pmLines.find(l => l.batchNorm === bnNorm);
-        const coaFound = pmCoaBatchNormSet.has(bnNorm);
-        return {
-          id: `reqf|${bnRaw}`,
-          matReqNo: firstLine?.matReqNo || '-',
-          materialName: firstLine?.materialName || meta.itemName,
-          materialCode: firstLine?.materialCode || meta.itemCode,
-          arNo: firstLine?.arNo || '',
-          batchNumber: bnRaw,
-          requisitionStatus: 'Requisition Found',
-          pmCoaStatus: coaFound ? 'PM COA Found' : 'PM COA Missing',
-        };
-      });
-    } else if (drill === 'requisition_missing') {
-      rows = [...creationBatchSet]
-        .sort()
-        .filter(bnRaw => !requisitionFoundRaw.has(bnRaw))
-        .map(bnRaw => {
-          const meta = creationBatchMeta.get(bnRaw) || { itemName: '-', itemCode: '-' };
-          return {
-            id: `reqm|${bnRaw}`,
-            matReqNo: '-',
-            materialName: meta.itemName,
-            materialCode: meta.itemCode,
-            arNo: '',
-            batchNumber: bnRaw,
-            requisitionStatus: 'Requisition Missing',
-            pmCoaStatus: '-',
-          };
-        });
-    } else if (drill === 'pm_coa_found') {
-      rows = [...pmCoaFoundRaw].sort().map(bnRaw => {
-        const bnNorm = creationBatchNormByRaw.get(bnRaw) || normalizeBatchNo(bnRaw);
-        const meta = creationBatchMeta.get(bnRaw) || { itemName: '-', itemCode: '-' };
-        const firstLine = pmLines.find(l => l.batchNorm === bnNorm);
-        return {
-          id: `pmcaf|${bnRaw}`,
-          matReqNo: firstLine?.matReqNo || '-',
-          materialName: firstLine?.materialName || meta.itemName,
-          materialCode: firstLine?.materialCode || meta.itemCode,
-          arNo: firstLine?.arNo || '',
-          batchNumber: bnRaw,
-          requisitionStatus: 'Requisition Found',
-          pmCoaStatus: 'PM COA Found',
-        };
-      });
-    } else if (drill === 'pm_coa_missing') {
-      rows = [...requisitionFoundRaw]
-        .sort()
-        .filter(bnRaw => !pmCoaFoundRaw.has(bnRaw))
-        .map(bnRaw => {
-          const bnNorm = creationBatchNormByRaw.get(bnRaw) || normalizeBatchNo(bnRaw);
-          const meta = creationBatchMeta.get(bnRaw) || { itemName: '-', itemCode: '-' };
-          const firstLine = pmLines.find(l => l.batchNorm === bnNorm);
-          return {
-            id: `pmcami|${bnRaw}`,
-            matReqNo: firstLine?.matReqNo || '-',
-            materialName: firstLine?.materialName || meta.itemName,
-            materialCode: firstLine?.materialCode || meta.itemCode,
-            arNo: firstLine?.arNo || '',
-            batchNumber: bnRaw,
-            requisitionStatus: 'Requisition Found',
-            pmCoaStatus: 'PM COA Missing',
-          };
-        });
-    }
+    const all = [...creationRecords].sort((a, b) => a.batchNumberRaw.localeCompare(b.batchNumberRaw, undefined, { numeric: true, sensitivity: 'base' }));
+    const isReqFound = (r: CreationRecord) => pmBatchSet.has(r.batchNorm);
+    const isCoaFound = (r: CreationRecord) => isReqFound(r) && pmCoaBatchNormSet.has(r.batchNorm);
+
+    const scoped =
+      drill === 'total_batches'
+        ? all
+        : drill === 'requisition_found'
+          ? all.filter(isReqFound)
+          : drill === 'requisition_missing'
+            ? all.filter(r => !isReqFound(r))
+            : drill === 'pm_coa_found'
+              ? all.filter(isCoaFound)
+              : all.filter(r => isReqFound(r) && !isCoaFound(r));
+
+    rows = scoped.map(rec => {
+      const firstLine = pmLines.find(l => l.batchNorm === rec.batchNorm);
+      const found = isReqFound(rec);
+      const coaFound = isCoaFound(rec);
+      return {
+        id: `${drill}|${rec.recordId}`,
+        matReqNo: firstLine?.matReqNo || '-',
+        materialName: firstLine?.materialName || rec.itemName,
+        materialCode: firstLine?.materialCode || rec.itemCode,
+        arNo: firstLine?.arNo || '',
+        batchNumber: rec.batchNumberRaw,
+        requisitionStatus: found ? 'Requisition Found' : 'Requisition Missing',
+        pmCoaStatus: found ? (coaFound ? 'PM COA Found' : 'PM COA Missing') : '-',
+      };
+    });
+
+    const totalBatchesCreation = all.length;
+    const requisitionFoundBatches = all.filter(isReqFound).length;
+    const requisitionMissingBatches = totalBatchesCreation - requisitionFoundBatches;
+    const pmCoaFoundBatches = all.filter(isCoaFound).length;
+    const pmCoaMissingBatches = requisitionFoundBatches - pmCoaFoundBatches;
 
     return NextResponse.json({
       success: true,

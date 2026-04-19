@@ -292,7 +292,95 @@ export async function GET(): Promise<NextResponse<RetainedSampleResponse>> {
       else lessThan3.push(group);
     }
 
-    // Sort each section by MFC number alphabetically
+    // 6. Build MFCGroups for "orphan" MFCs — have RetainedSample data but are no
+    //    longer present in the Formula collection (e.g. formula revised from .08 → .09).
+    //    These must still appear as separate, independent entries.
+    const handledMfcNos = new Set([...moreThan3, ...lessThan3].map((g) => g.mfcNo));
+
+    // Fast lookup: batchNumber+itemCode (or batchNumber alone) → batch dates
+    const batchInfoMap = new Map<string, { mfgDate: string; expiryDate: string; brandName?: string }>();
+    for (const doc of batchDocs) {
+      for (const b of doc.batches || []) {
+        const bn = (b.batchNumber || '').trim();
+        if (!bn) continue;
+        const rawBrand = typeof b.itemDetail === 'string' ? b.itemDetail.trim() : '';
+        const entry = {
+          mfgDate: b.mfgDate || '',
+          expiryDate: b.expiryDate || '',
+          brandName: rawBrand && rawBrand !== 'N/A' ? rawBrand : undefined,
+        };
+        const keyFull = `${bn}|${b.itemCode || ''}`;
+        if (!batchInfoMap.has(keyFull)) batchInfoMap.set(keyFull, entry);
+        if (!batchInfoMap.has(bn))      batchInfoMap.set(bn, entry);
+      }
+    }
+
+    // Group orphan retained docs by mfcNo
+    type OrphanDoc = { mfcNo: string; productCode: string; productName: string; batchNumber: string; itemCode: string };
+    const orphanByMfc = new Map<string, OrphanDoc[]>();
+    for (const r of retainedDocs) {
+      if (handledMfcNos.has(r.mfcNo)) continue;
+      if (!orphanByMfc.has(r.mfcNo)) orphanByMfc.set(r.mfcNo, []);
+      orphanByMfc.get(r.mfcNo)!.push({
+        mfcNo: r.mfcNo,
+        productCode: r.productCode,
+        productName: r.productName,
+        batchNumber: r.batchNumber,
+        itemCode: (r as { itemCode?: string }).itemCode || '',
+      });
+    }
+
+    for (const [mfcNo, docs] of orphanByMfc.entries()) {
+      // Sort orphan batches the same way (mfgDate → batchNumber → itemCode)
+      docs.sort((a, b) => {
+        const ai = batchInfoMap.get(`${a.batchNumber}|${a.itemCode}`) ?? batchInfoMap.get(a.batchNumber);
+        const bi = batchInfoMap.get(`${b.batchNumber}|${b.itemCode}`) ?? batchInfoMap.get(b.batchNumber);
+        const dateCmp = (ai?.mfgDate || '').localeCompare(bi?.mfgDate || '');
+        if (dateCmp !== 0) return dateCmp;
+        const bnCmp = a.batchNumber.localeCompare(b.batchNumber);
+        if (bnCmp !== 0) return bnCmp;
+        return a.itemCode.localeCompare(b.itemCode);
+      });
+
+      const batchRows: BatchStabilityRow[] = docs.map((doc) => {
+        const coa       = coaMap.get(doc.batchNumber);
+        const phParams  = coa?.phParams || [];
+        const stabilityEntries =
+          stabilityMap.get(`${doc.mfcNo}|${doc.batchNumber}|${doc.itemCode}`) ??
+          stabilityMap.get(`${doc.mfcNo}|${doc.batchNumber}`) ??
+          [];
+        const bInfo =
+          batchInfoMap.get(`${doc.batchNumber}|${doc.itemCode}`) ??
+          batchInfoMap.get(doc.batchNumber);
+        return {
+          batchNumber: doc.batchNumber,
+          itemCode:    doc.itemCode,
+          mfgDate:     bInfo?.mfgDate    || '',
+          expiryDate:  bInfo?.expiryDate || '',
+          brandName:   bInfo?.brandName,
+          coaFound:    !!coa,
+          phParams,
+          zeroMonthPH:          phParams[0]?.result || '',
+          zeroMonthDescription: coa?.description   || '',
+          stabilityEntries,
+        };
+      });
+
+      const firstDoc = docs[0];
+      const group: MFCGroup = {
+        mfcNo,
+        productCode: firstDoc.productCode,
+        productName: firstDoc.productName,
+        genericName: '',
+        shelfLife:   '',
+        batches:     batchRows,
+      };
+
+      if (batchRows.length >= 3) moreThan3.push(group);
+      else lessThan3.push(group);
+    }
+
+    // Sort each section by MFC number alphabetically (covers both formula and orphan groups)
     const sortFn = (a: MFCGroup, b: MFCGroup) => a.mfcNo.localeCompare(b.mfcNo);
     moreThan3.sort(sortFn);
     lessThan3.sort(sortFn);

@@ -49,6 +49,32 @@ const FILES_FOLDER = path.join(process.cwd(), 'files');
 // Maximum size for storing raw XML content in MongoDB (14MB to stay under 16MB BSON limit)
 const MAX_RAW_CONTENT_SIZE = 14 * 1024 * 1024;
 
+// Maximum safe document size for batches payload.
+// JSON.stringify size != BSON size — BSON adds type bytes, field-name overhead, and length
+// prefixes that typically add 20–50% on top of the JSON estimate. Use a conservative 8MB
+// budget so that worst-case BSON overhead still stays under MongoDB's 16MB hard limit.
+const MAX_SAFE_DOC_BYTES = 8 * 1024 * 1024;
+
+// Hard cap for pathological XML fields that can explode a document size
+// (e.g., malformed exports where a remark field contains repeated XML).
+// 500 chars is more than enough for any legitimate remark/name field.
+const MAX_SAFE_STRING_CHARS = 500;
+
+function utf8BytesOf(value: unknown): number {
+  try {
+    return Buffer.byteLength(typeof value === 'string' ? value : JSON.stringify(value), 'utf8');
+  } catch {
+    // Fallback: assume large; forces aggressive chunking.
+    return MAX_SAFE_DOC_BYTES * 2;
+  }
+}
+
+function truncateIfTooLong(value: string, maxChars: number): { value: string; truncated: boolean } {
+  if (!value) return { value, truncated: false };
+  if (value.length <= maxChars) return { value, truncated: false };
+  return { value: value.slice(0, maxChars) + '…', truncated: true };
+}
+
 function toHumanErrorMessage(fileType: XmlFileType, fileName: string, raw: string): string {
   const safeRaw = (raw || 'Unknown error').trim();
 
@@ -77,6 +103,17 @@ function toHumanErrorMessage(fileType: XmlFileType, fileName: string, raw: strin
         `Could not process Yield file: ${fileName}`,
         `Reason: this is not a Yield Statement XML (missing <YIELDSTATEMENT> root).`,
         `How to fix: export the Yield Statement again, or move this file out of /files.`,
+      ].join('\n');
+    }
+  }
+
+  // REQUISITION: document too large (should not happen after chunking fix, but guard anyway)
+  if (fileType === 'REQUISITION') {
+    if (safeRaw.toLowerCase().includes('object to insert too large') || safeRaw.toLowerCase().includes('too large')) {
+      return [
+        `Could not process REQUISITION file: ${fileName}`,
+        `Reason: document size still exceeds MongoDB limit after chunking — file may be malformed.`,
+        `How to fix: re-export the report XML (full export) and try again.`,
       ].join('\n');
     }
   }
@@ -245,31 +282,41 @@ export async function processXmlFile(fileInfo: XmlFileInfo): Promise<IngestionRe
 
     // Skip early if this exact file (content hash) was already processed.
     // If it previously FAILED, we still skip to prevent repeated work on every click.
-    // If you want to retry, the content must change (fix/re-export), which changes the hash.
+    // EXCEPTION: REQUISITION errors are NOT cached — chunking improvements may succeed on
+    // re-run, so we always retry them. The caller clears the stale ERROR log via upsert.
+    // If you want to retry other types, the content must change (fix/re-export), which changes the hash.
     if (existingLog && isHashSkipType) {
       if (existingLog.status === 'ERROR') {
-        console.log(`   ❌ SKIPPED: Previously failed on ${existingLog.processedAt.toISOString()}`);
+        if (fileType === 'REQUISITION') {
+          // REQUISITION errors are always retried — chunking/size fixes may now succeed.
+          // The stale ERROR log will be overwritten via upsert on success.
+          console.log(`   🔄 RETRYING: Previously failed REQUISITION — will attempt re-processing`);
+          // Do NOT return here — fall out of this entire if-block and re-process below.
+        } else {
+          console.log(`   ❌ SKIPPED: Previously failed on ${existingLog.processedAt.toISOString()}`);
+          return {
+            fileName,
+            fileType: existingLog.fileType as XmlFileType,
+            status: 'ERROR',
+            message: toHumanErrorMessage(
+              existingLog.fileType as XmlFileType,
+              fileName,
+              existingLog.errorMessage || `File previously failed on ${existingLog.processedAt.toISOString()}`
+            ),
+            businessKey: existingLog.businessKey,
+          };
+        }
+      } else {
+        // Previously succeeded or was a duplicate — skip it.
+        console.log(`   ⚠️ SKIPPED: Already processed on ${existingLog.processedAt.toISOString()}`);
         return {
           fileName,
           fileType: existingLog.fileType as XmlFileType,
-          status: 'ERROR',
-          message: toHumanErrorMessage(
-            existingLog.fileType as XmlFileType,
-            fileName,
-            existingLog.errorMessage || `File previously failed on ${existingLog.processedAt.toISOString()}`
-          ),
+          status: 'DUPLICATE',
+          message: `File already processed on ${existingLog.processedAt.toISOString()}`,
           businessKey: existingLog.businessKey,
         };
       }
-
-      console.log(`   ⚠️ SKIPPED: Already processed on ${existingLog.processedAt.toISOString()}`);
-      return {
-        fileName,
-        fileType: existingLog.fileType as XmlFileType,
-        status: 'DUPLICATE',
-        message: `File already processed on ${existingLog.processedAt.toISOString()}`,
-        businessKey: existingLog.businessKey,
-      };
     }
 
     // fileType is already detected above
@@ -1565,6 +1612,29 @@ async function processRequisitionXml(
   // Filter out batches that no longer have materials
   const finalBatches = batchesWithNewMaterials.filter(batch => batch.materials.length > 0);
 
+  // Safety net: truncate pathological strings that can blow up BSON size
+  // (commonly caused by malformed report exports).
+  const truncationWarnings: string[] = [];
+  for (const b of finalBatches) {
+    const t = truncateIfTooLong(String(b.matReqRemark || ''), MAX_SAFE_STRING_CHARS);
+    if (t.truncated) {
+      b.matReqRemark = t.value;
+      truncationWarnings.push(`Truncated MATREQ remark for batch ${b.batchNumber} to ${MAX_SAFE_STRING_CHARS} chars`);
+    }
+    for (const m of b.materials) {
+      const tn = truncateIfTooLong(String(m.materialName || ''), MAX_SAFE_STRING_CHARS);
+      if (tn.truncated) {
+        m.materialName = tn.value;
+        truncationWarnings.push(`Truncated materialName for MATCODE ${m.materialCode} (MATREQDTLID ${m.matReqDtlId})`);
+      }
+      const tl = truncateIfTooLong(String((m as any).labelClaim || ''), MAX_SAFE_STRING_CHARS);
+      if (tl.truncated) {
+        (m as any).labelClaim = tl.value;
+        truncationWarnings.push(`Truncated labelClaim for MATCODE ${m.materialCode} (MATREQDTLID ${m.matReqDtlId})`);
+      }
+    }
+  }
+
   // Calculate validation stats
   let totalValidated = 0;
   let totalMismatched = 0;
@@ -1575,43 +1645,176 @@ async function processRequisitionXml(
     });
   });
 
-  // Skip storing raw XML for large files
-  const shouldStoreRawContent = content.length <= MAX_RAW_CONTENT_SIZE;
+  // Split finalBatches into chunks to stay under MongoDB's 16MB BSON limit.
+  // IMPORTANT: chunk by actual UTF-8 byte size, not by batch count.
+  type ReqBatch = (typeof finalBatches)[number];
 
-  // Store in database
-  const requisition = await Requisition.create({
-    uniqueIdentifier: `REQ-${uuidv4()}`,
-    fileName,
-    fileSize,
-    rawXmlContent: shouldStoreRawContent ? content : undefined,
-    contentHash,
-    parsingStatus: parseResult.warnings.length > 0 || duplicateDetails.length > 0 ? 'partial' : 'success',
-    parsingErrors: [
-      ...parseResult.warnings,
-      ...(duplicateDetails.length > 0 ? [`${duplicateDetails.length} duplicate items were skipped`] : []),
-      ...(!shouldStoreRawContent ? [`Raw XML content not stored (file exceeds 14MB limit)`] : [])
-    ],
+  const splitBatchByMaterials = (batch: ReqBatch, maxBytes: number): ReqBatch[] => {
+    // If the batch itself is too large, split materials into multiple smaller batches.
+    // Keep all batch header fields identical; only materials array is partitioned.
+    const base: Omit<ReqBatch, 'materials'> = { ...batch, materials: undefined } as any;
+    const baseOverhead = utf8BytesOf({ ...base, materials: [] });
+    const out: ReqBatch[] = [];
+    let current: any[] = [];
+    let currentBytes = baseOverhead;
 
-    batches: finalBatches,
+    for (const mat of batch.materials) {
+      const matBytes = utf8BytesOf(mat);
+      // If a single material is absurdly large, we still store it alone; truncation above should prevent this.
+      if (current.length === 0 && baseOverhead + matBytes > maxBytes) {
+        out.push({ ...(base as any), materials: [mat] });
+        continue;
+      }
+      if (currentBytes + matBytes > maxBytes && current.length > 0) {
+        out.push({ ...(base as any), materials: current });
+        current = [mat];
+        currentBytes = baseOverhead + matBytes;
+      } else {
+        current.push(mat);
+        currentBytes += matBytes;
+      }
+    }
+    if (current.length > 0) out.push({ ...(base as any), materials: current });
+    return out;
+  };
 
-    totalBatches: finalBatches.length,
-    totalMaterials: newMaterials.length,
-    validatedCount: totalValidated,
-    mismatchCount: totalMismatched,
+  const buildBatchChunks = (batches: ReqBatch[], maxBytes: number): ReqBatch[][] => {
+    const chunks: ReqBatch[][] = [];
+    let currentChunk: ReqBatch[] = [];
+    let currentBytes = utf8BytesOf(currentChunk);
 
-    locationCode: data.locationCode,
-    make: data.make,
-  });
+    for (const batch of batches) {
+      const batchBytes = utf8BytesOf(batch);
+
+      // Oversized single batch: split by materials first.
+      if (batchBytes > maxBytes) {
+        const splitBatches = splitBatchByMaterials(batch, maxBytes);
+        for (const sb of splitBatches) {
+          const sbBytes = utf8BytesOf(sb);
+          if (currentChunk.length > 0 && currentBytes + sbBytes > maxBytes) {
+            chunks.push(currentChunk);
+            currentChunk = [];
+            currentBytes = utf8BytesOf(currentChunk);
+          }
+          currentChunk.push(sb);
+          currentBytes += sbBytes;
+        }
+        continue;
+      }
+
+      if (currentChunk.length > 0 && currentBytes + batchBytes > maxBytes) {
+        chunks.push(currentChunk);
+        currentChunk = [];
+        currentBytes = utf8BytesOf(currentChunk);
+      }
+      currentChunk.push(batch);
+      currentBytes += batchBytes;
+    }
+
+    if (currentChunk.length > 0) chunks.push(currentChunk);
+    return chunks;
+  };
+
+  // Diagnostic: log top field sizes to identify any bloated fields before chunking.
+  // This is cheap (only samples the first 3 materials) and helps debug malformed exports.
+  if (finalBatches.length > 0) {
+    const sampleMats = finalBatches[0].materials.slice(0, 3);
+    const fieldSizes = sampleMats.map(m => ({
+      matReqDtlId: m.matReqDtlId,
+      materialNameLen: (m.materialName || '').length,
+      remarkLen: ((m as any).matReqRemark || '').length,
+      labelClaimLen: ((m as any).labelClaim || '').length,
+    }));
+    console.log('   Field size sample (first batch, first 3 materials):', JSON.stringify(fieldSizes));
+  }
+
+  const estimatedBatchesBytes = utf8BytesOf(finalBatches);
+  const needsChunking = estimatedBatchesBytes > MAX_SAFE_DOC_BYTES;
+  const batchChunks = needsChunking ? buildBatchChunks(finalBatches, MAX_SAFE_DOC_BYTES) : [finalBatches];
+  if (needsChunking) {
+    console.log(`\n📦 LARGE FILE DETECTED: Splitting into ${batchChunks.length} chunks (estimated ${(estimatedBatchesBytes / 1024 / 1024).toFixed(1)} MB)`);
+  }
+
+  // Only store raw XML when the COMBINED size of rawXmlContent + batches fits in the budget.
+  // The old check only looked at rawXmlContent alone — but a 13MB XML + 2MB batches =
+  // 15MB JSON → ~22MB BSON → exceeds MongoDB's 16MB limit even without chunking.
+  // Rule: raw XML is stored only if rawXml + batchesData both fit within MAX_SAFE_DOC_BYTES.
+  const shouldStoreRawContent =
+    !needsChunking &&
+    content.length + estimatedBatchesBytes <= MAX_SAFE_DOC_BYTES;
+
+  const baseParsingErrors = [
+    ...parseResult.warnings,
+    ...(truncationWarnings.length > 0 ? [...new Set(truncationWarnings)] : []),
+    ...(duplicateDetails.length > 0 ? [`${duplicateDetails.length} duplicate items were skipped`] : []),
+    ...(!shouldStoreRawContent ? [`Raw XML content not stored (${needsChunking ? 'file split across multiple chunks' : 'file exceeds 14MB limit'})`] : [])
+  ];
+
+  // Insert one document per chunk
+  const insertedIds: string[] = [];
+  for (let chunkIdx = 0; chunkIdx < batchChunks.length; chunkIdx++) {
+    const chunkBatches = batchChunks[chunkIdx];
+    const chunkMaterials = chunkBatches.flatMap(b => b.materials);
+    const chunkValidated = chunkMaterials.filter(m => m.validationStatus === 'matched').length;
+    const chunkMismatched = chunkMaterials.filter(m => m.validationStatus === 'mismatch').length;
+
+    const chunkErrors = batchChunks.length > 1
+      ? [...baseParsingErrors, `Chunk ${chunkIdx + 1} of ${batchChunks.length} (large file split)`]
+      : baseParsingErrors;
+
+    // Guard: verify estimated BSON size before inserting.
+    // JSON bytes * 1.5 is a conservative BSON overhead multiplier. If this exceeds
+    // MongoDB's 16MB hard limit, fail fast with a clear message instead of a cryptic driver error.
+    // Include rawXmlContent in the estimate — it is the largest field and was previously missed.
+    const rawXmlBytes = chunkIdx === 0 && shouldStoreRawContent ? content.length : 0;
+    const chunkJsonBytes = utf8BytesOf({ batches: chunkBatches, parsingErrors: chunkErrors }) + rawXmlBytes;
+    const estimatedBsonBytes = Math.ceil(chunkJsonBytes * 1.5);
+    const BSON_HARD_LIMIT = 15 * 1024 * 1024; // 15MB — leave 1MB headroom
+    if (estimatedBsonBytes > BSON_HARD_LIMIT) {
+      throw new Error(
+        `Chunk ${chunkIdx + 1}/${batchChunks.length} estimated BSON size ` +
+        `${(estimatedBsonBytes / 1024 / 1024).toFixed(1)}MB exceeds limit. ` +
+        `JSON size: ${(chunkJsonBytes / 1024 / 1024).toFixed(1)}MB, ` +
+        `batches: ${chunkBatches.length}, materials: ${chunkMaterials.length}. ` +
+        `File may contain malformed/repeated XML content. Re-export and try again.`
+      );
+    }
+
+    const requisition = await Requisition.create({
+      uniqueIdentifier: `REQ-${uuidv4()}`,
+      fileName,
+      fileSize,
+      // Only store raw XML in the first chunk (and only if within size limit)
+      rawXmlContent: chunkIdx === 0 && shouldStoreRawContent ? content : undefined,
+      contentHash,
+      parsingStatus: parseResult.warnings.length > 0 || duplicateDetails.length > 0 ? 'partial' : 'success',
+      parsingErrors: chunkErrors,
+
+      batches: chunkBatches,
+
+      totalBatches: chunkBatches.length,
+      totalMaterials: chunkMaterials.length,
+      validatedCount: chunkValidated,
+      mismatchCount: chunkMismatched,
+
+      locationCode: data.locationCode,
+      make: data.make,
+    });
+
+    insertedIds.push(requisition._id.toString());
+    console.log(`   ✅ Chunk ${chunkIdx + 1}/${batchChunks.length} stored: ${chunkBatches.length} batches, ${chunkMaterials.length} materials (ID: ${requisition._id.toString()})`);
+  }
 
   console.log('\n✅ SUCCESSFULLY STORED IN DATABASE');
-  console.log(`   Record ID: ${requisition._id.toString()}`);
-  console.log(`   Batches Stored: ${finalBatches.length}`);
-  console.log(`   Materials Stored: ${newMaterials.length}`);
+  console.log(`   Record IDs: ${insertedIds.join(', ')}`);
+  console.log(`   Total Chunks: ${batchChunks.length}`);
+  console.log(`   Total Batches Stored: ${finalBatches.length}`);
+  console.log(`   Total Materials Stored: ${newMaterials.length}`);
   console.log('========================================\n');
 
   return {
     businessKey,
-    recordId: requisition._id.toString(),
+    recordId: insertedIds[0],
     duplicate: false,
     itemStats
   };

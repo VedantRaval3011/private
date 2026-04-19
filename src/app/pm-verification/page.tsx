@@ -329,16 +329,6 @@ export default function PmVerificationPage() {
     ];
   }, [displaySummary, selectedYear]);
 
-  const batchWiseRows = useMemo(() => {
-    const map = new Map<string, VerificationRow>();
-    rows.forEach(r => {
-      const bn = (r.batchNumber || '').trim().toUpperCase();
-      if (!bn) return;
-      if (!map.has(bn)) map.set(bn, r);
-    });
-    return Array.from(map.values());
-  }, [rows]);
-
   const toggleSort = (key: keyof VerificationRow) => {
     setSortKey(prev => {
       if (prev !== key) {
@@ -364,7 +354,7 @@ export default function PmVerificationPage() {
     };
 
     const q = searchQuery.trim().toLowerCase();
-    const scoped = batchWiseRows.filter(r => inGroup(r));
+    const scoped = rows.filter(r => inGroup(r));
     const searched = q
       ? scoped.filter(r => {
           return (
@@ -385,7 +375,7 @@ export default function PmVerificationPage() {
       return sortDir === 'asc' ? cmp : -cmp;
     });
     return sorted;
-  }, [batchWiseRows, searchQuery, sortKey, sortDir, mfcGroupFilter, batchCategoryMap]);
+  }, [rows, searchQuery, sortKey, sortDir, mfcGroupFilter, batchCategoryMap]);
 
   const reqOk = displaySummary.requisitionFoundBatches + displaySummary.requisitionMissingBatches === displaySummary.totalBatchesCreation;
   const coaOk = displaySummary.pmCoaFoundBatches + displaySummary.pmCoaMissingBatches === displaySummary.requisitionFoundBatches;

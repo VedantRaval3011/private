@@ -39,3 +39,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# large local data exports
+files/Wadhwan-01-04-2025 to 31-03-2026.XML

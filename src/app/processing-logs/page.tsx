@@ -71,6 +71,7 @@ export default function ProcessingLogsPage() {
     const [deleteMessage, setDeleteMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
     const [showConfirmModal, setShowConfirmModal] = useState<'orphaned' | 'all' | 'coa' | 'yield' | null>(null);
     const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
+    const [confirmDeleteLog, setConfirmDeleteLog] = useState<{ id: string; fileName: string } | null>(null);
 
     const fetchLogs = useCallback(async () => {
         setIsLoading(true);
@@ -154,6 +155,26 @@ export default function ProcessingLogsPage() {
             }
         } catch (error) {
             setDeleteMessage({ type: 'error', text: 'Network error while deleting Yield logs' });
+        } finally {
+            setIsDeleting(false);
+        }
+    };
+
+    const handleDeleteSingleLog = async (id: string) => {
+        setIsDeleting(true);
+        setDeleteMessage(null);
+        setConfirmDeleteLog(null);
+        try {
+            const response = await fetch(`/api/ingestion/logs/${id}`, { method: 'DELETE' });
+            const data = await response.json();
+            if (data.success) {
+                setDeleteMessage({ type: 'success', text: data.message });
+                fetchLogs();
+            } else {
+                setDeleteMessage({ type: 'error', text: data.error || 'Failed to delete log' });
+            }
+        } catch (error) {
+            setDeleteMessage({ type: 'error', text: 'Network error while deleting log' });
         } finally {
             setIsDeleting(false);
         }
@@ -540,12 +561,13 @@ export default function ProcessingLogsPage() {
                                         <th style={thStyle}>Items</th>
                                         <th style={thStyle}>Size</th>
                                         <th style={thStyle}>Processed At</th>
+                                        <th style={{ ...thStyle, width: '60px' }}></th>
                                     </tr>
                                 </thead>
                                 <tbody>
                                     {logs.length === 0 ? (
                                         <tr>
-                                            <td colSpan={7} style={{ ...tdStyle, textAlign: 'center', padding: '3rem', color: 'var(--muted-foreground)' }}>
+                                            <td colSpan={8} style={{ ...tdStyle, textAlign: 'center', padding: '3rem', color: 'var(--muted-foreground)' }}>
                                                 No processing logs found
                                             </td>
                                         </tr>
@@ -623,12 +645,34 @@ export default function ProcessingLogsPage() {
                                                     </td>
                                                     <td style={tdStyle}>{formatFileSize(log.fileSize)}</td>
                                                     <td style={{ ...tdStyle, fontSize: '0.85rem' }}>{formatDate(log.processedAt)}</td>
+                                                    <td style={tdStyle} onClick={(e) => e.stopPropagation()}>
+                                                        <button
+                                                            onClick={() => setConfirmDeleteLog({ id: log._id, fileName: log.fileName })}
+                                                            disabled={isDeleting}
+                                                            title="Delete this log"
+                                                            style={{
+                                                                padding: '0.25rem 0.5rem',
+                                                                borderRadius: 'var(--radius-sm)',
+                                                                border: '1px solid rgba(239, 68, 68, 0.3)',
+                                                                background: 'rgba(239, 68, 68, 0.08)',
+                                                                color: '#ef4444',
+                                                                cursor: isDeleting ? 'not-allowed' : 'pointer',
+                                                                fontSize: '0.75rem',
+                                                                opacity: isDeleting ? 0.5 : 1,
+                                                                display: 'flex',
+                                                                alignItems: 'center',
+                                                                gap: '0.25rem',
+                                                            }}
+                                                        >
+                                                            🗑
+                                                        </button>
+                                                    </td>
                                                 </tr>
 
                                                 {/* Expanded item details row */}
                                                 {expandedLogId === log._id && log.itemStats && (
                                                     <tr>
-                                                        <td colSpan={7} style={{
+                                                        <td colSpan={8} style={{
                                                             padding: 0,
                                                             background: 'rgba(59, 130, 246, 0.03)',
                                                             borderBottom: '2px solid var(--border)',
@@ -859,6 +903,71 @@ export default function ProcessingLogsPage() {
                     </div>
                 )}
             </main>
+
+            {/* Single Log Delete Confirmation Modal */}
+            {confirmDeleteLog && (
+                <div style={{
+                    position: 'fixed',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    background: 'rgba(0, 0, 0, 0.5)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    zIndex: 1000,
+                }}>
+                    <div style={{
+                        background: 'var(--card)',
+                        borderRadius: 'var(--radius-xl)',
+                        padding: '2rem',
+                        maxWidth: '450px',
+                        width: '90%',
+                        boxShadow: 'var(--shadow-xl)',
+                    }}>
+                        <h3 style={{ fontSize: '1.25rem', fontWeight: '600', marginBottom: '1rem', color: '#ef4444' }}>
+                            🗑️ Delete Processing Log?
+                        </h3>
+                        <p style={{ color: 'var(--muted-foreground)', marginBottom: '1.5rem', lineHeight: 1.6 }}>
+                            This will permanently delete the log for{' '}
+                            <strong style={{ color: 'var(--foreground)', wordBreak: 'break-all' }}>
+                                {confirmDeleteLog.fileName}
+                            </strong>
+                            . The file will be treated as new and can be re-processed.
+                        </p>
+                        <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
+                            <button
+                                onClick={() => setConfirmDeleteLog(null)}
+                                style={{
+                                    padding: '0.625rem 1.25rem',
+                                    borderRadius: 'var(--radius-md)',
+                                    border: '1px solid var(--border)',
+                                    background: 'var(--card)',
+                                    color: 'var(--foreground)',
+                                    cursor: 'pointer',
+                                }}
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={() => handleDeleteSingleLog(confirmDeleteLog.id)}
+                                style={{
+                                    padding: '0.625rem 1.25rem',
+                                    borderRadius: 'var(--radius-md)',
+                                    border: 'none',
+                                    background: 'linear-gradient(135deg, #ef4444, #dc2626)',
+                                    color: 'white',
+                                    cursor: 'pointer',
+                                    fontWeight: '500',
+                                }}
+                            >
+                                Delete Log
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* Confirmation Modal */}
             {showConfirmModal && (

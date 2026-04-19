@@ -84,6 +84,12 @@ const isValidEffBatch = (value: string | undefined | null): boolean => {
   return true;
 };
 
+// Normalize storage condition: replace '?' that is a mis-encoded degree symbol (e.g. "2-8?C" → "2-8°C")
+const normalizeStorageCondition = (val: string | undefined | null): string => {
+  if (!val) return val as string;
+  return val.replace(/\?(?=[Cc])/g, '°');
+};
+
 // Dynamic column config — all table fields to be checked for missing data.
 // Adding a new field here is the ONLY change needed to include it in the Missing filter.
 // Provide an optional `check` function to override the default isMissingData logic for a field.
@@ -1182,34 +1188,15 @@ export default function ProductMasterPage() {
         margin: '0 auto',
         padding: '0.5rem 1rem',
       }}>
-        {/* Search and Stats */}
+        {/* Stats */}
         <div style={{
           display: 'flex',
-          justifyContent: 'space-between',
+          justifyContent: 'flex-end',
           alignItems: 'center',
           marginBottom: '0.5rem',
           flexWrap: 'wrap',
           gap: '0.5rem',
         }}>
-          <div style={{ flex: '1', minWidth: '200px', maxWidth: '400px' }}>
-            <input
-              type="text"
-              placeholder="Search by Product Name, Code, Department..."
-              value={searchTerm}
-              onChange={handleSearch}
-              style={{
-                width: '100%',
-                padding: '0.45rem 0.75rem',
-                borderRadius: 'var(--radius-md)',
-                border: '1px solid var(--border)',
-                background: 'var(--card)',
-                color: 'var(--foreground)',
-                fontSize: '0.8rem',
-                transition: 'all var(--transition-fast)',
-              }}
-            />
-          </div>
-
           {/* Stats Cards */}
           <div style={{
             display: 'flex',
@@ -1892,6 +1879,26 @@ export default function ProductMasterPage() {
               Batch
             </button>
           </div>
+
+          {/* Search Bar */}
+          <input
+            type="text"
+            placeholder="Search by Product Name, Code, Department..."
+            value={searchTerm}
+            onChange={handleSearch}
+            style={{
+              flex: '1',
+              minWidth: '180px',
+              maxWidth: '320px',
+              padding: '0.3rem 0.75rem',
+              borderRadius: 'var(--radius-md)',
+              border: '1px solid var(--border)',
+              background: 'var(--card)',
+              color: 'var(--foreground)',
+              fontSize: '0.75rem',
+              transition: 'all var(--transition-fast)',
+            }}
+          />
 
           {/* Export Buttons Container */}
           <div style={{
@@ -2890,7 +2897,7 @@ export default function ProductMasterPage() {
                                 const missingStorage = isMissingData(item.storageCondition);
                                 return (
                                   <td style={{ ...cellBase, width: '190px', whiteSpace: 'normal', background: missingStorage ? 'rgba(239,68,68,0.06)' : storStyle ? storStyle.bg : undefined, color: missingStorage ? '#ef4444' : storStyle ? storStyle.color : 'var(--muted-foreground)' }}>
-                                    {item.storageCondition || 'N/A'}
+                                    {normalizeStorageCondition(item.storageCondition) || 'N/A'}
                                   </td>
                                 );
                               })()}
@@ -3157,7 +3164,7 @@ export default function ProductMasterPage() {
                                     const missingStorage2 = isMissingData(item.storageCondition);
                                     return (
                                       <td style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem', maxWidth: '200px', borderRight: '1px solid var(--border)', background: missingStorage2 ? 'rgba(239,68,68,0.06)' : storStyle2 ? storStyle2.bg : undefined, color: missingStorage2 ? '#ef4444' : storStyle2 ? storStyle2.color : 'var(--muted-foreground)' }}>
-                                        <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item.storageCondition || 'N/A'}>{item.storageCondition || 'N/A'}</div>
+                                        <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={normalizeStorageCondition(item.storageCondition) || 'N/A'}>{normalizeStorageCondition(item.storageCondition) || 'N/A'}</div>
                                       </td>
                                     );
                                   })()}
@@ -3377,8 +3384,8 @@ export default function ProductMasterPage() {
                                     background: missingStorage ? 'rgba(239,68,68,0.06)' : storStyle ? storStyle.bg : undefined,
                                     color: missingStorage ? '#ef4444' : storStyle ? storStyle.color : 'var(--muted-foreground)',
                                   }}>
-                                    <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item.storageCondition || 'N/A'}>
-                                      {item.storageCondition || 'N/A'}
+                                    <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={normalizeStorageCondition(item.storageCondition) || 'N/A'}>
+                                      {normalizeStorageCondition(item.storageCondition) || 'N/A'}
                                     </div>
                                   </td>
                                 );
@@ -3536,8 +3543,8 @@ export default function ProductMasterPage() {
                           const missingStorage4 = isMissingData(item.storageCondition);
                           return (
                             <td style={{ padding: '0.25rem 0.5rem', fontSize: '0.7rem', maxWidth: '200px', borderRight: '1px solid var(--border)', background: missingStorage4 ? 'rgba(239,68,68,0.06)' : storStyle4 ? storStyle4.bg : undefined, color: missingStorage4 ? '#ef4444' : storStyle4 ? storStyle4.color : 'var(--muted-foreground)' }}>
-                              <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item.storageCondition || 'N/A'}>
-                                {item.storageCondition || 'N/A'}
+                              <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={normalizeStorageCondition(item.storageCondition) || 'N/A'}>
+                                {normalizeStorageCondition(item.storageCondition) || 'N/A'}
                               </div>
                             </td>
                           );
