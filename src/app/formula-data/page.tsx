@@ -668,9 +668,11 @@ interface BatchStatusCapsuleProps {
     onRedClick?: () => void | Promise<void>;
     size?: 'small' | 'medium' | 'large';
     type: 'RM' | 'PPM' | 'PM' | 'RM COA' | 'PM COA' | 'PPM COA' | 'Bulk COA' | 'Finish COA';
+    /** When set, the row fills available width (aligned stacked columns in MFC headers). */
+    stretch?: boolean;
 }
 
-function BatchStatusCapsule({ matched, unmatched, onGreenClick, onRedClick, size = 'medium', type }: BatchStatusCapsuleProps) {
+function BatchStatusCapsule({ matched, unmatched, onGreenClick, onRedClick, size = 'medium', type, stretch }: BatchStatusCapsuleProps) {
     const total = matched + unmatched;
     if (total === 0) return null;
 
@@ -688,7 +690,8 @@ function BatchStatusCapsule({ matched, unmatched, onGreenClick, onRedClick, size
     return (
         <div
             style={{
-                display: 'inline-flex',
+                display: stretch ? 'flex' : 'inline-flex',
+                width: stretch ? '100%' : undefined,
                 alignItems: 'center',
                 gap: '4px',
             }}
@@ -712,12 +715,14 @@ function BatchStatusCapsule({ matched, unmatched, onGreenClick, onRedClick, size
                 style={{
                     display: 'inline-flex',
                     alignItems: 'stretch',
+                    flex: stretch ? 1 : undefined,
+                    minWidth: stretch ? 0 : config.minWidth,
+                    width: stretch ? '100%' : undefined,
                     height: config.height,
                     borderRadius: '20px',
                     overflow: 'hidden',
                     boxShadow: '0 2px 6px rgba(0,0,0,0.15), inset 0 1px 0 rgba(255,255,255,0.2)',
                     border: '1px solid rgba(255,255,255,0.3)',
-                    minWidth: config.minWidth,
                 }}
             >
                 {/* Green Section - RM Data Found */}
@@ -793,9 +798,10 @@ interface MiniArStatusCapsuleProps {
     accent: 'rm' | 'ppm' | 'pm';
     onFoundClick?: () => void;
     onMissingClick?: () => void;
+    stretch?: boolean;
 }
 
-function MiniArStatusCapsule({ label, found, missing, accent: _accent, onFoundClick, onMissingClick }: MiniArStatusCapsuleProps) {
+function MiniArStatusCapsule({ label, found, missing, accent: _accent, onFoundClick, onMissingClick, stretch }: MiniArStatusCapsuleProps) {
     const total = found + missing;
     if (total === 0) return null;
 
@@ -808,7 +814,8 @@ function MiniArStatusCapsule({ label, found, missing, accent: _accent, onFoundCl
     return (
         <div
             style={{
-                display: 'inline-flex',
+                display: stretch ? 'flex' : 'inline-flex',
+                width: stretch ? '100%' : undefined,
                 alignItems: 'center',
                 gap: '4px',
             }}
@@ -830,12 +837,14 @@ function MiniArStatusCapsule({ label, found, missing, accent: _accent, onFoundCl
                 style={{
                     display: 'inline-flex',
                     alignItems: 'stretch',
+                    flex: stretch ? 1 : undefined,
+                    minWidth: stretch ? 0 : '80px',
+                    width: stretch ? '100%' : undefined,
                     height: '20px',
                     borderRadius: '20px',
                     overflow: 'hidden',
                     boxShadow: '0 2px 6px rgba(0,0,0,0.15), inset 0 1px 0 rgba(255,255,255,0.2)',
                     border: '1px solid rgba(255,255,255,0.3)',
-                    minWidth: '80px',
                 }}
             >
                 {found > 0 && (
@@ -6572,9 +6581,10 @@ export default function FormulaDataPage() {
         return counts;
     }, [yearFilteredBatches, finishCoaQualifiedBatchNumbers, mainFormulas, lowBatchFormulas, noBatchFormulas, placeboFormulas]);
 
-    // Per-formula year-filtered stats for the MFC row badges (Total, Unique, RM, PPM, PM, BulkCOA, FinishCOA)
+    // Per-formula stats for MFC row badges from the same batch universe as `yearFilteredBatches`
+    // (all batches when no year is selected; year-sliced when a year is selected).
     const perFormulaYearFilteredStats = useMemo(() => {
-        if (!selectedFilterYear || !yearFilteredBatches || yearFilteredBatches.length === 0) return null;
+        if (!yearFilteredBatches || yearFilteredBatches.length === 0) return null;
 
         const getProductCodes = (f: FormulaRecord): string[] => {
             const codes: string[] = [];
@@ -6605,6 +6615,12 @@ export default function FormulaDataPage() {
             pmMatched: number; pmUnmatched: number;
             bulkCoaQualified: number; bulkCoaUnqualified: number;
             finishCoaQualified: number; finishCoaUnqualified: number;
+            rmCoaQualified: number; rmCoaUnqualified: number;
+            rmCoaArFound: number; rmCoaArMissing: number;
+            ppmCoaQualified: number; ppmCoaUnqualified: number;
+            ppmCoaArFound: number; ppmCoaArMissing: number;
+            pmCoaQualified: number; pmCoaUnqualified: number;
+            pmCoaArFound: number; pmCoaArMissing: number;
         }>();
 
         filteredFormulas.forEach(f => {
@@ -6656,6 +6672,67 @@ export default function FormulaDataPage() {
                 }
             });
 
+            // RM COA (unique batches among requisition-found), same rules as section RM COA
+            let rmCoaQualified = 0, rmCoaUnqualified = 0;
+            uniqueBatchNums.forEach(bnNorm => {
+                if (!bnNorm || !rmCoaReqFoundBatchNumbers.has(bnNorm)) return;
+                if (rmCoaFoundBatchNumbers.has(bnNorm)) rmCoaQualified++;
+                else rmCoaUnqualified++;
+            });
+            const rmCoaFoundAr = new Set<string>();
+            const rmCoaMissAr = new Set<string>();
+            rmCoaVerificationRows.forEach((row: any) => {
+                const bn = (row?.batchNumber || '').toString().trim().toUpperCase();
+                if (!uniqueBatchNums.has(bn)) return;
+                const status = (row?.coaStatus || '').toString();
+                splitArNumbers(row?.arNo).forEach(ar => {
+                    if (status === 'COA Found') rmCoaFoundAr.add(ar);
+                    else rmCoaMissAr.add(ar);
+                });
+            });
+            rmCoaFoundAr.forEach(ar => rmCoaMissAr.delete(ar));
+
+            // PPM / PM COA (batch records among requisition-found), same rules as section capsules
+            let ppmCoaQualified = 0, ppmCoaUnqualified = 0;
+            let pmCoaQualified = 0, pmCoaUnqualified = 0;
+            yearFilteredBatches.forEach((batch: any) => {
+                if (!batch.itemCode || !productCodes.includes(batch.itemCode)) return;
+                const bnNorm = (batch.batchNumber || '').toString().trim().toUpperCase();
+                if (!bnNorm) return;
+                if (ppmCoaReqFoundBatchNumbers.has(bnNorm)) {
+                    if (ppmCoaFoundBatchNumbers.has(bnNorm)) ppmCoaQualified++;
+                    else ppmCoaUnqualified++;
+                }
+                if (pmCoaReqFoundBatchNumbers.has(bnNorm)) {
+                    if (pmCoaFoundBatchNumbers.has(bnNorm)) pmCoaQualified++;
+                    else pmCoaUnqualified++;
+                }
+            });
+            const ppmFoundAr = new Set<string>();
+            const ppmMissAr = new Set<string>();
+            ppmCoaVerificationRows.forEach((row: any) => {
+                const bn = (row?.batchNumber || '').toString().trim().toUpperCase();
+                if (!uniqueBatchNums.has(bn)) return;
+                const status = (row?.ppmCoaStatus || '').toString();
+                splitArNumbers(row?.arNo).forEach(ar => {
+                    if (status === 'PPM COA Found') ppmFoundAr.add(ar);
+                    else ppmMissAr.add(ar);
+                });
+            });
+            ppmFoundAr.forEach(ar => ppmMissAr.delete(ar));
+            const pmFoundAr = new Set<string>();
+            const pmMissAr = new Set<string>();
+            pmCoaVerificationRows.forEach((row: any) => {
+                const bn = (row?.batchNumber || '').toString().trim().toUpperCase();
+                if (!uniqueBatchNums.has(bn)) return;
+                const status = (row?.pmCoaStatus || '').toString();
+                splitArNumbers(row?.arNo).forEach(ar => {
+                    if (status === 'PM COA Found') pmFoundAr.add(ar);
+                    else pmMissAr.add(ar);
+                });
+            });
+            pmFoundAr.forEach(ar => pmMissAr.delete(ar));
+
             statsMap.set(mfcKey, {
                 totalBatchCount, uniqueBatchCount: uniqueBatchNums.size,
                 rmMatched, rmUnmatched,
@@ -6663,11 +6740,20 @@ export default function FormulaDataPage() {
                 pmMatched, pmUnmatched,
                 bulkCoaQualified, bulkCoaUnqualified,
                 finishCoaQualified, finishCoaUnqualified,
+                rmCoaQualified, rmCoaUnqualified,
+                rmCoaArFound: rmCoaFoundAr.size,
+                rmCoaArMissing: rmCoaMissAr.size,
+                ppmCoaQualified, ppmCoaUnqualified,
+                ppmCoaArFound: ppmFoundAr.size,
+                ppmCoaArMissing: ppmMissAr.size,
+                pmCoaQualified, pmCoaUnqualified,
+                pmCoaArFound: pmFoundAr.size,
+                pmCoaArMissing: pmMissAr.size,
             });
         });
 
         return statsMap;
-    }, [selectedFilterYear, filteredFormulas, yearFilteredBatches, rmBatchNumbers, ppmBatchNumbers, pmBatchNumbers, bulkCoaQualifiedBatchNumbers, finishCoaQualifiedBatchNumbers]);
+    }, [filteredFormulas, yearFilteredBatches, rmBatchNumbers, ppmBatchNumbers, pmBatchNumbers, bulkCoaQualifiedBatchNumbers, finishCoaQualifiedBatchNumbers, rmCoaReqFoundBatchNumbers, rmCoaFoundBatchNumbers, rmCoaVerificationRows, ppmCoaReqFoundBatchNumbers, ppmCoaFoundBatchNumbers, ppmCoaVerificationRows, pmCoaReqFoundBatchNumbers, pmCoaFoundBatchNumbers, pmCoaVerificationRows]);
 
     const toggleMfc = (mfcId: string) => {
         setExpandedMfc(expandedMfc === mfcId ? null : mfcId);
@@ -10047,21 +10133,6 @@ export default function FormulaDataPage() {
                         </span>
                     </div>
 
-                    {/* Manufacturer Tag */}
-                    <div style={{
-                        padding: '0.4rem 0.9rem',
-                        borderRadius: '20px',
-                        background: `linear-gradient(135deg, ${colors.light} 0%, ${colors.glow} 100%)`,
-                        backdropFilter: 'blur(6px)',
-                        color: colors.primary,
-                        fontSize: '0.72rem',
-                        fontWeight: '700',
-                        border: `1px solid ${colors.border}`,
-                        boxShadow: `inset 0 1px 0 rgba(255,255,255,0.5), 0 1px 4px ${colors.glow}`,
-                    }}>
-                        {formula.masterFormulaDetails.manufacturer || 'N/A'}
-                    </div>
-
                     {/* Material Count */}
                     <div style={{
                         padding: '0.4rem 0.9rem',
@@ -12159,6 +12230,18 @@ export default function FormulaDataPage() {
                                     const effectiveBulkCoaUnqualified = yearStats ? yearStats.bulkCoaUnqualified : ((formula as any).bulkCoaUnqualified || 0);
                                     const effectiveFinishCoaQualified = yearStats ? yearStats.finishCoaQualified : ((formula as any).finishCoaQualified || 0);
                                     const effectiveFinishCoaUnqualified = yearStats ? yearStats.finishCoaUnqualified : ((formula as any).finishCoaUnqualified || 0);
+                                    const effectiveRmCoaQualified = yearStats?.rmCoaQualified ?? 0;
+                                    const effectiveRmCoaUnqualified = yearStats?.rmCoaUnqualified ?? 0;
+                                    const effectiveRmCoaArFound = yearStats?.rmCoaArFound ?? 0;
+                                    const effectiveRmCoaArMissing = yearStats?.rmCoaArMissing ?? 0;
+                                    const effectivePpmCoaQualified = yearStats?.ppmCoaQualified ?? 0;
+                                    const effectivePpmCoaUnqualified = yearStats?.ppmCoaUnqualified ?? 0;
+                                    const effectivePpmCoaArFound = yearStats?.ppmCoaArFound ?? 0;
+                                    const effectivePpmCoaArMissing = yearStats?.ppmCoaArMissing ?? 0;
+                                    const effectivePmCoaQualified = yearStats?.pmCoaQualified ?? 0;
+                                    const effectivePmCoaUnqualified = yearStats?.pmCoaUnqualified ?? 0;
+                                    const effectivePmCoaArFound = yearStats?.pmCoaArFound ?? 0;
+                                    const effectivePmCoaArMissing = yearStats?.pmCoaArMissing ?? 0;
 
                                     return (
                                         <div
@@ -12192,8 +12275,10 @@ export default function FormulaDataPage() {
                                                     border: 'none',
                                                     cursor: 'pointer',
                                                     display: 'flex',
-                                                    alignItems: 'center',
-                                                    gap: '1rem',
+                                                    alignItems: 'flex-start',
+                                                    flexWrap: 'wrap',
+                                                    rowGap: '0.65rem',
+                                                    columnGap: '1rem',
                                                     textAlign: 'left',
                                                     outline: 'none',
                                                 }}
@@ -12308,18 +12393,62 @@ export default function FormulaDataPage() {
                                                     </div>
                                                 </div>
 
-                                                {/* Product Name */}
+                                                {/* Product name inline with Acc/LT; capsule metrics start on the same row to the right (wraps on narrow viewports) */}
                                                 <div style={{
-                                                    flex: 1,
+                                                    flex: '1 1 0',
+                                                    minWidth: 0,
                                                     fontSize: '0.9rem',
                                                     fontWeight: '500',
                                                     color: 'var(--foreground)',
                                                     display: 'flex',
-                                                    alignItems: 'center',
-                                                    gap: '0.75rem',
+                                                    flexDirection: 'row',
+                                                    flexWrap: 'wrap',
+                                                    alignItems: 'flex-start',
+                                                    columnGap: '0.75rem',
+                                                    rowGap: '0.35rem',
                                                 }}>
-                                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                                                        <span>{formula.masterFormulaDetails.productName}</span>
+                                                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '6px', flexShrink: 0, maxWidth: '100%' }}>
+                                                        <span style={{ fontWeight: '700', color: 'var(--foreground)' }}>{formula.masterFormulaDetails.productName}</span>
+                                                        {effectiveTotalBatchCount > 0 && (
+                                                            <>
+                                                                <span
+                                                                    style={{
+                                                                        padding: '0.2rem 0.55rem',
+                                                                        background: 'linear-gradient(135deg, #059669 0%, #10b981 100%)',
+                                                                        color: 'white',
+                                                                        borderRadius: '10px',
+                                                                        fontSize: '0.68rem',
+                                                                        fontWeight: '700',
+                                                                        boxShadow: '0 2px 4px rgba(5, 150, 105, 0.35)',
+                                                                        display: 'inline-flex',
+                                                                        alignItems: 'center',
+                                                                        gap: '4px',
+                                                                        whiteSpace: 'nowrap',
+                                                                    }}
+                                                                    title="Total batch records (may include duplicates)"
+                                                                >
+                                                                    📦 {effectiveTotalBatchCount} Batches
+                                                                </span>
+                                                                <span
+                                                                    style={{
+                                                                        padding: '0.15rem 0.5rem',
+                                                                        background: 'linear-gradient(135deg, #047857 0%, #059669 100%)',
+                                                                        color: 'white',
+                                                                        borderRadius: '10px',
+                                                                        fontSize: '0.62rem',
+                                                                        fontWeight: '600',
+                                                                        boxShadow: '0 2px 4px rgba(16, 185, 129, 0.3)',
+                                                                        display: 'inline-flex',
+                                                                        alignItems: 'center',
+                                                                        gap: '3px',
+                                                                        whiteSpace: 'nowrap',
+                                                                    }}
+                                                                    title="Unique batch numbers for this MFC"
+                                                                >
+                                                                    🎯 {effectiveUniqueBatchCount} Unique
+                                                                </span>
+                                                            </>
+                                                        )}
                                                         {(() => {
                                                             const key = toMfrKey(formula.masterFormulaDetails.masterCardNo);
                                                             const aInfo = astRstData.byMfrKey[key];
@@ -12328,7 +12457,7 @@ export default function FormulaDataPage() {
                                                             const hasAcc = (aInfo?.hasAccelerated || sInfo?.hasAccelerated) ?? false;
                                                             const hasLT = (aInfo?.hasLongTerm || sInfo?.hasLongTerm) ?? false;
                                                             return (
-                                                                <div style={{ display: 'flex', gap: '4px' }}>
+                                                                <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', alignItems: 'center' }}>
                                                                     <div style={{
                                                                         padding: '0.15rem 0.5rem',
                                                                         borderRadius: '8px',
@@ -12363,55 +12492,19 @@ export default function FormulaDataPage() {
                                                             );
                                                         })()}
                                                     </div>
-                                                    {/* Batch Count Badges: Total and Unique with Reconciliation */}
-                                                    {effectiveTotalBatchCount > 0 && (() => {
-                                                        const uniqueBatches = effectiveUniqueBatchCount;
-                                                        const matched = effectiveRmMatched;
-                                                        const unmatched = effectiveRmUnmatched;
-                                                        return (
-                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                                                {/* Total Batch Records */}
-                                                                <span
-                                                                    style={{
-                                                                        padding: '0.15rem 0.5rem',
-                                                                        background: '#e5e7eb',
-                                                                        color: '#4b5563',
-                                                                        borderRadius: '10px',
-                                                                        fontSize: '0.65rem',
-                                                                        fontWeight: '600',
-                                                                        whiteSpace: 'nowrap',
-                                                                    }}
-                                                                    title={`Total batch records (may include duplicates)`}
-                                                                >
-                                                                    📦 {effectiveTotalBatchCount} Total
-                                                                </span>
-                                                                {/* Unique Batches */}
-                                                                <span
-                                                                    style={{
-                                                                        padding: '0.15rem 0.5rem',
-                                                                        background: 'linear-gradient(135deg, #059669 0%, #10b981 100%)',
-                                                                        color: '#fff',
-                                                                        borderRadius: '10px',
-                                                                        fontSize: '0.65rem',
-                                                                        fontWeight: '600',
-                                                                        boxShadow: '0 2px 4px rgba(16, 185, 129, 0.2)',
-                                                                        whiteSpace: 'nowrap',
-                                                                    }}
-                                                                    title={`Unique batch numbers: ${uniqueBatches} (RM: ${matched} matched + ${unmatched} unmatched = ${matched + unmatched})`}
-                                                                >
-                                                                    🎯 {uniqueBatches} Unique
-                                                                </span>
-                                                            </div>
-                                                        );
-                                                    })()}
-                                                    {/* Per-formula RM Data Status Capsule with reconciliation */}
-                                                    {(effectiveRmMatched > 0 || effectiveRmUnmatched > 0 || formula.rmDataMatched !== undefined || formula.rmDataUnmatched !== undefined) && (() => {
-                                                        // Collect all product codes for this formula
+                                                    <div style={{
+                                                        flex: '1 1 280px',
+                                                        minWidth: 0,
+                                                        display: 'flex',
+                                                        flexDirection: 'column',
+                                                        gap: '8px',
+                                                    }}>
+                                                    {/* Two-line metrics: line 1 = RM/PPM/PM + COA batch row; line 2 = RM total + AR row (Batches/Unique sit under product name) */}
+                                                    {(effectiveTotalBatchCount > 0 || effectiveRmMatched > 0 || effectiveRmUnmatched > 0 || formula.rmDataMatched !== undefined || formula.rmDataUnmatched !== undefined) && (() => {
                                                         const allProductCodes: string[] = [];
                                                         if (formula.masterFormulaDetails?.productCode) {
                                                             allProductCodes.push(formula.masterFormulaDetails.productCode);
                                                         }
-                                                        // Add filling details product codes
                                                         if (formula.fillingDetails && Array.isArray(formula.fillingDetails)) {
                                                             formula.fillingDetails.forEach((fd: any) => {
                                                                 if (fd.productCode && fd.productCode !== 'N/A' && !allProductCodes.includes(fd.productCode)) {
@@ -12419,7 +12512,6 @@ export default function FormulaDataPage() {
                                                                 }
                                                             });
                                                         }
-                                                        // Add process filling product codes
                                                         if (formula.processes && Array.isArray(formula.processes)) {
                                                             formula.processes.forEach((p: any) => {
                                                                 if (p.fillingProducts && Array.isArray(p.fillingProducts)) {
@@ -12436,203 +12528,192 @@ export default function FormulaDataPage() {
                                                         const ppmUnmatched = effectivePpmUnmatched;
                                                         const pmMatched = effectivePmMatched;
                                                         const pmUnmatched = effectivePmUnmatched;
+                                                        const rmReconTotal = (effectiveRmMatched || 0) + (effectiveRmUnmatched || 0);
+                                                        const showRm = effectiveRmMatched > 0 || effectiveRmUnmatched > 0 || formula.rmDataMatched !== undefined || formula.rmDataUnmatched !== undefined;
+                                                        const showPpm = ppmMatched > 0 || ppmUnmatched > 0;
+                                                        const showPm = pmMatched > 0 || pmUnmatched > 0;
+                                                        const showRmCoa = ((effectiveRmCoaQualified || 0) + (effectiveRmCoaUnqualified || 0)) > 0;
+                                                        const showPpmCoa = ((effectivePpmCoaQualified || 0) + (effectivePpmCoaUnqualified || 0)) > 0;
+                                                        const showPmCoa = ((effectivePmCoaQualified || 0) + (effectivePmCoaUnqualified || 0)) > 0;
+                                                        const rmArTotal = (effectiveRmCoaArFound || 0) + (effectiveRmCoaArMissing || 0);
+                                                        const ppmArTotal = (effectivePpmCoaArFound || 0) + (effectivePpmCoaArMissing || 0);
+                                                        const pmArTotal = (effectivePmCoaArFound || 0) + (effectivePmCoaArMissing || 0);
+
+                                                        const reqCol = { width: 112, minWidth: 112, flexShrink: 0, display: 'flex', flexDirection: 'column' as const, alignItems: 'flex-start' } as const;
+                                                        const coaCol = { width: 160, minWidth: 160, maxWidth: 160, flexShrink: 0, display: 'flex', flexDirection: 'column' as const, alignItems: 'stretch', gap: 4 } as const;
 
                                                         return (
-                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                                                {/* RM Capsule */}
-                                                                <BatchStatusCapsule
-                                                                    type="RM"
-                                                                    matched={effectiveRmMatched}
-                                                                    unmatched={effectiveRmUnmatched}
-                                                                    onGreenClick={() => openPerFormulaRmModal(
-                                                                        mfcNo,
-                                                                        allProductCodes,
-                                                                        formula.masterFormulaDetails.productName,
-                                                                        'matched'
+                                                            <>
+                                                                <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-end', columnGap: 12, rowGap: 6, width: '100%' }}>
+                                                                    {showRm && (
+                                                                        <div style={{ ...reqCol, justifyContent: 'flex-end' }}>
+                                                                            <BatchStatusCapsule
+                                                                                type="RM"
+                                                                                matched={effectiveRmMatched}
+                                                                                unmatched={effectiveRmUnmatched}
+                                                                                onGreenClick={() => openPerFormulaRmModal(mfcNo, allProductCodes, formula.masterFormulaDetails.productName, 'matched')}
+                                                                                onRedClick={() => openPerFormulaRmModal(mfcNo, allProductCodes, formula.masterFormulaDetails.productName, 'unmatched')}
+                                                                                size="small"
+                                                                                stretch
+                                                                            />
+                                                                        </div>
                                                                     )}
-                                                                    onRedClick={() => openPerFormulaRmModal(
-                                                                        mfcNo,
-                                                                        allProductCodes,
-                                                                        formula.masterFormulaDetails.productName,
-                                                                        'unmatched'
+                                                                    {showPpm && (
+                                                                        <div style={{ ...reqCol, justifyContent: 'flex-end' }}>
+                                                                            <BatchStatusCapsule
+                                                                                type="PPM"
+                                                                                matched={ppmMatched}
+                                                                                unmatched={ppmUnmatched}
+                                                                                onGreenClick={() => openPerFormulaPpmModal(mfcNo, allProductCodes, formula.masterFormulaDetails.productName, 'matched')}
+                                                                                onRedClick={() => openPerFormulaPpmModal(mfcNo, allProductCodes, formula.masterFormulaDetails.productName, 'unmatched')}
+                                                                                size="small"
+                                                                                stretch
+                                                                            />
+                                                                        </div>
                                                                     )}
-                                                                    size="small"
-                                                                />
-
-                                                                {/* PPM Capsule (Blue) */}
-                                                                {(ppmMatched > 0 || ppmUnmatched > 0) && (
-                                                                    <div
-                                                                        style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}
-                                                                        title={`PPM (Primary Packing Material): ${ppmMatched} found, ${ppmUnmatched} missing`}
-                                                                    >
-                                                                        <span style={{
-                                                                            fontSize: '9px',
-                                                                            fontWeight: 700,
-                                                                            color: '#2563eb',
-                                                                            background: '#dbeafe',
-                                                                            padding: '2px 5px',
-                                                                            borderRadius: '4px',
-                                                                            textTransform: 'uppercase',
-                                                                            letterSpacing: '0.5px',
-                                                                        }}>
-                                                                            PPM
-                                                                        </span>
-                                                                        <div style={{
-                                                                            display: 'inline-flex',
-                                                                            alignItems: 'stretch',
-                                                                            height: '20px',
-                                                                            borderRadius: '20px',
-                                                                            overflow: 'hidden',
-                                                                            boxShadow: '0 2px 6px rgba(0,0,0,0.15)',
-                                                                            border: '1px solid rgba(255,255,255,0.3)',
-                                                                            minWidth: '60px',
-                                                                        }}>
-                                                                            {ppmMatched > 0 && (
-                                                                                <button
-                                                                                    onClick={(e) => { e.stopPropagation(); openPerFormulaPpmModal(mfcNo, allProductCodes, formula.masterFormulaDetails.productName, 'matched'); }}
-                                                                                    style={{
-                                                                                        flex: ppmMatched,
-                                                                                        minWidth: '30px',
-                                                                                        display: 'flex',
-                                                                                        alignItems: 'center',
-                                                                                        justifyContent: 'center',
-                                                                                        gap: '3px',
-                                                                                        padding: '2px 8px',
-                                                                                        background: 'linear-gradient(135deg, #2563eb 0%, #3b82f6 100%)',
-                                                                                        color: 'white',
-                                                                                        fontSize: '10px',
-                                                                                        fontWeight: 700,
-                                                                                        border: 'none',
-                                                                                        cursor: 'pointer',
-                                                                                        transition: 'filter 0.2s ease',
-                                                                                    }}
-                                                                                    onMouseEnter={(e) => e.currentTarget.style.filter = 'brightness(1.1)'}
-                                                                                    onMouseLeave={(e) => e.currentTarget.style.filter = 'brightness(1)'}
-                                                                                    title={`${ppmMatched} batches with PPM data - Click to view`}
-                                                                                >
-                                                                                    <span style={{ fontSize: '0.85em' }}>✓</span>
-                                                                                    {ppmMatched}
-                                                                                </button>
-                                                                            )}
-                                                                            {ppmUnmatched > 0 && (
-                                                                                <button
-                                                                                    onClick={(e) => { e.stopPropagation(); openPerFormulaPpmModal(mfcNo, allProductCodes, formula.masterFormulaDetails.productName, 'unmatched'); }}
-                                                                                    style={{
-                                                                                        flex: ppmUnmatched,
-                                                                                        minWidth: '30px',
-                                                                                        display: 'flex',
-                                                                                        alignItems: 'center',
-                                                                                        justifyContent: 'center',
-                                                                                        gap: '3px',
-                                                                                        padding: '2px 8px',
-                                                                                        background: 'linear-gradient(135deg, #dc2626 0%, #ef4444 100%)',
-                                                                                        color: 'white',
-                                                                                        fontSize: '10px',
-                                                                                        fontWeight: 700,
-                                                                                        border: 'none',
-                                                                                        cursor: 'pointer',
-                                                                                        transition: 'filter 0.2s ease',
-                                                                                    }}
-                                                                                    onMouseEnter={(e) => e.currentTarget.style.filter = 'brightness(1.1)'}
-                                                                                    onMouseLeave={(e) => e.currentTarget.style.filter = 'brightness(1)'}
-                                                                                    title={`${ppmUnmatched} batches without PPM data - Click to view`}
-                                                                                >
-                                                                                    <span style={{ fontSize: '0.85em' }}>✕</span>
-                                                                                    {ppmUnmatched}
-                                                                                </button>
+                                                                    {showPm && (
+                                                                        <div style={{ ...reqCol, justifyContent: 'flex-end' }}>
+                                                                            <BatchStatusCapsule
+                                                                                type="PM"
+                                                                                matched={pmMatched}
+                                                                                unmatched={pmUnmatched}
+                                                                                onGreenClick={() => openPerFormulaPmModal(mfcNo, allProductCodes, formula.masterFormulaDetails.productName, 'matched')}
+                                                                                onRedClick={() => openPerFormulaPmModal(mfcNo, allProductCodes, formula.masterFormulaDetails.productName, 'unmatched')}
+                                                                                size="small"
+                                                                                stretch
+                                                                            />
+                                                                        </div>
+                                                                    )}
+                                                                    {showRmCoa && (
+                                                                        <div style={coaCol}>
+                                                                            <BatchStatusCapsule
+                                                                                type="RM COA"
+                                                                                matched={effectiveRmCoaQualified}
+                                                                                unmatched={effectiveRmCoaUnqualified}
+                                                                                onGreenClick={() => openRmCoaModal('matched', 'main', [formula])}
+                                                                                onRedClick={() => openRmCoaModal('unmatched', 'main', [formula])}
+                                                                                size="small"
+                                                                                stretch
+                                                                            />
+                                                                        </div>
+                                                                    )}
+                                                                    {showPpmCoa && (
+                                                                        <div style={coaCol}>
+                                                                            <BatchStatusCapsule
+                                                                                type="PPM COA"
+                                                                                matched={effectivePpmCoaQualified}
+                                                                                unmatched={effectivePpmCoaUnqualified}
+                                                                                onGreenClick={() => openPpmCoaModal('qualified', 'main', [formula], 'batch')}
+                                                                                onRedClick={() => openPpmCoaModal('unqualified', 'main', [formula], 'batch')}
+                                                                                size="small"
+                                                                                stretch
+                                                                            />
+                                                                        </div>
+                                                                    )}
+                                                                    {showPmCoa && (
+                                                                        <div style={coaCol}>
+                                                                            <BatchStatusCapsule
+                                                                                type="PM COA"
+                                                                                matched={effectivePmCoaQualified}
+                                                                                unmatched={effectivePmCoaUnqualified}
+                                                                                onGreenClick={() => openPmCoaModal('qualified', 'main', [formula], 'batch')}
+                                                                                onRedClick={() => openPmCoaModal('unqualified', 'main', [formula], 'batch')}
+                                                                                size="small"
+                                                                                stretch
+                                                                            />
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+                                                                <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', columnGap: 12, rowGap: 6, width: '100%' }}>
+                                                                    {showRm && (
+                                                                        <div style={{ ...reqCol }}>
+                                                                            <div style={{
+                                                                                display: 'flex',
+                                                                                alignItems: 'center',
+                                                                                gap: '4px',
+                                                                                fontSize: '0.6rem',
+                                                                                fontWeight: '600',
+                                                                                color: '#059669',
+                                                                                background: 'rgba(16, 185, 129, 0.1)',
+                                                                                padding: '2px 6px',
+                                                                                borderRadius: '6px',
+                                                                                border: '1px solid rgba(16, 185, 129, 0.3)',
+                                                                            }}>
+                                                                                <span>{effectiveRmMatched || 0}</span>
+                                                                                <span>+</span>
+                                                                                <span>{effectiveRmUnmatched || 0}</span>
+                                                                                <span>=</span>
+                                                                                <span style={{ fontWeight: '700' }}>{rmReconTotal}</span>
+                                                                                <span style={{ marginLeft: '4px', opacity: 0.85 }}>total</span>
+                                                                            </div>
+                                                                        </div>
+                                                                    )}
+                                                                    {showPpm && <div style={{ ...reqCol, minHeight: 22 }} aria-hidden />}
+                                                                    {showPm && <div style={{ ...reqCol, minHeight: 22 }} aria-hidden />}
+                                                                    {showRmCoa && (
+                                                                        <div style={coaCol}>
+                                                                            {rmArTotal > 0 ? (
+                                                                                <MiniArStatusCapsule
+                                                                                    label="RM AR"
+                                                                                    found={effectiveRmCoaArFound}
+                                                                                    missing={effectiveRmCoaArMissing}
+                                                                                    accent="rm"
+                                                                                    stretch
+                                                                                    onFoundClick={() => openRmCoaModal('matched', 'main', [formula], 'ar')}
+                                                                                    onMissingClick={() => openRmCoaModal('unmatched', 'main', [formula], 'ar')}
+                                                                                />
+                                                                            ) : (
+                                                                                <div style={{ minHeight: 22 }} aria-hidden />
                                                                             )}
                                                                         </div>
-                                                                    </div>
-                                                                )}
-
-                                                                {/* PM Capsule (Purple) */}
-                                                                {(pmMatched > 0 || pmUnmatched > 0) && (
-                                                                    <div
-                                                                        style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}
-                                                                        title={`PM (Packing Material): ${pmMatched} found, ${pmUnmatched} missing`}
-                                                                    >
-                                                                        <span style={{
-                                                                            fontSize: '9px',
-                                                                            fontWeight: 700,
-                                                                            color: '#7c3aed',
-                                                                            background: '#f3e8ff',
-                                                                            padding: '2px 5px',
-                                                                            borderRadius: '4px',
-                                                                            textTransform: 'uppercase',
-                                                                            letterSpacing: '0.5px',
-                                                                        }}>
-                                                                            PM
-                                                                        </span>
-                                                                        <div style={{
-                                                                            display: 'inline-flex',
-                                                                            alignItems: 'stretch',
-                                                                            height: '20px',
-                                                                            borderRadius: '20px',
-                                                                            overflow: 'hidden',
-                                                                            boxShadow: '0 2px 6px rgba(0,0,0,0.15)',
-                                                                            border: '1px solid rgba(255,255,255,0.3)',
-                                                                            minWidth: '60px',
-                                                                        }}>
-                                                                            {pmMatched > 0 && (
-                                                                                <button
-                                                                                    onClick={(e) => { e.stopPropagation(); openPerFormulaPmModal(mfcNo, allProductCodes, formula.masterFormulaDetails.productName, 'matched'); }}
-                                                                                    style={{
-                                                                                        flex: pmMatched,
-                                                                                        minWidth: '30px',
-                                                                                        display: 'flex',
-                                                                                        alignItems: 'center',
-                                                                                        justifyContent: 'center',
-                                                                                        gap: '3px',
-                                                                                        padding: '2px 8px',
-                                                                                        background: 'linear-gradient(135deg, #6d28d9 0%, #7c3aed 100%)',
-                                                                                        color: 'white',
-                                                                                        fontSize: '10px',
-                                                                                        fontWeight: 700,
-                                                                                        border: 'none',
-                                                                                        cursor: 'pointer',
-                                                                                        transition: 'filter 0.2s ease',
-                                                                                    }}
-                                                                                    onMouseEnter={(e) => e.currentTarget.style.filter = 'brightness(1.1)'}
-                                                                                    onMouseLeave={(e) => e.currentTarget.style.filter = 'brightness(1)'}
-                                                                                    title={`${pmMatched} batches with PM data - Click to view`}
-                                                                                >
-                                                                                    <span style={{ fontSize: '0.85em' }}>✓</span>
-                                                                                    {pmMatched}
-                                                                                </button>
-                                                                            )}
-                                                                            {pmUnmatched > 0 && (
-                                                                                <button
-                                                                                    onClick={(e) => { e.stopPropagation(); openPerFormulaPmModal(mfcNo, allProductCodes, formula.masterFormulaDetails.productName, 'unmatched'); }}
-                                                                                    style={{
-                                                                                        flex: pmUnmatched,
-                                                                                        minWidth: '30px',
-                                                                                        display: 'flex',
-                                                                                        alignItems: 'center',
-                                                                                        justifyContent: 'center',
-                                                                                        gap: '3px',
-                                                                                        padding: '2px 8px',
-                                                                                        background: 'linear-gradient(135deg, #dc2626 0%, #ef4444 100%)',
-                                                                                        color: 'white',
-                                                                                        fontSize: '10px',
-                                                                                        fontWeight: 700,
-                                                                                        border: 'none',
-                                                                                        cursor: 'pointer',
-                                                                                        transition: 'filter 0.2s ease',
-                                                                                    }}
-                                                                                    onMouseEnter={(e) => e.currentTarget.style.filter = 'brightness(1.1)'}
-                                                                                    onMouseLeave={(e) => e.currentTarget.style.filter = 'brightness(1)'}
-                                                                                    title={`${pmUnmatched} batches without PM data - Click to view`}
-                                                                                >
-                                                                                    <span style={{ fontSize: '0.85em' }}>✕</span>
-                                                                                    {pmUnmatched}
-                                                                                </button>
+                                                                    )}
+                                                                    {showPpmCoa && (
+                                                                        <div style={coaCol}>
+                                                                            {ppmArTotal > 0 ? (
+                                                                                <MiniArStatusCapsule
+                                                                                    label="PPM AR"
+                                                                                    found={effectivePpmCoaArFound}
+                                                                                    missing={effectivePpmCoaArMissing}
+                                                                                    accent="ppm"
+                                                                                    stretch
+                                                                                    onFoundClick={() => openPpmCoaModal('qualified', 'main', [formula], 'ar')}
+                                                                                    onMissingClick={() => openPpmCoaModal('unqualified', 'main', [formula], 'ar')}
+                                                                                />
+                                                                            ) : (
+                                                                                <div style={{ minHeight: 22 }} aria-hidden />
                                                                             )}
                                                                         </div>
-                                                                    </div>
-                                                                )}
-
-                                                                {/* Bulk COA Capsule (Emerald) */}
-                                                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
+                                                                    )}
+                                                                    {showPmCoa && (
+                                                                        <div style={coaCol}>
+                                                                            {pmArTotal > 0 ? (
+                                                                                <MiniArStatusCapsule
+                                                                                    label="PM AR"
+                                                                                    found={effectivePmCoaArFound}
+                                                                                    missing={effectivePmCoaArMissing}
+                                                                                    accent="pm"
+                                                                                    stretch
+                                                                                    onFoundClick={() => openPmCoaModal('qualified', 'main', [formula], 'ar')}
+                                                                                    onMissingClick={() => openPmCoaModal('unqualified', 'main', [formula], 'ar')}
+                                                                                />
+                                                                            ) : (
+                                                                                <div style={{ minHeight: 22 }} aria-hidden />
+                                                                            )}
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+                                                            </>
+                                                        );
+                                                    })()}
+                                                    {/* Row 2: Bulk COA + Finish COA — same tier as CollapsibleSectionHeader second row */}
+                                                    {(
+                                                        ((effectiveRmCoaQualified || 0) + (effectiveRmCoaUnqualified || 0)) > 0 ||
+                                                        ((effectiveBulkCoaQualified || 0) + (effectiveBulkCoaUnqualified || 0)) > 0 ||
+                                                        ((effectiveFinishCoaQualified || 0) + (effectiveFinishCoaUnqualified || 0)) > 0
+                                                    ) && (
+                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap', marginTop: '2px' }}>
+                                                            {(effectiveBulkCoaQualified > 0 || effectiveBulkCoaUnqualified > 0) && (
+                                                                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'flex-start', flexShrink: 0 }}>
                                                                     <BatchStatusCapsule
                                                                         type="Bulk COA"
                                                                         matched={effectiveBulkCoaQualified}
@@ -12642,9 +12723,9 @@ export default function FormulaDataPage() {
                                                                         size="small"
                                                                     />
                                                                 </div>
-
-                                                                {/* Finish COA Capsule (Teal) */}
-                                                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
+                                                            )}
+                                                            {(effectiveFinishCoaQualified > 0 || effectiveFinishCoaUnqualified > 0) && (
+                                                                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'flex-start', flexShrink: 0 }}>
                                                                     <BatchStatusCapsule
                                                                         type="Finish COA"
                                                                         matched={effectiveFinishCoaQualified}
@@ -12654,21 +12735,10 @@ export default function FormulaDataPage() {
                                                                         size="small"
                                                                     />
                                                                 </div>
-                                                            </div>
-                                                        );
-                                                    })()}
-                                                </div>
-
-                                                {/* Manufacturer Tag */}
-                                                <div style={{
-                                                    padding: '0.25rem 0.75rem',
-                                                    borderRadius: 'var(--radius-sm)',
-                                                    background: colors.light,
-                                                    color: colors.primary,
-                                                    fontSize: '0.75rem',
-                                                    fontWeight: '600',
-                                                }}>
-                                                    {formula.masterFormulaDetails.manufacturer || 'N/A'}
+                                                            )}
+                                                        </div>
+                                                    )}
+                                                    </div>
                                                 </div>
 
                                             </div>
@@ -14031,6 +14101,8 @@ export default function FormulaDataPage() {
                                             const colors = getManufacturerColor(formula.masterFormulaDetails?.manufacturer || '');
                                             const materialCount = formula.materials?.length || 0;
                                             const mfcNo = formula.masterFormulaDetails?.masterCardNo?.trim() || 'N/A';
+                                            const mfcNoUpperLb = (formula.masterFormulaDetails?.masterCardNo || '').trim().toUpperCase();
+                                            const rowYearStatsLb = perFormulaYearFilteredStats?.get(mfcNoUpperLb);
 
                                             return (
                                                 <div
@@ -14092,9 +14164,25 @@ export default function FormulaDataPage() {
                                                                 </span>
                                                             )}
                                                         </div>
-                                                        <div style={{ padding: '0.25rem 0.75rem', borderRadius: 'var(--radius-sm)', background: colors.light, color: colors.primary, fontSize: '0.75rem', fontWeight: '600' }}>
-                                                            {formula.masterFormulaDetails.manufacturer || 'N/A'}
-                                                        </div>
+
+                                                        {rowYearStatsLb && ((rowYearStatsLb.rmCoaQualified || 0) + (rowYearStatsLb.rmCoaUnqualified || 0)) > 0 && (
+                                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'flex-start', flexShrink: 0 }}>
+                                                                <BatchStatusCapsule type="RM COA" matched={rowYearStatsLb.rmCoaQualified} unmatched={rowYearStatsLb.rmCoaUnqualified} onGreenClick={() => openRmCoaModal('matched', 'lowBatch', [formula])} onRedClick={() => openRmCoaModal('unmatched', 'lowBatch', [formula])} size="small" />
+                                                                <MiniArStatusCapsule label="RM AR" found={rowYearStatsLb.rmCoaArFound} missing={rowYearStatsLb.rmCoaArMissing} accent="rm" onFoundClick={() => openRmCoaModal('matched', 'lowBatch', [formula], 'ar')} onMissingClick={() => openRmCoaModal('unmatched', 'lowBatch', [formula], 'ar')} />
+                                                            </div>
+                                                        )}
+                                                        {rowYearStatsLb && ((rowYearStatsLb.ppmCoaQualified || 0) + (rowYearStatsLb.ppmCoaUnqualified || 0)) > 0 && (
+                                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'flex-start', flexShrink: 0 }}>
+                                                                <BatchStatusCapsule type="PPM COA" matched={rowYearStatsLb.ppmCoaQualified} unmatched={rowYearStatsLb.ppmCoaUnqualified} onGreenClick={() => openPpmCoaModal('qualified', 'lowBatch', [formula], 'batch')} onRedClick={() => openPpmCoaModal('unqualified', 'lowBatch', [formula], 'batch')} size="small" />
+                                                                <MiniArStatusCapsule label="PPM AR" found={rowYearStatsLb.ppmCoaArFound} missing={rowYearStatsLb.ppmCoaArMissing} accent="ppm" onFoundClick={() => openPpmCoaModal('qualified', 'lowBatch', [formula], 'ar')} onMissingClick={() => openPpmCoaModal('unqualified', 'lowBatch', [formula], 'ar')} />
+                                                            </div>
+                                                        )}
+                                                        {rowYearStatsLb && ((rowYearStatsLb.pmCoaQualified || 0) + (rowYearStatsLb.pmCoaUnqualified || 0)) > 0 && (
+                                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'flex-start', flexShrink: 0 }}>
+                                                                <BatchStatusCapsule type="PM COA" matched={rowYearStatsLb.pmCoaQualified} unmatched={rowYearStatsLb.pmCoaUnqualified} onGreenClick={() => openPmCoaModal('qualified', 'lowBatch', [formula], 'batch')} onRedClick={() => openPmCoaModal('unqualified', 'lowBatch', [formula], 'batch')} size="small" />
+                                                                <MiniArStatusCapsule label="PM AR" found={rowYearStatsLb.pmCoaArFound} missing={rowYearStatsLb.pmCoaArMissing} accent="pm" onFoundClick={() => openPmCoaModal('qualified', 'lowBatch', [formula], 'ar')} onMissingClick={() => openPmCoaModal('unqualified', 'lowBatch', [formula], 'ar')} />
+                                                            </div>
+                                                        )}
 
                                                         {/* Bulk COA Capsule for Low Batch */}
                                                         {(() => {
@@ -14235,6 +14323,8 @@ export default function FormulaDataPage() {
                                             const colors = getManufacturerColor(formula.masterFormulaDetails?.manufacturer || '');
                                             const materialCount = formula.materials?.length || 0;
                                             const mfcNo = formula.masterFormulaDetails?.masterCardNo?.trim() || 'N/A';
+                                            const mfcNoUpperNb = (formula.masterFormulaDetails?.masterCardNo || '').trim().toUpperCase();
+                                            const rowYearStatsNb = perFormulaYearFilteredStats?.get(mfcNoUpperNb);
 
                                             return (
                                                 <div
@@ -14295,12 +14385,28 @@ export default function FormulaDataPage() {
                                                                 ⚠️ No Batches
                                                             </span>
                                                         </div>
-                                                        <div style={{ padding: '0.25rem 0.75rem', borderRadius: 'var(--radius-sm)', background: colors.light, color: colors.primary, fontSize: '0.75rem', fontWeight: '600' }}>
-                                                            {formula.masterFormulaDetails.manufacturer || 'N/A'}
-                                                        </div>
                                                         <div style={{ fontSize: '0.75rem', color: 'var(--muted-foreground)' }}>
                                                             REV {formula.masterFormulaDetails.revisionNo || '0'}
                                                         </div>
+
+                                                        {rowYearStatsNb && ((rowYearStatsNb.rmCoaQualified || 0) + (rowYearStatsNb.rmCoaUnqualified || 0)) > 0 && (
+                                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'flex-start', flexShrink: 0 }}>
+                                                                <BatchStatusCapsule type="RM COA" matched={rowYearStatsNb.rmCoaQualified} unmatched={rowYearStatsNb.rmCoaUnqualified} onGreenClick={() => openRmCoaModal('matched', 'noBatch', [formula])} onRedClick={() => openRmCoaModal('unmatched', 'noBatch', [formula])} size="small" />
+                                                                <MiniArStatusCapsule label="RM AR" found={rowYearStatsNb.rmCoaArFound} missing={rowYearStatsNb.rmCoaArMissing} accent="rm" onFoundClick={() => openRmCoaModal('matched', 'noBatch', [formula], 'ar')} onMissingClick={() => openRmCoaModal('unmatched', 'noBatch', [formula], 'ar')} />
+                                                            </div>
+                                                        )}
+                                                        {rowYearStatsNb && ((rowYearStatsNb.ppmCoaQualified || 0) + (rowYearStatsNb.ppmCoaUnqualified || 0)) > 0 && (
+                                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'flex-start', flexShrink: 0 }}>
+                                                                <BatchStatusCapsule type="PPM COA" matched={rowYearStatsNb.ppmCoaQualified} unmatched={rowYearStatsNb.ppmCoaUnqualified} onGreenClick={() => openPpmCoaModal('qualified', 'noBatch', [formula], 'batch')} onRedClick={() => openPpmCoaModal('unqualified', 'noBatch', [formula], 'batch')} size="small" />
+                                                                <MiniArStatusCapsule label="PPM AR" found={rowYearStatsNb.ppmCoaArFound} missing={rowYearStatsNb.ppmCoaArMissing} accent="ppm" onFoundClick={() => openPpmCoaModal('qualified', 'noBatch', [formula], 'ar')} onMissingClick={() => openPpmCoaModal('unqualified', 'noBatch', [formula], 'ar')} />
+                                                            </div>
+                                                        )}
+                                                        {rowYearStatsNb && ((rowYearStatsNb.pmCoaQualified || 0) + (rowYearStatsNb.pmCoaUnqualified || 0)) > 0 && (
+                                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'flex-start', flexShrink: 0 }}>
+                                                                <BatchStatusCapsule type="PM COA" matched={rowYearStatsNb.pmCoaQualified} unmatched={rowYearStatsNb.pmCoaUnqualified} onGreenClick={() => openPmCoaModal('qualified', 'noBatch', [formula], 'batch')} onRedClick={() => openPmCoaModal('unqualified', 'noBatch', [formula], 'batch')} size="small" />
+                                                                <MiniArStatusCapsule label="PM AR" found={rowYearStatsNb.pmCoaArFound} missing={rowYearStatsNb.pmCoaArMissing} accent="pm" onFoundClick={() => openPmCoaModal('qualified', 'noBatch', [formula], 'ar')} onMissingClick={() => openPmCoaModal('unqualified', 'noBatch', [formula], 'ar')} />
+                                                            </div>
+                                                        )}
 
                                                         {/* Bulk COA Capsule for No Batch */}
                                                         {(() => {
@@ -14440,6 +14546,8 @@ export default function FormulaDataPage() {
                                             const colors = getManufacturerColor(formula.masterFormulaDetails?.manufacturer || '');
                                             const materialCount = formula.materials?.length || 0;
                                             const mfcNo = formula.masterFormulaDetails?.masterCardNo?.trim() || 'N/A';
+                                            const mfcNoUpperPb = (formula.masterFormulaDetails?.masterCardNo || '').trim().toUpperCase();
+                                            const rowYearStatsPb = perFormulaYearFilteredStats?.get(mfcNoUpperPb);
 
                                             return (
                                                 <div
@@ -14501,12 +14609,28 @@ export default function FormulaDataPage() {
                                                                 </span>
                                                             )}
                                                         </div>
-                                                        <div style={{ padding: '0.25rem 0.75rem', borderRadius: 'var(--radius-sm)', background: colors.light, color: colors.primary, fontSize: '0.75rem', fontWeight: '600' }}>
-                                                            {formula.masterFormulaDetails.manufacturer || 'N/A'}
-                                                        </div>
                                                         <div style={{ fontSize: '0.75rem', color: 'var(--muted-foreground)' }}>
                                                             REV {formula.masterFormulaDetails.revisionNo || '0'}
                                                         </div>
+
+                                                        {rowYearStatsPb && ((rowYearStatsPb.rmCoaQualified || 0) + (rowYearStatsPb.rmCoaUnqualified || 0)) > 0 && (
+                                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'flex-start', flexShrink: 0 }}>
+                                                                <BatchStatusCapsule type="RM COA" matched={rowYearStatsPb.rmCoaQualified} unmatched={rowYearStatsPb.rmCoaUnqualified} onGreenClick={() => openRmCoaModal('matched', 'placebo', [formula])} onRedClick={() => openRmCoaModal('unmatched', 'placebo', [formula])} size="small" />
+                                                                <MiniArStatusCapsule label="RM AR" found={rowYearStatsPb.rmCoaArFound} missing={rowYearStatsPb.rmCoaArMissing} accent="rm" onFoundClick={() => openRmCoaModal('matched', 'placebo', [formula], 'ar')} onMissingClick={() => openRmCoaModal('unmatched', 'placebo', [formula], 'ar')} />
+                                                            </div>
+                                                        )}
+                                                        {rowYearStatsPb && ((rowYearStatsPb.ppmCoaQualified || 0) + (rowYearStatsPb.ppmCoaUnqualified || 0)) > 0 && (
+                                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'flex-start', flexShrink: 0 }}>
+                                                                <BatchStatusCapsule type="PPM COA" matched={rowYearStatsPb.ppmCoaQualified} unmatched={rowYearStatsPb.ppmCoaUnqualified} onGreenClick={() => openPpmCoaModal('qualified', 'placebo', [formula], 'batch')} onRedClick={() => openPpmCoaModal('unqualified', 'placebo', [formula], 'batch')} size="small" />
+                                                                <MiniArStatusCapsule label="PPM AR" found={rowYearStatsPb.ppmCoaArFound} missing={rowYearStatsPb.ppmCoaArMissing} accent="ppm" onFoundClick={() => openPpmCoaModal('qualified', 'placebo', [formula], 'ar')} onMissingClick={() => openPpmCoaModal('unqualified', 'placebo', [formula], 'ar')} />
+                                                            </div>
+                                                        )}
+                                                        {rowYearStatsPb && ((rowYearStatsPb.pmCoaQualified || 0) + (rowYearStatsPb.pmCoaUnqualified || 0)) > 0 && (
+                                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'flex-start', flexShrink: 0 }}>
+                                                                <BatchStatusCapsule type="PM COA" matched={rowYearStatsPb.pmCoaQualified} unmatched={rowYearStatsPb.pmCoaUnqualified} onGreenClick={() => openPmCoaModal('qualified', 'placebo', [formula], 'batch')} onRedClick={() => openPmCoaModal('unqualified', 'placebo', [formula], 'batch')} size="small" />
+                                                                <MiniArStatusCapsule label="PM AR" found={rowYearStatsPb.pmCoaArFound} missing={rowYearStatsPb.pmCoaArMissing} accent="pm" onFoundClick={() => openPmCoaModal('qualified', 'placebo', [formula], 'ar')} onMissingClick={() => openPmCoaModal('unqualified', 'placebo', [formula], 'ar')} />
+                                                            </div>
+                                                        )}
 
                                                         {/* Bulk COA Capsule for Placebo */}
                                                         {(() => {
