@@ -676,16 +676,19 @@ function BatchStatusCapsule({ matched, unmatched, onGreenClick, onRedClick, size
     const total = matched + unmatched;
     if (total === 0) return null;
 
-    const greenPercent = (matched / total) * 100;
-    const redPercent = (unmatched / total) * 100;
-
     // Size configurations
     const sizeConfig = {
-        small: { height: '15px', fontSize: '10px', padding: '2px 8px', minWidth: '60px' },
+        // Keep "small" consistent with MiniArStatusCapsule (20px)
+        small: { height: '20px', fontSize: '10px', padding: '2px 8px', minWidth: '60px' },
         medium: { height: '26px', fontSize: '11px', padding: '4px 8px', minWidth: '80px' },
         large: { height: '32px', fontSize: '12px', padding: '5px 12px', minWidth: '100px' }
     };
     const config = sizeConfig[size];
+    const hasGreen = matched > 0;
+    const hasRed = unmatched > 0;
+    // When both sides exist, keep them equal width (prevents tiny red sliver).
+    const greenFlex = hasGreen && hasRed ? 1 : 1;
+    const redFlex = hasGreen && hasRed ? 1 : 1;
 
     return (
         <div
@@ -694,6 +697,7 @@ function BatchStatusCapsule({ matched, unmatched, onGreenClick, onRedClick, size
                 width: stretch ? '100%' : undefined,
                 alignItems: 'center',
                 gap: '4px',
+                flexDirection: 'row' as const,
             }}
             title={`${type === 'RM COA' ? 'RM COA' : type} Data: ${matched} found, ${unmatched} missing`}
         >
@@ -707,6 +711,14 @@ function BatchStatusCapsule({ matched, unmatched, onGreenClick, onRedClick, size
                 borderRadius: '4px',
                 textTransform: (type === 'RM COA' || type === 'PM COA' || type === 'PPM COA' || type === 'Bulk COA' || type === 'Finish COA') ? 'none' : 'uppercase',
                 letterSpacing: '0.5px',
+                width: size === 'small' ? '56px' : undefined,
+                minWidth: size === 'small' ? '56px' : undefined,
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
             }}>
                 {type}
             </span>
@@ -726,12 +738,12 @@ function BatchStatusCapsule({ matched, unmatched, onGreenClick, onRedClick, size
                 }}
             >
                 {/* Green Section - RM Data Found */}
-                {matched > 0 && (
+                {hasGreen && (
                     <button
                         onClick={(e) => { e.stopPropagation(); onGreenClick?.(); }}
                         style={{
-                            flex: greenPercent,
-                            minWidth: matched > 0 ? '40px' : '0',
+                            flex: greenFlex,
+                            minWidth: size === 'small' ? '44px' : '40px',
                             display: 'flex',
                             alignItems: 'center',
                             justifyContent: 'center',
@@ -755,12 +767,12 @@ function BatchStatusCapsule({ matched, unmatched, onGreenClick, onRedClick, size
                     </button>
                 )}
                 {/* Red Section - RM Data Missing */}
-                {unmatched > 0 && (
+                {hasRed && (
                     <button
                         onClick={(e) => { e.stopPropagation(); onRedClick?.(); }}
                         style={{
-                            flex: redPercent,
-                            minWidth: unmatched > 0 ? '40px' : '0',
+                            flex: redFlex,
+                            minWidth: size === 'small' ? '44px' : '40px',
                             display: 'flex',
                             alignItems: 'center',
                             justifyContent: 'center',
@@ -789,7 +801,7 @@ function BatchStatusCapsule({ matched, unmatched, onGreenClick, onRedClick, size
 }
 
 // ============================================
-// Mini AR Status Capsule (Unique AR Numbers)
+// Mini AR Status Capsule (AR Numbers)
 // ============================================
 interface MiniArStatusCapsuleProps {
     label: string;
@@ -810,6 +822,10 @@ function MiniArStatusCapsule({ label, found, missing, accent: _accent, onFoundCl
         labelBg: '#ecfdf5',
         foundBg: 'linear-gradient(135deg, #059669 0%, #10b981 100%)',
     };
+    const hasGreen = found > 0;
+    const hasRed = missing > 0;
+    const greenFlex = hasGreen && hasRed ? 1 : 1;
+    const redFlex = hasGreen && hasRed ? 1 : 1;
 
     return (
         <div
@@ -818,6 +834,7 @@ function MiniArStatusCapsule({ label, found, missing, accent: _accent, onFoundCl
                 width: stretch ? '100%' : undefined,
                 alignItems: 'center',
                 gap: '4px',
+                flexDirection: 'row' as const,
             }}
             title={`${label}: ${found} found, ${missing} missing`}
         >
@@ -830,6 +847,14 @@ function MiniArStatusCapsule({ label, found, missing, accent: _accent, onFoundCl
                 borderRadius: '4px',
                 letterSpacing: '0.5px',
                 textTransform: 'uppercase',
+                width: '56px',
+                minWidth: '56px',
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
             }}>
                 {label}
             </span>
@@ -847,12 +872,12 @@ function MiniArStatusCapsule({ label, found, missing, accent: _accent, onFoundCl
                     border: '1px solid rgba(255,255,255,0.3)',
                 }}
             >
-                {found > 0 && (
+                {hasGreen && (
                     <button
                         onClick={(e) => { e.stopPropagation(); onFoundClick?.(); }}
                         style={{
-                        flex: found,
-                        minWidth: '40px',
+                        flex: greenFlex,
+                        minWidth: '44px',
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'center',
@@ -872,12 +897,12 @@ function MiniArStatusCapsule({ label, found, missing, accent: _accent, onFoundCl
                         {found}
                     </button>
                 )}
-                {missing > 0 && (
+                {hasRed && (
                     <button
                         onClick={(e) => { e.stopPropagation(); onMissingClick?.(); }}
                         style={{
-                        flex: missing,
-                        minWidth: '40px',
+                        flex: redFlex,
+                        minWidth: '44px',
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'center',
@@ -899,6 +924,171 @@ function MiniArStatusCapsule({ label, found, missing, accent: _accent, onFoundCl
                 )}
             </div>
         </div>
+    );
+}
+
+// ============================================
+// Product Master Capsule (4-section)
+// ============================================
+interface ProductMasterCapsuleProps {
+    stats: { found: number; missingFromPM: number; withErrors: number; ok: number } | null;
+    onFoundClick?: () => void;
+    onMissingClick?: () => void;
+    onErrorsClick?: () => void;
+    onOkClick?: () => void;
+}
+
+function ProductMasterCapsule({ stats, onFoundClick, onMissingClick, onErrorsClick, onOkClick }: ProductMasterCapsuleProps) {
+    if (!stats) return null;
+    const total = stats.found + stats.missingFromPM;
+    if (total === 0) return null;
+
+    const btnStyle = (bg: string, borderRadius?: string): React.CSSProperties => ({
+        display: 'flex',
+        alignItems: 'center',
+        gap: '3px',
+        background: bg,
+        color: 'white',
+        padding: '3px 8px',
+        fontSize: '0.72rem',
+        fontWeight: 700,
+        whiteSpace: 'nowrap',
+        border: 'none',
+        cursor: 'pointer',
+        borderRadius: borderRadius ?? '0',
+    });
+
+    return (
+        <div style={{ display: 'flex', alignItems: 'center', flexShrink: 0, borderRadius: '20px', overflow: 'hidden', border: '1px solid #c4b5fd', boxShadow: '0 1px 3px rgba(99,102,241,0.15)' }}>
+            <div style={{ background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)', color: 'white', padding: '3px 10px', fontSize: '0.7rem', fontWeight: 700, whiteSpace: 'nowrap', borderRadius: '20px 0 0 20px' }}>
+                Product Master
+            </div>
+            <button onClick={(e) => { e.stopPropagation(); onFoundClick?.(); }} style={btnStyle('#059669')} title={`${stats.found} product codes found in both Formula Master & Product Master`}>
+                <span>✓</span><span>{stats.found}</span>
+            </button>
+            <button onClick={(e) => { e.stopPropagation(); onMissingClick?.(); }} style={btnStyle('#dc2626')} title={`${stats.missingFromPM} product codes in Formula Master but NOT in Product Master`}>
+                <span>✗</span><span>{stats.missingFromPM}</span>
+            </button>
+            <button onClick={(e) => { e.stopPropagation(); onErrorsClick?.(); }} style={btnStyle('#f59e0b')} title={`${stats.withErrors} product codes found in Product Master but with field errors or mismatches`}>
+                <span>⚠</span><span>{stats.withErrors}</span>
+            </button>
+            <button onClick={(e) => { e.stopPropagation(); onOkClick?.(); }} style={btnStyle('#10b981', '0 20px 20px 0')} title={`${stats.ok} product codes found in Product Master with no errors`}>
+                <span>✓OK</span><span>{stats.ok}</span>
+            </button>
+        </div>
+    );
+}
+
+// ============================================
+// Product Master Cross-Reference Modal
+// ============================================
+interface ProductMasterCrossRefModalProps {
+    show: boolean;
+    onClose: () => void;
+    type: 'found' | 'missing' | 'errors' | 'ok';
+    sectionName: string;
+    items: { productCode: string; productName: string; masterCardNo: string; missingFields: string[]; mismatchFields: string[] }[];
+    search: string;
+    onSearchChange: (v: string) => void;
+}
+
+function ProductMasterCrossRefModal({ show, onClose, type, sectionName, items, search, onSearchChange }: ProductMasterCrossRefModalProps) {
+    if (!show) return null;
+
+    const typeConfig = {
+        found:   { label: 'Found in Product Master',               color: '#059669', bg: '#ecfdf5', border: '#a7f3d0', icon: '✓' },
+        missing: { label: 'Missing from Product Master',           color: '#dc2626', bg: '#fef2f2', border: '#fecaca', icon: '✗' },
+        errors:  { label: 'Found with Errors in Product Master',   color: '#d97706', bg: '#fffbeb', border: '#fde68a', icon: '⚠' },
+        ok:      { label: 'Found — No Errors in Product Master',   color: '#059669', bg: '#ecfdf5', border: '#a7f3d0', icon: '✓OK' },
+    }[type];
+
+    const q = search.trim().toLowerCase();
+    const filtered = q
+        ? items.filter(i =>
+            i.productCode.toLowerCase().includes(q) ||
+            i.productName.toLowerCase().includes(q) ||
+            i.masterCardNo.toLowerCase().includes(q)
+          )
+        : items;
+
+    const showErrors = type === 'errors';
+
+    return (
+        <>
+            {/* Backdrop */}
+            <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', zIndex: 1100 }} />
+            {/* Modal */}
+            <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', zIndex: 1101, width: '92%', maxWidth: '900px', maxHeight: '88vh', display: 'flex', flexDirection: 'column', background: 'white', borderRadius: '16px', boxShadow: '0 25px 50px rgba(0,0,0,0.25)', overflow: 'hidden' }}>
+                {/* Header */}
+                <div style={{ background: `linear-gradient(135deg, ${typeConfig.color} 0%, ${typeConfig.color}cc 100%)`, padding: '16px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
+                    <div>
+                        <div style={{ color: 'white', fontWeight: 700, fontSize: '1rem' }}>
+                            {typeConfig.icon} {typeConfig.label}
+                        </div>
+                        <div style={{ color: 'rgba(255,255,255,0.8)', fontSize: '0.8rem', marginTop: '2px' }}>
+                            {sectionName} · {filtered.length} product code{filtered.length !== 1 ? 's' : ''}
+                        </div>
+                    </div>
+                    <button onClick={onClose} style={{ background: 'rgba(255,255,255,0.2)', border: 'none', borderRadius: '8px', color: 'white', padding: '6px 12px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600 }}>✕ Close</button>
+                </div>
+                {/* Search */}
+                <div style={{ padding: '12px 24px', borderBottom: '1px solid #e5e7eb', flexShrink: 0 }}>
+                    <input
+                        type="text"
+                        placeholder="Search by product code, name, or MFC..."
+                        value={search}
+                        onChange={e => onSearchChange(e.target.value)}
+                        style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '0.875rem', outline: 'none', boxSizing: 'border-box' }}
+                    />
+                </div>
+                {/* Table */}
+                <div style={{ overflowY: 'auto', flex: 1 }}>
+                    {filtered.length === 0 ? (
+                        <div style={{ textAlign: 'center', padding: '3rem', color: '#9ca3af' }}>No records found</div>
+                    ) : (
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
+                            <thead style={{ position: 'sticky', top: 0, background: '#f9fafb', zIndex: 1 }}>
+                                <tr style={{ borderBottom: '2px solid #e5e7eb' }}>
+                                    <th style={{ padding: '10px 12px', textAlign: 'left', color: '#6b7280', fontWeight: 600, width: '40px' }}>#</th>
+                                    <th style={{ padding: '10px 12px', textAlign: 'left', color: '#6b7280', fontWeight: 600 }}>Product Code</th>
+                                    <th style={{ padding: '10px 12px', textAlign: 'left', color: '#6b7280', fontWeight: 600 }}>Product Name</th>
+                                    <th style={{ padding: '10px 12px', textAlign: 'left', color: '#6b7280', fontWeight: 600 }}>MFC No</th>
+                                    {showErrors && <th style={{ padding: '10px 12px', textAlign: 'left', color: '#6b7280', fontWeight: 600 }}>Errors</th>}
+                                    {type === 'missing' && <th style={{ padding: '10px 12px', textAlign: 'left', color: '#6b7280', fontWeight: 600 }}>Status</th>}
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {filtered.map((item, i) => (
+                                    <tr key={item.productCode} style={{ borderBottom: '1px solid #f3f4f6', background: i % 2 === 0 ? 'white' : '#fafafa' }}>
+                                        <td style={{ padding: '8px 12px', color: '#9ca3af', fontWeight: 600 }}>{i + 1}</td>
+                                        <td style={{ padding: '8px 12px', fontFamily: 'monospace', fontWeight: 700, color: '#1f2937' }}>{item.productCode}</td>
+                                        <td style={{ padding: '8px 12px', color: '#374151', maxWidth: '240px' }}>{item.productName || <span style={{ color: '#9ca3af', fontStyle: 'italic' }}>—</span>}</td>
+                                        <td style={{ padding: '8px 12px', fontFamily: 'monospace', color: '#6b7280' }}>{item.masterCardNo || <span style={{ color: '#9ca3af', fontStyle: 'italic' }}>—</span>}</td>
+                                        {showErrors && (
+                                            <td style={{ padding: '8px 12px' }}>
+                                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                                                    {item.missingFields.map(f => (
+                                                        <span key={f} style={{ background: '#fee2e2', color: '#dc2626', padding: '1px 6px', borderRadius: '6px', fontSize: '0.72rem', fontWeight: 600 }}>Missing: {f}</span>
+                                                    ))}
+                                                    {item.mismatchFields.map(f => (
+                                                        <span key={f} style={{ background: '#fef3c7', color: '#d97706', padding: '1px 6px', borderRadius: '6px', fontSize: '0.72rem', fontWeight: 600 }}>Mismatch: {f}</span>
+                                                    ))}
+                                                </div>
+                                            </td>
+                                        )}
+                                        {type === 'missing' && (
+                                            <td style={{ padding: '8px 12px' }}>
+                                                <span style={{ background: '#fee2e2', color: '#dc2626', padding: '2px 8px', borderRadius: '8px', fontSize: '0.72rem', fontWeight: 700 }}>Not in Product Master</span>
+                                            </td>
+                                        )}
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    )}
+                </div>
+            </div>
+        </>
     );
 }
 
@@ -1136,6 +1326,8 @@ export default function FormulaDataPage() {
     const [globalFinishCoaUnqualified, setGlobalFinishCoaUnqualified] = useState<number>(0);
     // Set of batch numbers that have Finish COA data (for per-section calculation)
     const [finishCoaQualifiedBatchNumbers, setFinishCoaQualifiedBatchNumbers] = useState<Set<string>>(new Set());
+    // Product Master cross-reference data: productCode (uppercase) -> full error info
+    const [productMasterCrossRef, setProductMasterCrossRef] = useState<Record<string, { productName: string; masterCardNo: string; missingFields: string[]; mismatchFields: string[] }> | null>(null);
     // Global RM COA unique AR numbers count for footer display
     const [globalRmCoaUniqueArNumbersFound, setGlobalRmCoaUniqueArNumbersFound] = useState<number>(0);
     const [globalRmCoaUniqueArNumbersMissing, setGlobalRmCoaUniqueArNumbersMissing] = useState<number>(0);
@@ -1166,6 +1358,7 @@ export default function FormulaDataPage() {
     const [rmModalData, setRmModalData] = useState<any[]>([]);
     const [isRmModalLoading, setIsRmModalLoading] = useState(false);
     const [rmModalError, setRmModalError] = useState<string | null>(null);
+    const [rmModalScopeLabel, setRmModalScopeLabel] = useState<string>('');
     const [expandedRmBatches, setExpandedRmBatches] = useState<Set<string>>(new Set());
     // RM Modal Sorting State
     const [rmSortColumn, setRmSortColumn] = useState<string>('batchNumber');
@@ -1184,6 +1377,7 @@ export default function FormulaDataPage() {
     const [ppmModalData, setPpmModalData] = useState<any[]>([]);
     const [isPpmModalLoading, setIsPpmModalLoading] = useState(false);
     const [ppmModalError, setPpmModalError] = useState<string | null>(null);
+    const [ppmModalScopeLabel, setPpmModalScopeLabel] = useState<string>('');
     const [ppmSortColumn, setPpmSortColumn] = useState<string>('batchNumber');
     const [ppmSortDirection, setPpmSortDirection] = useState<'asc' | 'desc'>('asc');
     const [ppmViewMode, setPpmViewMode] = useState<'table' | 'file'>('table');
@@ -1196,6 +1390,7 @@ export default function FormulaDataPage() {
     const [pmModalData, setPmModalData] = useState<any[]>([]);
     const [isPmModalLoading, setIsPmModalLoading] = useState(false);
     const [pmModalError, setPmModalError] = useState<string | null>(null);
+    const [pmModalScopeLabel, setPmModalScopeLabel] = useState<string>('');
     const [pmSortColumn, setPmSortColumn] = useState<string>('batchNumber');
     const [pmSortDirection, setPmSortDirection] = useState<'asc' | 'desc'>('asc');
     const [pmViewMode, setPmViewMode] = useState<'table' | 'file'>('table');
@@ -1326,6 +1521,13 @@ export default function FormulaDataPage() {
     const [expandedFinishCoaArNumbers, setExpandedFinishCoaArNumbers] = useState<Set<string>>(new Set());
     const [expandedFinishCoaMaterialCodes, setExpandedFinishCoaMaterialCodes] = useState<Set<string>>(new Set());
     const [expandedFinishCoaBatchNumbers, setExpandedFinishCoaBatchNumbers] = useState<Set<string>>(new Set());
+
+    // Product Master Cross-Reference Modal State
+    const [showPmCrossRefModal, setShowPmCrossRefModal] = useState(false);
+    const [pmCrossRefModalType, setPmCrossRefModalType] = useState<'found' | 'missing' | 'errors' | 'ok'>('found');
+    const [pmCrossRefModalSection, setPmCrossRefModalSection] = useState<string>('');
+    const [pmCrossRefModalItems, setPmCrossRefModalItems] = useState<{ productCode: string; productName: string; masterCardNo: string; missingFields: string[]; mismatchFields: string[] }[]>([]);
+    const [pmCrossRefModalSearch, setPmCrossRefModalSearch] = useState('');
 
     // RM COA (batch-wise) Modal State (for viewing batches with/without RM COA among requisition-found)
     const [showRmCoaModal, setShowRmCoaModal] = useState(false);
@@ -1993,19 +2195,280 @@ export default function FormulaDataPage() {
     };
 
     const handleExportToExcel = (data: any[], fileName: string) => {
-        const exportData = data.map((item, index) => ({
-            'SR No.': index + 1,
-            'AR Number': item.arNo || item.arNumber || '',
-            'Material/Item Code': item.materialCode || item.itemCode || item.productCode || '',
-            'Material/Item Name': item.materialName || item.itemName || item.productName || '',
-            'Batch Number': item.batchNumber || item.batchNo || '',
-        }));
+        const asText = (v: any) => {
+            const s = (v ?? '').toString();
+            // Prefix with apostrophe so Excel preserves tokens (no scientific notation / trimming).
+            return s ? `'${s}` : '';
+        };
+
+        const exportData = data.map((item, index) => {
+            const batchNumber = item.batchNumber ?? item.batchNo ?? item.batch ?? '';
+            const arNumber = item.arNo ?? item.arNumber ?? item.arToken ?? item.ar ?? '';
+
+            const row: Record<string, any> = {
+                'SR No.': index + 1,
+                'AR Number': asText(arNumber),
+                'Material/Item Code': asText(item.materialCode ?? item.itemCode ?? item.productCode ?? ''),
+                'Material/Item Name': item.materialName ?? item.itemName ?? item.productName ?? '',
+                'Batch Number': asText(batchNumber),
+            };
+
+            // If richer RM/PM/PPM COA structures are provided, include them as additional columns.
+            const maybeMfc = item.mfcNo ?? item.mfc ?? item.formulaMfc ?? '';
+            const productName = item.productName ?? item.itemName ?? item.materialName ?? '';
+            const batchSize = item.batchSize ?? '';
+            const mfgDate = item.mfgDate ?? '';
+            const expiryDate = item.expiryDate ?? item.expiry ?? '';
+            const department = item.department ?? item.dept ?? '';
+            const make = item.make ?? '';
+
+            if (maybeMfc) row['MFC No'] = asText(maybeMfc);
+            if (productName && !row['Material/Item Name']) row['Material/Item Name'] = productName;
+            if (batchSize) row['Batch Size'] = batchSize;
+            if (mfgDate) row['MFG Date'] = mfgDate;
+            if (expiryDate) row['Expiry Date'] = expiryDate;
+            if (department) row['Dept'] = department;
+            if (make) row['Make'] = make;
+
+            // Flatten common nested structures if present.
+            if (Array.isArray(item.batches) && item.batches.length > 0) {
+                row['Batches (all)'] = item.batches.map((b: any) => (b ?? '').toString()).filter(Boolean).join(', ');
+                row['Batch Count'] = item.batches.length;
+            }
+            if (Array.isArray(item.items) && item.items.length > 0) {
+                row['Lines'] = item.items.length;
+                const mats = Array.from(
+                    new Set(item.items.map((it: any) => (it?.materialCode ?? '').toString().trim()).filter(Boolean))
+                );
+                const matNames = Array.from(
+                    new Set(item.items.map((it: any) => (it?.materialName ?? '').toString().trim()).filter(Boolean))
+                );
+                const reqNos = Array.from(
+                    new Set(item.items.map((it: any) => (it?.matReqNo ?? '').toString().trim()).filter(Boolean))
+                );
+                if (mats.length) row['Material Codes'] = mats.join(', ');
+                if (matNames.length) row['Material Names'] = matNames.join(', ');
+                if (reqNos.length) row['Req Nos'] = reqNos.join(', ');
+            }
+
+            return row;
+        });
 
         const ws = XLSX.utils.json_to_sheet(exportData);
+
+        // Auto column widths for readability
+        const headers = Object.keys(exportData[0] || {});
+        const widths = headers.map((h) => Math.max(h.length, 12));
+        exportData.forEach((r) => {
+            headers.forEach((h, idx) => {
+                const val = (r as any)[h];
+                const len = (val ?? '').toString().length;
+                widths[idx] = Math.min(60, Math.max(widths[idx], len));
+            });
+        });
+        (ws as any)['!cols'] = widths.map((wch) => ({ wch }));
+
         const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
+        XLSX.utils.book_append_sheet(wb, ws, 'Export');
         XLSX.writeFile(wb, `${fileName}.xlsx`);
     };
+
+    const exportFinishCoaModalToExcel = useCallback(
+        (filteredData: any[]) => {
+            if (!filteredData || filteredData.length === 0) return;
+
+            const dateStr = new Date().toISOString().slice(0, 10);
+            const yearLabel = selectedFilterYear ?? 'All';
+            const sectionLabel = finishCoaModalSection ?? 'all';
+            const viewLabel = finishCoaViewMode ?? 'batch';
+            const baseName = `Finish_COA_${finishCoaModalType}_${sectionLabel}_${viewLabel}_${yearLabel}_${dateStr}`;
+
+            const wb = XLSX.utils.book_new();
+
+            if (finishCoaViewMode === 'table') {
+                const rows = filteredData.map((item: any, idx: number) => ({
+                    'SR No.': idx + 1,
+                    'Batch No': item.batchNumber || '',
+                    'MFC': item.mfc || item.mfcNo || '',
+                    'AR Number': item.arNumber || '',
+                    [finishCoaModalType === 'matched' ? 'Product Code' : 'Item Code']: item.productCode || item.itemCode || '',
+                    [finishCoaModalType === 'matched' ? 'Product Name' : 'Item Name']: item.productName || item.itemName || '',
+                    ...(finishCoaModalType === 'matched'
+                        ? { 'Test Date': item.testDate || '', Status: item.status || '', Manufacturer: item.manufacturer || '' }
+                        : { 'MFG Date': item.mfgDate || '', 'Expiry Date': item.expiryDate || '' }),
+                }));
+                const ws = XLSX.utils.json_to_sheet(rows);
+                XLSX.utils.book_append_sheet(wb, ws, 'Finish COA');
+            } else if (finishCoaViewMode === 'material') {
+                const grouped = new Map<string, any[]>();
+                filteredData.forEach((item: any) => {
+                    const key = (item.productCode || item.itemCode || 'N/A').toString();
+                    if (!grouped.has(key)) grouped.set(key, []);
+                    grouped.get(key)!.push(item);
+                });
+
+                const summaryRows = Array.from(grouped.entries()).map(([materialCode, items], idx) => ({
+                    'SR No.': idx + 1,
+                    [finishCoaModalType === 'matched' ? 'Product Code' : 'Item Code']: materialCode,
+                    [finishCoaModalType === 'matched' ? 'Product Name' : 'Item Name']:
+                        items?.[0]?.productName || items?.[0]?.itemName || '',
+                    'Unique AR': new Set((items || []).map((i: any) => i.arNumber).filter(Boolean)).size,
+                    Records: (items || []).length,
+                }));
+                const wsSummary = XLSX.utils.json_to_sheet(summaryRows);
+                XLSX.utils.book_append_sheet(wb, wsSummary, 'Materials Summary');
+
+                const detailRows = filteredData.map((item: any, idx: number) => ({
+                    'SR No.': idx + 1,
+                    [finishCoaModalType === 'matched' ? 'Product Code' : 'Item Code']: item.productCode || item.itemCode || '',
+                    [finishCoaModalType === 'matched' ? 'Product Name' : 'Item Name']: item.productName || item.itemName || '',
+                    'Batch No': item.batchNumber || '',
+                    'MFC': item.mfc || item.mfcNo || '',
+                    'AR Number': item.arNumber || '',
+                    ...(finishCoaModalType === 'matched'
+                        ? { 'Test Date': item.testDate || '', Status: item.status || '', Manufacturer: item.manufacturer || '' }
+                        : { 'MFG Date': item.mfgDate || '', 'Expiry Date': item.expiryDate || '' }),
+                }));
+                const wsDetails = XLSX.utils.json_to_sheet(detailRows);
+                XLSX.utils.book_append_sheet(wb, wsDetails, 'Material Details');
+            } else {
+                // batch/details mode
+                const rows = filteredData.map((item: any) => {
+                    const id = String(
+                        item._finishCoaRowId ??
+                            `${(item.batchNumber || '').toString().trim().toUpperCase()}_${item.itemCode}_${item.mfgDate}`
+                    );
+                    const coaLineItems = Array.isArray(item.coaLineItems) ? item.coaLineItems : [];
+                    const arCount = typeof item.arCount === 'number' ? item.arCount : coaLineItems.length;
+                    return {
+                        id,
+                        batchNo: item.batchNumber || '',
+                        mfcNo: item.mfcNo || item.mfc || 'N/A',
+                        productName: item.productName || item.itemName || 'N/A',
+                        arCount,
+                        batchSize: item.batchSize != null && item.batchSize !== '' ? String(item.batchSize) : 'N/A',
+                        mfgDate: item.mfgDate || 'N/A',
+                        expiryDate: item.expiryDate || 'N/A',
+                        coaLineItems,
+                    };
+                });
+
+                const sortedRows = [...rows].sort((a, b) => {
+                    const col = finishCoaSortColumn;
+                    let valA: any = (a as any)[col];
+                    let valB: any = (b as any)[col];
+                    if (col === 'arCount') {
+                        valA = Number(a.arCount) || 0;
+                        valB = Number(b.arCount) || 0;
+                    }
+                    if (typeof valA === 'string' && typeof valB === 'string') {
+                        return finishCoaSortDirection === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA);
+                    }
+                    return finishCoaSortDirection === 'asc' ? valA - valB : valB - valA;
+                });
+
+                const batchSheetRows = sortedRows.map((r, idx) => ({
+                    'SR No.': idx + 1,
+                    'Batch No': r.batchNo,
+                    'MFC No': r.mfcNo,
+                    'Product Name': r.productName,
+                    'AR Count': r.arCount,
+                    'Batch Size': r.batchSize,
+                    'MFG Date': r.mfgDate,
+                    Expiry: r.expiryDate,
+                }));
+                const wsBatch = XLSX.utils.json_to_sheet(batchSheetRows);
+                XLSX.utils.book_append_sheet(wb, wsBatch, 'Batch Summary');
+
+                if (finishCoaModalType === 'matched') {
+                    const lineRows: any[] = [];
+                    sortedRows.forEach((r, batchIdx) => {
+                        (r.coaLineItems || []).forEach((line: any, lineIdx: number) => {
+                            lineRows.push({
+                                'Batch SR': batchIdx + 1,
+                                'Line SR': lineIdx + 1,
+                                'Batch No': r.batchNo,
+                                'MFC No': r.mfcNo,
+                                'Batch Size': r.batchSize,
+                                'MFG Date': r.mfgDate,
+                                Expiry: r.expiryDate,
+                                'AR Number': line.arNumber || '',
+                                'Product Code': line.productCode || '',
+                                'Product Name': line.productName || '',
+                                'Test Date': line.testDate || '',
+                                Status: line.status || '',
+                                Manufacturer: line.manufacturer || '',
+                            });
+                        });
+                    });
+                    const wsLines = XLSX.utils.json_to_sheet(lineRows);
+                    XLSX.utils.book_append_sheet(wb, wsLines, 'COA Line Items');
+                }
+            }
+
+            XLSX.writeFile(wb, `${baseName}.xlsx`);
+        },
+        [
+            finishCoaModalSection,
+            finishCoaModalType,
+            finishCoaSortColumn,
+            finishCoaSortDirection,
+            finishCoaViewMode,
+            selectedFilterYear,
+        ]
+    );
+
+    const exportRmCoaToExcelEnsureAr = useCallback(
+        (data: any[], fileName: string) => {
+            if (!data || data.length === 0) return;
+
+            const deriveAr = (row: any): string => {
+                const direct =
+                    (row?.arNo ?? row?.arNumber ?? row?.arToken ?? row?.ar)?.toString().trim();
+                if (direct) return direct;
+
+                const fromBreakdown = Array.isArray(row?.arTokenBreakdown)
+                    ? Array.from(
+                          new Set(
+                              row.arTokenBreakdown
+                                  .map((x: any) => (x?.arToken ?? '').toString().trim())
+                                  .filter(Boolean)
+                          )
+                      )
+                    : [];
+                if (fromBreakdown.length > 0) return fromBreakdown.join(', ');
+
+                const fromItems = Array.isArray(row?.items)
+                    ? Array.from(
+                          new Set(
+                              row.items.flatMap((it: any) => splitArNumbers(it?.arNo)).filter(Boolean)
+                          )
+                      )
+                    : [];
+                if (fromItems.length > 0) return fromItems.join(', ');
+
+                return '';
+            };
+
+            const withAr = (data as any[])
+                .map((r) => {
+                    const ar = deriveAr(r);
+                    return {
+                        ...r,
+                        // Prefer `arNo` because RM COA tables/search use `arNo`
+                        arNo: (r?.arNo || ar) ?? '',
+                        arNumber: (r?.arNumber || ar) ?? '',
+                    };
+                })
+                .filter((r) => {
+                    const ar = (r?.arNo ?? r?.arNumber ?? '').toString().trim();
+                    return Boolean(ar);
+                });
+
+            handleExportToExcel(withAr, fileName);
+        },
+        [handleExportToExcel]
+    );
     // Build map: batchNumber → manufacturing year (from allBatches raw data)
     const batchYearMap = useMemo(() => {
         const map = new Map<string, string>();
@@ -2554,6 +3017,11 @@ export default function FormulaDataPage() {
                 }
             })
             .catch(() => { /* silently ignore if unavailable */ });
+        // Fetch Product Master cross-reference for formula-vs-PM stats
+        fetch('/api/product-master/cross-reference')
+            .then(r => r.json())
+            .then(d => { if (d.success) setProductMasterCrossRef(d.data); })
+            .catch(() => { /* silently ignore if unavailable */ });
     }, [fetchFormulas, fetchBatchReconciliation, fetchAllBatches]);
 
     // Toggle batch section and scroll to it
@@ -2632,13 +3100,16 @@ export default function FormulaDataPage() {
     const openRmDataModal = useCallback(async (
         type: 'matched' | 'unmatched',
         defaultViewMode: 'table' | 'file' | 'batch' | 'material' = 'table',
-        section?: 'main' | 'lowBatch' | 'noBatch' | 'placebo'
+        section?: 'main' | 'lowBatch' | 'noBatch' | 'placebo',
+        productCodes?: string[],
+        scopeLabel?: string
     ) => {
         setShowRmDataModal(true);
         setRmModalType(type);
         setIsRmModalLoading(true);
         setRmModalError(null);
         setRmModalData([]);
+        setRmModalScopeLabel(scopeLabel || '');
 
         // Reset states
         setRmSearchQuery('');
@@ -2650,6 +3121,7 @@ export default function FormulaDataPage() {
         try {
             const normBatch = (b: string | null | undefined) => (b || '').toString().trim().toUpperCase();
             const normCode = (c: string | null | undefined) => (c || '').toString().trim().toUpperCase();
+            const productCodeSet = new Set((productCodes || []).map(normCode).filter(Boolean));
 
             // Get the set of product codes that are linked to MFCs (from Formula Master)
             const mfcLinkedProductCodes = new Set<string>(Object.keys(batchCounts).map(normCode).filter(Boolean));
@@ -2686,6 +3158,7 @@ export default function FormulaDataPage() {
                         const itemCode = batchToItemCode[bn];
                         if (!bn || !itemCode || !mfcLinkedProductCodes.has(itemCode)) return false;
                         if (yearFilteredBatchNums && !yearFilteredBatchNums.has(bn)) return false;
+                        if (productCodeSet.size > 0 && !productCodeSet.has(itemCode)) return false;
                         if (productCodeToSection && section) {
                             const cat = productCodeToSection.get((itemCode || '').toString().trim().toUpperCase()) ?? 'main';
                             if (cat !== section) return false;
@@ -2707,6 +3180,7 @@ export default function FormulaDataPage() {
                         const bnNorm = normBatch(batch.batchNumber);
                         if (!bnNorm || rmBatchNumbers.has(bnNorm)) return false;
                         const ic = batch.itemCode ? normCode(batch.itemCode) : '';
+                        if (productCodeSet.size > 0 && (!ic || !productCodeSet.has(ic))) return false;
                         const cat = (ic ? productCodeToSection.get(ic) : undefined) ?? 'main';
                         return !section || cat === section;
                     })
@@ -2738,6 +3212,7 @@ export default function FormulaDataPage() {
         setExpandedRmBatches(new Set());
         setRmSearchQuery('');
         setRmSearchField('all');
+        setRmModalScopeLabel('');
     }, []);
 
     // Toggle expanded state for a batch group in RM modal
@@ -2782,7 +3257,9 @@ export default function FormulaDataPage() {
     // Open PPM Data Modal - fetch and display PPM requisition data
     const openPpmDataModal = useCallback(async (
         type: 'matched' | 'unmatched',
-        section?: 'main' | 'lowBatch' | 'noBatch' | 'placebo'
+        section?: 'main' | 'lowBatch' | 'noBatch' | 'placebo',
+        productCodes?: string[],
+        scopeLabel?: string
     ) => {
         setShowPpmDataModal(true);
         setPpmModalType(type);
@@ -2792,10 +3269,13 @@ export default function FormulaDataPage() {
         setPpmViewMode('table');
         setPpmSearchQuery('');
         setPpmSearchField('all');
+        setPpmModalScopeLabel(scopeLabel || '');
 
         try {
             const normBatch = (b: string | null | undefined) => (b || '').toString().trim().toUpperCase();
-            const mfcLinkedProductCodes = new Set<string>(Object.keys(batchCounts));
+            const normCode = (c: string | null | undefined) => (c || '').toString().trim().toUpperCase();
+            const mfcLinkedProductCodes = new Set<string>(Object.keys(batchCounts).map(normCode).filter(Boolean));
+            const productCodeSet = new Set((productCodes || []).map(normCode).filter(Boolean));
 
             const yearFilteredBatchNums = selectedFilterYear
                 ? new Set<string>(yearFilteredBatches.map((b: any) => normBatch(b.batchNumber)).filter(Boolean))
@@ -2815,7 +3295,7 @@ export default function FormulaDataPage() {
                         batchData.data.forEach((record: any) => {
                             record.batches?.forEach((batch: any) => {
                                 if (batch.batchNumber && batch.itemCode) {
-                                    batchToItemCode[batch.batchNumber] = batch.itemCode;
+                                    batchToItemCode[normBatch(batch.batchNumber)] = normCode(batch.itemCode);
                                 }
                             });
                         });
@@ -2824,11 +3304,13 @@ export default function FormulaDataPage() {
                     const productCodeToSection = section ? buildProductCodeToSectionMap() : null;
 
                     const filteredMaterials = data.materials.filter((m: any) => {
-                        const itemCode = batchToItemCode[m.batchNumber];
-                        if (!itemCode || !mfcLinkedProductCodes.has(itemCode)) return false;
-                        if (yearFilteredBatchNums && !yearFilteredBatchNums.has(normBatch(m.batchNumber))) return false;
+                        const bn = normBatch(m.batchNumber);
+                        const itemCode = batchToItemCode[bn];
+                        if (!bn || !itemCode || !mfcLinkedProductCodes.has(itemCode)) return false;
+                        if (yearFilteredBatchNums && !yearFilteredBatchNums.has(bn)) return false;
+                        if (productCodeSet.size > 0 && !productCodeSet.has(itemCode)) return false;
                         if (productCodeToSection && section) {
-                            const cat = productCodeToSection.get((itemCode || '').toString().trim().toUpperCase()) ?? 'main';
+                            const cat = productCodeToSection.get(itemCode) ?? 'main';
                             if (cat !== section) return false;
                         }
                         return true;
@@ -2853,12 +3335,14 @@ export default function FormulaDataPage() {
                     .filter((batch: any) => {
                         const bn = normBatch(batch.batchNumber);
                         if (!bn || ppmBatchNumbers.has(bn)) return false;
-                        const cat = (batch.itemCode ? productCodeToSection.get((batch.itemCode || '').toString().trim().toUpperCase()) : undefined) ?? 'main';
+                        const ic = batch.itemCode ? normCode(batch.itemCode) : '';
+                        if (productCodeSet.size > 0 && (!ic || !productCodeSet.has(ic))) return false;
+                        const cat = (ic ? productCodeToSection.get(ic) : undefined) ?? 'main';
                         return !section || cat === section;
                     })
                     .map((batch: any) => ({
                         batchNumber: normBatch(batch.batchNumber),
-                        itemCode: batch.itemCode,
+                        itemCode: batch.itemCode ? normCode(batch.itemCode) : batch.itemCode,
                         itemName: batch.itemName,
                         mfgDate: batch.mfgDate,
                         expiryDate: batch.expiryDate,
@@ -2883,12 +3367,15 @@ export default function FormulaDataPage() {
         setPpmModalError(null);
         setPpmSearchQuery('');
         setPpmSearchField('all');
+        setPpmModalScopeLabel('');
     }, []);
 
     // Open PM Data Modal - fetch and display PM requisition data
     const openPmDataModal = useCallback(async (
         type: 'matched' | 'unmatched',
-        section?: 'main' | 'lowBatch' | 'noBatch' | 'placebo'
+        section?: 'main' | 'lowBatch' | 'noBatch' | 'placebo',
+        productCodes?: string[],
+        scopeLabel?: string
     ) => {
         setShowPmDataModal(true);
         setPmModalType(type);
@@ -2898,10 +3385,13 @@ export default function FormulaDataPage() {
         setPmViewMode('table');
         setPmSearchQuery('');
         setPmSearchField('all');
+        setPmModalScopeLabel(scopeLabel || '');
 
         try {
             const normBatch = (b: string | null | undefined) => (b || '').toString().trim().toUpperCase();
-            const mfcLinkedProductCodes = new Set<string>(Object.keys(batchCounts));
+            const normCode = (c: string | null | undefined) => (c || '').toString().trim().toUpperCase();
+            const mfcLinkedProductCodes = new Set<string>(Object.keys(batchCounts).map(normCode).filter(Boolean));
+            const productCodeSet = new Set((productCodes || []).map(normCode).filter(Boolean));
 
             const yearFilteredBatchNums = selectedFilterYear
                 ? new Set<string>(yearFilteredBatches.map((b: any) => normBatch(b.batchNumber)).filter(Boolean))
@@ -2921,7 +3411,7 @@ export default function FormulaDataPage() {
                         batchData.data.forEach((record: any) => {
                             record.batches?.forEach((batch: any) => {
                                 if (batch.batchNumber && batch.itemCode) {
-                                    batchToItemCode[batch.batchNumber] = batch.itemCode;
+                                    batchToItemCode[normBatch(batch.batchNumber)] = normCode(batch.itemCode);
                                 }
                             });
                         });
@@ -2930,11 +3420,13 @@ export default function FormulaDataPage() {
                     const productCodeToSection = section ? buildProductCodeToSectionMap() : null;
 
                     const filteredMaterials = data.materials.filter((m: any) => {
-                        const itemCode = batchToItemCode[m.batchNumber];
-                        if (!itemCode || !mfcLinkedProductCodes.has(itemCode)) return false;
-                        if (yearFilteredBatchNums && !yearFilteredBatchNums.has(normBatch(m.batchNumber))) return false;
+                        const bn = normBatch(m.batchNumber);
+                        const itemCode = batchToItemCode[bn];
+                        if (!bn || !itemCode || !mfcLinkedProductCodes.has(itemCode)) return false;
+                        if (yearFilteredBatchNums && !yearFilteredBatchNums.has(bn)) return false;
+                        if (productCodeSet.size > 0 && !productCodeSet.has(itemCode)) return false;
                         if (productCodeToSection && section) {
-                            const cat = productCodeToSection.get((itemCode || '').toString().trim().toUpperCase()) ?? 'main';
+                            const cat = productCodeToSection.get(itemCode) ?? 'main';
                             if (cat !== section) return false;
                         }
                         return true;
@@ -2960,12 +3452,14 @@ export default function FormulaDataPage() {
                     .filter((batch: any) => {
                         const bn = normBatch(batch.batchNumber);
                         if (!bn || pmBatchNumbers.has(bn)) return false;
-                        const cat = (batch.itemCode ? productCodeToSection.get((batch.itemCode || '').toString().trim().toUpperCase()) : undefined) ?? 'main';
+                        const ic = batch.itemCode ? normCode(batch.itemCode) : '';
+                        if (productCodeSet.size > 0 && (!ic || !productCodeSet.has(ic))) return false;
+                        const cat = (ic ? productCodeToSection.get(ic) : undefined) ?? 'main';
                         return !section || cat === section;
                     })
                     .map((batch: any) => ({
                         batchNumber: normBatch(batch.batchNumber),
-                        itemCode: batch.itemCode,
+                        itemCode: batch.itemCode ? normCode(batch.itemCode) : batch.itemCode,
                         itemName: batch.itemName,
                         mfgDate: batch.mfgDate,
                         expiryDate: batch.expiryDate,
@@ -2990,6 +3484,7 @@ export default function FormulaDataPage() {
         setPmModalError(null);
         setPmSearchQuery('');
         setPmSearchField('all');
+        setPmModalScopeLabel('');
     }, []);
 
     // Open Material Qualification Modal - show materials with/without RM COA data
@@ -5441,6 +5936,67 @@ export default function FormulaDataPage() {
         return codes;
     }, []);
 
+    // Open Product Master cross-reference modal
+    const openPmCrossRefModal = useCallback((
+        type: 'found' | 'missing' | 'errors' | 'ok',
+        sectionName: string,
+        items: { productCode: string; productName: string; masterCardNo: string; missingFields: string[]; mismatchFields: string[] }[]
+    ) => {
+        setPmCrossRefModalType(type);
+        setPmCrossRefModalSection(sectionName);
+        setPmCrossRefModalItems(items);
+        setPmCrossRefModalSearch('');
+        setShowPmCrossRefModal(true);
+    }, []);
+
+    // Per-section Product Master cross-reference stats (counts + item lists for modal)
+    const sectionProductMasterStats = useMemo(() => {
+        type PMItem = { productCode: string; productName: string; masterCardNo: string; missingFields: string[]; mismatchFields: string[] };
+        type SectionStats = { found: number; missingFromPM: number; withErrors: number; ok: number; foundList: PMItem[]; missingList: PMItem[]; errorList: PMItem[]; okList: PMItem[] } | null;
+
+        // Build productCode (upper) -> { productName, mfcNo } from formula data for "missing" items
+        const formulaCodeInfo = new Map<string, { productName: string; masterCardNo: string }>();
+        [...mainFormulas, ...lowBatchFormulas, ...noBatchFormulas, ...placeboFormulas].forEach(f => {
+            const mfcNo = f.masterFormulaDetails?.masterCardNo || '';
+            const addCode = (code: string, name: string) => {
+                const k = code.trim().toUpperCase();
+                if (k && k !== 'N/A' && !formulaCodeInfo.has(k)) formulaCodeInfo.set(k, { productName: name, masterCardNo: mfcNo });
+            };
+            addCode(f.masterFormulaDetails?.productCode || '', f.masterFormulaDetails?.productName || '');
+            f.fillingDetails?.forEach((fd: any) => addCode(fd.productCode || '', fd.productName || f.masterFormulaDetails?.productName || ''));
+            f.processes?.forEach((p: any) => p.fillingProducts?.forEach((fp: any) => addCode(fp.productCode || '', fp.productName || f.masterFormulaDetails?.productName || '')));
+        });
+
+        const computeStats = (formulaList: FormulaRecord[]): SectionStats => {
+            if (!productMasterCrossRef) return null;
+            const allCodes = new Set<string>();
+            formulaList.forEach(f => getFormulaAllProductCodes(f).forEach(code => {
+                if (code && code !== 'N/A') allCodes.add(code.trim().toUpperCase());
+            }));
+            const foundList: PMItem[] = [], missingList: PMItem[] = [], errorList: PMItem[] = [], okList: PMItem[] = [];
+            allCodes.forEach(code => {
+                const pmEntry = productMasterCrossRef[code];
+                if (!pmEntry) {
+                    const fi = formulaCodeInfo.get(code);
+                    missingList.push({ productCode: code, productName: fi?.productName || '', masterCardNo: fi?.masterCardNo || '', missingFields: [], mismatchFields: [] });
+                } else {
+                    const item: PMItem = { productCode: code, productName: pmEntry.productName, masterCardNo: pmEntry.masterCardNo, missingFields: pmEntry.missingFields, mismatchFields: pmEntry.mismatchFields };
+                    foundList.push(item);
+                    if (pmEntry.missingFields.length > 0 || pmEntry.mismatchFields.length > 0) errorList.push(item);
+                    else okList.push(item);
+                }
+            });
+            const sort = (arr: PMItem[]) => arr.sort((a, b) => a.productCode.localeCompare(b.productCode));
+            return { found: foundList.length, missingFromPM: missingList.length, withErrors: errorList.length, ok: okList.length, foundList: sort(foundList), missingList: sort(missingList), errorList: sort(errorList), okList: sort(okList) };
+        };
+        return {
+            main: computeStats(mainFormulas),
+            lowBatch: computeStats(lowBatchFormulas),
+            noBatch: computeStats(noBatchFormulas),
+            placebo: computeStats(placeboFormulas),
+        };
+    }, [productMasterCrossRef, mainFormulas, lowBatchFormulas, noBatchFormulas, placeboFormulas, getFormulaAllProductCodes]);
+
     // Formulas that have at least one trial-tagged batch
     const trialFormulas = useMemo(() => {
         if (!formulas.length) return [] as typeof formulas;
@@ -5539,11 +6095,12 @@ export default function FormulaDataPage() {
             : allBatches;
 
         // Get unique batches by batch number (from year-filtered source)
+        // IMPORTANT: de-dupe using normalized batch number (matches verification pages / APIs)
         const uniqueBatchMap = new Map<string, BatchItem>();
         (sourceBatches as any[]).forEach(batch => {
-            if (batch.batchNumber && !uniqueBatchMap.has(batch.batchNumber)) {
-                uniqueBatchMap.set(batch.batchNumber, batch);
-            }
+            const key = (batch?.batchNumber || '').toString().trim().toUpperCase();
+            if (!key || uniqueBatchMap.has(key)) return;
+            uniqueBatchMap.set(key, batch);
         });
 
         const uniqueBatches = Array.from(uniqueBatchMap.values());
@@ -5665,11 +6222,12 @@ export default function FormulaDataPage() {
         }
 
         // Get unique batches by batch number
+        // IMPORTANT: de-dupe using normalized batch number (matches verification pages / APIs)
         const uniqueBatchMap = new Map<string, { batchNumber: string; itemCode?: string }>();
         yearFilteredBatches.forEach(batch => {
-            if (batch.batchNumber && !uniqueBatchMap.has(batch.batchNumber)) {
-                uniqueBatchMap.set(batch.batchNumber, { batchNumber: batch.batchNumber, itemCode: batch.itemCode });
-            }
+            const key = (batch?.batchNumber || '').toString().trim().toUpperCase();
+            if (!key || uniqueBatchMap.has(key)) return;
+            uniqueBatchMap.set(key, { batchNumber: batch.batchNumber, itemCode: batch.itemCode });
         });
 
         const uniqueBatches = Array.from(uniqueBatchMap.values());
@@ -5761,11 +6319,12 @@ export default function FormulaDataPage() {
         }
 
         // Get unique batches by batch number
+        // IMPORTANT: de-dupe using normalized batch number (matches verification pages / APIs)
         const uniqueBatchMap = new Map<string, { batchNumber: string; itemCode?: string }>();
         yearFilteredBatches.forEach(batch => {
-            if (batch.batchNumber && !uniqueBatchMap.has(batch.batchNumber)) {
-                uniqueBatchMap.set(batch.batchNumber, { batchNumber: batch.batchNumber, itemCode: batch.itemCode });
-            }
+            const key = (batch?.batchNumber || '').toString().trim().toUpperCase();
+            if (!key || uniqueBatchMap.has(key)) return;
+            uniqueBatchMap.set(key, { batchNumber: batch.batchNumber, itemCode: batch.itemCode });
         });
         const uniqueBatches = Array.from(uniqueBatchMap.values());
 
@@ -6028,11 +6587,12 @@ export default function FormulaDataPage() {
         }
 
         // Get unique batches by batch number
+        // IMPORTANT: de-dupe using normalized batch number (matches verification pages / APIs)
         const uniqueBatchMap = new Map<string, { batchNumber: string; itemCode?: string }>();
         yearFilteredBatches.forEach(batch => {
-            if (batch.batchNumber && !uniqueBatchMap.has(batch.batchNumber)) {
-                uniqueBatchMap.set(batch.batchNumber, { batchNumber: batch.batchNumber, itemCode: batch.itemCode });
-            }
+            const key = (batch?.batchNumber || '').toString().trim().toUpperCase();
+            if (!key || uniqueBatchMap.has(key)) return;
+            uniqueBatchMap.set(key, { batchNumber: batch.batchNumber, itemCode: batch.itemCode });
         });
 
         const uniqueBatches = Array.from(uniqueBatchMap.values());
@@ -6484,9 +7044,9 @@ export default function FormulaDataPage() {
 
         const uniqueBatchMap = new Map<string, { batchNumber: string; itemCode?: string }>();
         yearFilteredBatches.forEach(batch => {
-            if (batch.batchNumber && !uniqueBatchMap.has(batch.batchNumber)) {
-                uniqueBatchMap.set(batch.batchNumber, { batchNumber: batch.batchNumber, itemCode: batch.itemCode });
-            }
+            const key = (batch?.batchNumber || '').toString().trim().toUpperCase();
+            if (!key || uniqueBatchMap.has(key)) return;
+            uniqueBatchMap.set(key, { batchNumber: batch.batchNumber, itemCode: batch.itemCode });
         });
 
         uniqueBatchMap.forEach(batch => {
@@ -6763,6 +7323,7 @@ export default function FormulaDataPage() {
     const CollapsibleSectionHeader = ({
         title,
         count,
+        hideCount,
         totalBatches,
         uniqueBatches,
         icon,
@@ -6815,9 +7376,15 @@ export default function FormulaDataPage() {
         pmCoaArMissing,
         onPmCoaArFoundClick,
         onPmCoaArMissingClick,
+        productMasterStats,
+        onPmFoundClick,
+        onPmMissingClick,
+        onPmErrorsClick,
+        onPmOkClick,
     }: {
         title: string;
         count: number;
+        hideCount?: boolean;
         totalBatches?: number;
         uniqueBatches?: number;
         icon: string;
@@ -6870,6 +7437,11 @@ export default function FormulaDataPage() {
         pmCoaArMissing?: number;
         onPmCoaArFoundClick?: () => void;
         onPmCoaArMissingClick?: () => void;
+        productMasterStats?: { found: number; missingFromPM: number; withErrors: number; ok: number } | null;
+        onPmFoundClick?: () => void;
+        onPmMissingClick?: () => void;
+        onPmErrorsClick?: () => void;
+        onPmOkClick?: () => void;
     }) => {
         // Convert dark badge colors to light background colors
         const getLightColors = (darkColor: string) => {
@@ -6935,9 +7507,16 @@ export default function FormulaDataPage() {
                         {/* Fixed width title section for alignment */}
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                             <span style={{ fontSize: '1.25rem' }}>{icon}</span>
-                            <span style={{ fontSize: '1.1rem', fontWeight: '600', color: 'var(--foreground)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '200px', display: 'block' }} title={title}>
-                                {title} ({count})
-                            </span>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                <span style={{ fontSize: '1.1rem', fontWeight: '600', color: 'var(--foreground)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '200px', display: 'block' }} title={title}>
+                                    {title}
+                                </span>
+                                {!hideCount && (
+                                    <span style={{ fontSize: '0.75rem', color: 'var(--muted-foreground)', fontWeight: '500' }}>
+                                        {count.toLocaleString()} MFCs
+                                    </span>
+                                )}
+                            </div>
                             {badgeText && (
                                 <span style={{
                                     padding: '0.25rem 0.5rem',
@@ -7110,10 +7689,11 @@ export default function FormulaDataPage() {
                             </div>
                         )}
                     </div>
-                    {/* Second Row: Bulk COA and Finish COA capsules - indented to align below RM */}
+                    {/* Second Row: Bulk COA, Finish COA, and Product Master capsules */}
                     {((rmCoaQualified !== undefined || rmCoaUnqualified !== undefined) && ((rmCoaQualified || 0) + (rmCoaUnqualified || 0)) > 0) ||
                         ((bulkCoaQualified !== undefined || bulkCoaUnqualified !== undefined) && (bulkCoaQualified! + bulkCoaUnqualified!) > 0) ||
-                        ((finishCoaQualified !== undefined || finishCoaUnqualified !== undefined) && (finishCoaQualified! + finishCoaUnqualified!) > 0) ? (
+                        ((finishCoaQualified !== undefined || finishCoaUnqualified !== undefined) && (finishCoaQualified! + finishCoaUnqualified!) > 0) ||
+                        (productMasterStats && (productMasterStats.found + productMasterStats.missingFromPM) > 0) ? (
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginTop: '8px', paddingLeft: '480px', flexWrap: 'wrap' }}>
                             {/* Bulk COA Status Capsule */}
                             {(bulkCoaQualified !== undefined || bulkCoaUnqualified !== undefined) && (bulkCoaQualified! + bulkCoaUnqualified!) > 0 && (
@@ -7140,6 +7720,16 @@ export default function FormulaDataPage() {
                                         type="Finish COA"
                                     />
                                 </div>
+                            )}
+                            {/* Product Master Capsule */}
+                            {productMasterStats && (productMasterStats.found + productMasterStats.missingFromPM) > 0 && (
+                                <ProductMasterCapsule
+                                    stats={productMasterStats}
+                                    onFoundClick={onPmFoundClick}
+                                    onMissingClick={onPmMissingClick}
+                                    onErrorsClick={onPmErrorsClick}
+                                    onOkClick={onPmOkClick}
+                                />
                             )}
                         </div>
                     ) : null}
@@ -8001,10 +8591,15 @@ export default function FormulaDataPage() {
                             🧪 RM (Raw Materials) Requisition Data
                         </h3>
                         <p style={{ color: 'rgba(255,255,255,0.9)', fontSize: '0.85rem', marginTop: '4px' }}>
-                            {rmModalType === 'matched'
-                                ? `✓ ${globalRmDataMatched} batches with RM data`
-                                : `✗ ${globalRmDataUnmatched} batches without RM data`
-                            }
+                            {(() => {
+                                const normBatch = (b: any) => (b || '').toString().trim().toUpperCase();
+                                const unique = new Set((rmModalData || []).map((r: any) => normBatch(r?.batchNumber)));
+                                const n = Array.from(unique).filter(Boolean).length;
+                                const scope = rmModalScopeLabel ? ` • ${rmModalScopeLabel}` : '';
+                                return rmModalType === 'matched'
+                                    ? `✓ ${n.toLocaleString()} batches with RM data${scope}`
+                                    : `✗ ${n.toLocaleString()} batches without RM data${scope}`;
+                            })()}
                         </p>
                     </div>
                     <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
@@ -8165,7 +8760,11 @@ export default function FormulaDataPage() {
                                 }}>
                                     <p style={{ fontSize: '0.75rem', color: '#7c3aed', fontWeight: 600, marginBottom: '4px' }}>Unique Batches</p>
                                     <p style={{ fontSize: '1.5rem', fontWeight: 700, color: '#6d28d9' }}>
-                                        {new Set(filteredRmModalData.map((m: any) => m.batchNumber)).size}
+                                        {(() => {
+                                            const normBatch = (b: any) => (b || '').toString().trim().toUpperCase();
+                                            const unique = new Set(filteredRmModalData.map((m: any) => normBatch(m?.batchNumber)));
+                                            return Array.from(unique).filter(Boolean).length;
+                                        })()}
                                     </p>
                                 </div>
                             </div>
@@ -9985,19 +10584,43 @@ export default function FormulaDataPage() {
 
                     {/* MFC Number */}
                     <div style={{
-                        fontFamily: 'monospace',
-                        fontSize: '1rem',
-                        fontWeight: '700',
-                        color: colors.primary,
-                        minWidth: '160px',
+                        width: '180px',
+                        flex: '0 0 180px',
+                        minWidth: 0,
                         padding: '4px 10px',
                         background: `${colors.primary}08`,
                         borderRadius: '6px',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '2px',
                     }}>
-                        {mfcNo}
+                        <div style={{
+                            fontFamily: 'monospace',
+                            fontSize: '1rem',
+                            fontWeight: '700',
+                            color: colors.primary,
+                            whiteSpace: 'nowrap',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            width: '100%',
+                        }}>
+                            {mfcNo}
+                        </div>
+                        <div style={{
+                            fontSize: '0.78rem',
+                            fontWeight: 600,
+                            color: '#1f2937',
+                            opacity: 0.85,
+                            whiteSpace: 'nowrap',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            width: '100%',
+                        }}>
+                            {formula.masterFormulaDetails.productName}
+                        </div>
                     </div>
 
-                    {/* Product Name + AST/RST badges */}
+                    {/* AST/RST badges */}
                     <div style={{
                         flex: 1,
                         fontSize: '0.9rem',
@@ -10007,7 +10630,6 @@ export default function FormulaDataPage() {
                         flexDirection: 'column',
                         gap: '4px',
                     }}>
-                        <span>{formula.masterFormulaDetails.productName}</span>
                         {(() => {
                             const key = toMfrKey(formula.masterFormulaDetails.masterCardNo);
                             const aInfo = astRstData.byMfrKey[key];
@@ -10186,6 +10808,17 @@ export default function FormulaDataPage() {
 
     return (
         <div style={{ minHeight: '100vh', background: 'linear-gradient(180deg, #faf5ff 0%, #f5f3ff 50%, #fafafa 100%)' }}>
+            {/* Product Master Cross-Reference Modal */}
+            <ProductMasterCrossRefModal
+                show={showPmCrossRefModal}
+                onClose={() => setShowPmCrossRefModal(false)}
+                type={pmCrossRefModalType}
+                sectionName={pmCrossRefModalSection}
+                items={pmCrossRefModalItems}
+                search={pmCrossRefModalSearch}
+                onSearchChange={setPmCrossRefModalSearch}
+            />
+
             {/* Batch Modals */}
             <BatchDetailModal />
             <BatchListModal />
@@ -11806,10 +12439,6 @@ export default function FormulaDataPage() {
                                                 <div style={{ fontSize: '0.7rem', color: '#9ca3af', fontWeight: 600, textTransform: 'uppercase', marginBottom: '4px' }}>Unique Batches</div>
                                                 <div style={{ fontSize: '1.4rem', fontWeight: 700, color: '#dc2626' }}>{uniqueBatchNums.length}</div>
                                             </div>
-                                            <div style={{ flex: '0 1 140px', background: '#fef2f2', borderRadius: '10px', padding: '0.75rem 1rem', border: '1px solid #fecaca' }}>
-                                                <div style={{ fontSize: '0.7rem', color: '#9ca3af', fontWeight: 600, textTransform: 'uppercase', marginBottom: '4px' }}>Total Records</div>
-                                                <div style={{ fontSize: '1.4rem', fontWeight: 700, color: '#dc2626' }}>{batches.length}</div>
-                                            </div>
                                         </div>
 
                                         {/* Batch Table */}
@@ -11863,6 +12492,7 @@ export default function FormulaDataPage() {
                             <CollapsibleSectionHeader
                                 title="By Manufacturer"
                                 count={manufacturerSummary.length}
+                                hideCount
                                 icon="📊"
                                 isOpen={manufacturerFilterOpen}
                                 onToggle={() => setManufacturerFilterOpen(!manufacturerFilterOpen)}
@@ -12203,6 +12833,11 @@ export default function FormulaDataPage() {
                                 pmCoaArMissing={sectionPmCoaArData.main.missing}
                                 onPmCoaArFoundClick={() => openPmCoaModal('qualified', 'main', mainFormulas, 'ar')}
                                 onPmCoaArMissingClick={() => openPmCoaModal('unqualified', 'main', mainFormulas, 'ar')}
+                                productMasterStats={sectionProductMasterStats?.main}
+                                onPmFoundClick={() => openPmCrossRefModal('found', 'MFCs with 3+ Batches', sectionProductMasterStats?.main?.foundList ?? [])}
+                                onPmMissingClick={() => openPmCrossRefModal('missing', 'MFCs with 3+ Batches', sectionProductMasterStats?.main?.missingList ?? [])}
+                                onPmErrorsClick={() => openPmCrossRefModal('errors', 'MFCs with 3+ Batches', sectionProductMasterStats?.main?.errorList ?? [])}
+                                onPmOkClick={() => openPmCrossRefModal('ok', 'MFCs with 3+ Batches', sectionProductMasterStats?.main?.okList ?? [])}
                             />
                         </div>
 
@@ -12311,19 +12946,37 @@ export default function FormulaDataPage() {
 
                                                 {/* MFC Number + Create APQR */}
                                                 <div style={{
-                                                    minWidth: '160px',
+                                                    width: '180px',
+                                                    flex: '0 0 180px',
                                                     display: 'flex',
                                                     flexDirection: 'column',
                                                     alignItems: 'flex-start',
                                                     gap: '4px',
+                                                    minWidth: 0,
                                                 }}>
                                                     <div style={{
                                                         fontFamily: 'monospace',
                                                         fontSize: '1rem',
                                                         fontWeight: '700',
                                                         color: colors.primary,
+                                                        width: '100%',
+                                                        whiteSpace: 'nowrap',
+                                                        overflow: 'hidden',
+                                                        textOverflow: 'ellipsis',
                                                     }}>
                                                         {mfcNo}
+                                                    </div>
+                                                    <div style={{
+                                                        width: '100%',
+                                                        fontSize: '0.78rem',
+                                                        fontWeight: 600,
+                                                        color: 'var(--foreground)',
+                                                        opacity: 0.85,
+                                                        whiteSpace: 'nowrap',
+                                                        overflow: 'hidden',
+                                                        textOverflow: 'ellipsis',
+                                                    }}>
+                                                        {formula.masterFormulaDetails.productName}
                                                     </div>
                                                     <button
                                                         onClick={(e) => handleCreateApqr(formula, e)}
@@ -12408,7 +13061,6 @@ export default function FormulaDataPage() {
                                                     rowGap: '0.35rem',
                                                 }}>
                                                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '6px', flexShrink: 0, maxWidth: '100%' }}>
-                                                        <span style={{ fontWeight: '700', color: 'var(--foreground)' }}>{formula.masterFormulaDetails.productName}</span>
                                                         {effectiveTotalBatchCount > 0 && (
                                                             <>
                                                                 <span
@@ -12539,53 +13191,74 @@ export default function FormulaDataPage() {
                                                         const ppmArTotal = (effectivePpmCoaArFound || 0) + (effectivePpmCoaArMissing || 0);
                                                         const pmArTotal = (effectivePmCoaArFound || 0) + (effectivePmCoaArMissing || 0);
 
-                                                        const reqCol = { width: 112, minWidth: 112, flexShrink: 0, display: 'flex', flexDirection: 'column' as const, alignItems: 'flex-start' } as const;
-                                                        const coaCol = { width: 160, minWidth: 160, maxWidth: 160, flexShrink: 0, display: 'flex', flexDirection: 'column' as const, alignItems: 'stretch', gap: 4 } as const;
+                                                        const showBulkCoa = ((effectiveBulkCoaQualified || 0) + (effectiveBulkCoaUnqualified || 0)) > 0;
+                                                        const showFinishCoa = ((effectiveFinishCoaQualified || 0) + (effectiveFinishCoaUnqualified || 0)) > 0;
+
+                                                        // Fixed, table-like layout (no borders): columns never reflow per card.
+                                                        // Layout matches the section header (image 1):
+                                                        // - Row 1: RM / PPM / PM + RM COA / PPM COA / PM COA
+                                                        // - Row 2: RM total + AR rows under COA columns
+                                                        // - Row 3: Bulk COA + Finish COA on the left
+                                                        // Each cell contains: LABEL (fixed ~56px) + CAPSULE.
+                                                        // So columns must be wide enough to avoid squeezing the capsule.
+                                                        const reqColWidth = 155;
+                                                        const coaColWidth = 185;
+                                                        const gridColumns = `${reqColWidth}px ${reqColWidth}px ${reqColWidth}px ${coaColWidth}px ${coaColWidth}px ${coaColWidth}px`;
+                                                        const cellBase = { minWidth: 0, display: 'flex', flexDirection: 'column' as const, alignItems: 'stretch', justifyContent: 'flex-end' as const };
+                                                        const placeholder = (minH: number) => <div style={{ minHeight: minH, width: '100%' }} aria-hidden />;
 
                                                         return (
-                                                            <>
-                                                                <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-end', columnGap: 12, rowGap: 6, width: '100%' }}>
-                                                                    {showRm && (
-                                                                        <div style={{ ...reqCol, justifyContent: 'flex-end' }}>
+                                                            <div style={{ width: '100%', display: 'flex', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap', rowGap: 8 }}>
+                                                                <div style={{ flex: 1, minWidth: 0 }}>
+                                                                    <div style={{
+                                                                        display: 'grid',
+                                                                        gridTemplateColumns: gridColumns,
+                                                                    columnGap: 10,
+                                                                        rowGap: 6,
+                                                                        alignItems: 'end',
+                                                                    }}>
+                                                                    {/* Row 1: Requisition + COA capsules */}
+                                                                    <div style={cellBase}>
+                                                                        {showRm ? (
                                                                             <BatchStatusCapsule
                                                                                 type="RM"
                                                                                 matched={effectiveRmMatched}
                                                                                 unmatched={effectiveRmUnmatched}
-                                                                                onGreenClick={() => openPerFormulaRmModal(mfcNo, allProductCodes, formula.masterFormulaDetails.productName, 'matched')}
-                                                                                onRedClick={() => openPerFormulaRmModal(mfcNo, allProductCodes, formula.masterFormulaDetails.productName, 'unmatched')}
+                                                                                onGreenClick={() => openRmDataModal('matched', 'table', undefined, allProductCodes, `MFC: ${mfcNo} • ${formula.masterFormulaDetails.productName || ''}`)}
+                                                                                onRedClick={() => openRmDataModal('unmatched', 'table', undefined, allProductCodes, `MFC: ${mfcNo} • ${formula.masterFormulaDetails.productName || ''}`)}
                                                                                 size="small"
                                                                                 stretch
                                                                             />
-                                                                        </div>
-                                                                    )}
-                                                                    {showPpm && (
-                                                                        <div style={{ ...reqCol, justifyContent: 'flex-end' }}>
+                                                                        ) : placeholder(26)}
+                                                                    </div>
+                                                                    <div style={cellBase}>
+                                                                        {showPpm ? (
                                                                             <BatchStatusCapsule
                                                                                 type="PPM"
                                                                                 matched={ppmMatched}
                                                                                 unmatched={ppmUnmatched}
-                                                                                onGreenClick={() => openPerFormulaPpmModal(mfcNo, allProductCodes, formula.masterFormulaDetails.productName, 'matched')}
-                                                                                onRedClick={() => openPerFormulaPpmModal(mfcNo, allProductCodes, formula.masterFormulaDetails.productName, 'unmatched')}
+                                                                                onGreenClick={() => openPpmDataModal('matched', undefined, allProductCodes, `MFC: ${mfcNo} • ${formula.masterFormulaDetails.productName || ''}`)}
+                                                                                onRedClick={() => openPpmDataModal('unmatched', undefined, allProductCodes, `MFC: ${mfcNo} • ${formula.masterFormulaDetails.productName || ''}`)}
                                                                                 size="small"
                                                                                 stretch
                                                                             />
-                                                                        </div>
-                                                                    )}
-                                                                    {showPm && (
-                                                                        <div style={{ ...reqCol, justifyContent: 'flex-end' }}>
+                                                                        ) : placeholder(26)}
+                                                                    </div>
+                                                                    <div style={cellBase}>
+                                                                        {showPm ? (
                                                                             <BatchStatusCapsule
                                                                                 type="PM"
                                                                                 matched={pmMatched}
                                                                                 unmatched={pmUnmatched}
-                                                                                onGreenClick={() => openPerFormulaPmModal(mfcNo, allProductCodes, formula.masterFormulaDetails.productName, 'matched')}
-                                                                                onRedClick={() => openPerFormulaPmModal(mfcNo, allProductCodes, formula.masterFormulaDetails.productName, 'unmatched')}
+                                                                                onGreenClick={() => openPmDataModal('matched', undefined, allProductCodes, `MFC: ${mfcNo} • ${formula.masterFormulaDetails.productName || ''}`)}
+                                                                                onRedClick={() => openPmDataModal('unmatched', undefined, allProductCodes, `MFC: ${mfcNo} • ${formula.masterFormulaDetails.productName || ''}`)}
                                                                                 size="small"
                                                                                 stretch
                                                                             />
-                                                                        </div>
-                                                                    )}
-                                                                    {showRmCoa && (
-                                                                        <div style={coaCol}>
+                                                                        ) : placeholder(26)}
+                                                                    </div>
+                                                                    <div style={cellBase}>
+                                                                        {showRmCoa ? (
                                                                             <BatchStatusCapsule
                                                                                 type="RM COA"
                                                                                 matched={effectiveRmCoaQualified}
@@ -12595,10 +13268,10 @@ export default function FormulaDataPage() {
                                                                                 size="small"
                                                                                 stretch
                                                                             />
-                                                                        </div>
-                                                                    )}
-                                                                    {showPpmCoa && (
-                                                                        <div style={coaCol}>
+                                                                        ) : placeholder(26)}
+                                                                    </div>
+                                                                    <div style={cellBase}>
+                                                                        {showPpmCoa ? (
                                                                             <BatchStatusCapsule
                                                                                 type="PPM COA"
                                                                                 matched={effectivePpmCoaQualified}
@@ -12608,10 +13281,10 @@ export default function FormulaDataPage() {
                                                                                 size="small"
                                                                                 stretch
                                                                             />
-                                                                        </div>
-                                                                    )}
-                                                                    {showPmCoa && (
-                                                                        <div style={coaCol}>
+                                                                        ) : placeholder(26)}
+                                                                    </div>
+                                                                    <div style={cellBase}>
+                                                                        {showPmCoa ? (
                                                                             <BatchStatusCapsule
                                                                                 type="PM COA"
                                                                                 matched={effectivePmCoaQualified}
@@ -12621,12 +13294,11 @@ export default function FormulaDataPage() {
                                                                                 size="small"
                                                                                 stretch
                                                                             />
-                                                                        </div>
-                                                                    )}
-                                                                </div>
-                                                                <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', columnGap: 12, rowGap: 6, width: '100%' }}>
-                                                                    {showRm && (
-                                                                        <div style={{ ...reqCol }}>
+                                                                        ) : placeholder(26)}
+                                                                    </div>
+                                                                    {/* Row 2: RM total + AR capsules (fixed columns) */}
+                                                                    <div style={{ ...cellBase, justifyContent: 'flex-start' }}>
+                                                                        {showRm ? (
                                                                             <div style={{
                                                                                 display: 'flex',
                                                                                 alignItems: 'center',
@@ -12638,6 +13310,7 @@ export default function FormulaDataPage() {
                                                                                 padding: '2px 6px',
                                                                                 borderRadius: '6px',
                                                                                 border: '1px solid rgba(16, 185, 129, 0.3)',
+                                                                                width: 'fit-content',
                                                                             }}>
                                                                                 <span>{effectiveRmMatched || 0}</span>
                                                                                 <span>+</span>
@@ -12646,98 +13319,87 @@ export default function FormulaDataPage() {
                                                                                 <span style={{ fontWeight: '700' }}>{rmReconTotal}</span>
                                                                                 <span style={{ marginLeft: '4px', opacity: 0.85 }}>total</span>
                                                                             </div>
-                                                                        </div>
-                                                                    )}
-                                                                    {showPpm && <div style={{ ...reqCol, minHeight: 22 }} aria-hidden />}
-                                                                    {showPm && <div style={{ ...reqCol, minHeight: 22 }} aria-hidden />}
-                                                                    {showRmCoa && (
-                                                                        <div style={coaCol}>
-                                                                            {rmArTotal > 0 ? (
-                                                                                <MiniArStatusCapsule
-                                                                                    label="RM AR"
-                                                                                    found={effectiveRmCoaArFound}
-                                                                                    missing={effectiveRmCoaArMissing}
-                                                                                    accent="rm"
-                                                                                    stretch
-                                                                                    onFoundClick={() => openRmCoaModal('matched', 'main', [formula], 'ar')}
-                                                                                    onMissingClick={() => openRmCoaModal('unmatched', 'main', [formula], 'ar')}
-                                                                                />
-                                                                            ) : (
-                                                                                <div style={{ minHeight: 22 }} aria-hidden />
-                                                                            )}
-                                                                        </div>
-                                                                    )}
-                                                                    {showPpmCoa && (
-                                                                        <div style={coaCol}>
-                                                                            {ppmArTotal > 0 ? (
-                                                                                <MiniArStatusCapsule
-                                                                                    label="PPM AR"
-                                                                                    found={effectivePpmCoaArFound}
-                                                                                    missing={effectivePpmCoaArMissing}
-                                                                                    accent="ppm"
-                                                                                    stretch
-                                                                                    onFoundClick={() => openPpmCoaModal('qualified', 'main', [formula], 'ar')}
-                                                                                    onMissingClick={() => openPpmCoaModal('unqualified', 'main', [formula], 'ar')}
-                                                                                />
-                                                                            ) : (
-                                                                                <div style={{ minHeight: 22 }} aria-hidden />
-                                                                            )}
-                                                                        </div>
-                                                                    )}
-                                                                    {showPmCoa && (
-                                                                        <div style={coaCol}>
-                                                                            {pmArTotal > 0 ? (
-                                                                                <MiniArStatusCapsule
-                                                                                    label="PM AR"
-                                                                                    found={effectivePmCoaArFound}
-                                                                                    missing={effectivePmCoaArMissing}
-                                                                                    accent="pm"
-                                                                                    stretch
-                                                                                    onFoundClick={() => openPmCoaModal('qualified', 'main', [formula], 'ar')}
-                                                                                    onMissingClick={() => openPmCoaModal('unqualified', 'main', [formula], 'ar')}
-                                                                                />
-                                                                            ) : (
-                                                                                <div style={{ minHeight: 22 }} aria-hidden />
-                                                                            )}
-                                                                        </div>
-                                                                    )}
+                                                                        ) : placeholder(22)}
+                                                                    </div>
+                                                                    <div style={{ ...cellBase, justifyContent: 'flex-start' }}>{placeholder(22)}</div>
+                                                                    <div style={{ ...cellBase, justifyContent: 'flex-start' }}>{placeholder(22)}</div>
+                                                                    <div style={{ ...cellBase, justifyContent: 'flex-start' }}>
+                                                                        {showRmCoa && rmArTotal > 0 ? (
+                                                                            <MiniArStatusCapsule
+                                                                                label="RM AR"
+                                                                                found={effectiveRmCoaArFound}
+                                                                                missing={effectiveRmCoaArMissing}
+                                                                                accent="rm"
+                                                                                stretch
+                                                                                onFoundClick={() => openRmCoaModal('matched', 'main', [formula], 'ar')}
+                                                                                onMissingClick={() => openRmCoaModal('unmatched', 'main', [formula], 'ar')}
+                                                                            />
+                                                                        ) : placeholder(22)}
+                                                                    </div>
+                                                                    <div style={{ ...cellBase, justifyContent: 'flex-start' }}>
+                                                                        {showPpmCoa && ppmArTotal > 0 ? (
+                                                                            <MiniArStatusCapsule
+                                                                                label="PPM AR"
+                                                                                found={effectivePpmCoaArFound}
+                                                                                missing={effectivePpmCoaArMissing}
+                                                                                accent="ppm"
+                                                                                stretch
+                                                                                onFoundClick={() => openPpmCoaModal('qualified', 'main', [formula], 'ar')}
+                                                                                onMissingClick={() => openPpmCoaModal('unqualified', 'main', [formula], 'ar')}
+                                                                            />
+                                                                        ) : placeholder(22)}
+                                                                    </div>
+                                                                    <div style={{ ...cellBase, justifyContent: 'flex-start' }}>
+                                                                        {showPmCoa && pmArTotal > 0 ? (
+                                                                            <MiniArStatusCapsule
+                                                                                label="PM AR"
+                                                                                found={effectivePmCoaArFound}
+                                                                                missing={effectivePmCoaArMissing}
+                                                                                accent="pm"
+                                                                                stretch
+                                                                                onFoundClick={() => openPmCoaModal('qualified', 'main', [formula], 'ar')}
+                                                                                onMissingClick={() => openPmCoaModal('unqualified', 'main', [formula], 'ar')}
+                                                                            />
+                                                                        ) : placeholder(22)}
+                                                                    </div>
+
+                                                                    {/* Row 3: Bulk COA + Finish COA (left-aligned like header) */}
+                                                                    <div style={{ ...cellBase, justifyContent: 'flex-start' }}>
+                                                                        {showBulkCoa ? (
+                                                                            <BatchStatusCapsule
+                                                                                type="Bulk COA"
+                                                                                matched={effectiveBulkCoaQualified}
+                                                                                unmatched={effectiveBulkCoaUnqualified}
+                                                                                onGreenClick={() => openBulkCoaModal('matched', 'main', [formula])}
+                                                                                onRedClick={() => openBulkCoaModal('unmatched', 'main', [formula])}
+                                                                                size="small"
+                                                                                stretch
+                                                                            />
+                                                                        ) : placeholder(26)}
+                                                                    </div>
+                                                                    <div style={{ ...cellBase, justifyContent: 'flex-start' }}>
+                                                                        {showFinishCoa ? (
+                                                                            <BatchStatusCapsule
+                                                                                type="Finish COA"
+                                                                                matched={effectiveFinishCoaQualified}
+                                                                                unmatched={effectiveFinishCoaUnqualified}
+                                                                                onGreenClick={() => openFinishCoaModal('matched', 'main', [formula])}
+                                                                                onRedClick={() => openFinishCoaModal('unmatched', 'main', [formula])}
+                                                                                size="small"
+                                                                                stretch
+                                                                            />
+                                                                        ) : placeholder(26)}
+                                                                    </div>
+                                                                    <div style={{ ...cellBase, justifyContent: 'flex-start' }}>{placeholder(26)}</div>
+                                                                    <div style={{ ...cellBase, justifyContent: 'flex-start' }}>{placeholder(26)}</div>
+                                                                    <div style={{ ...cellBase, justifyContent: 'flex-start' }}>{placeholder(26)}</div>
+                                                                    <div style={{ ...cellBase, justifyContent: 'flex-start' }}>{placeholder(26)}</div>
+                                                                    </div>
                                                                 </div>
-                                                            </>
+
+                                                            </div>
                                                         );
                                                     })()}
-                                                    {/* Row 2: Bulk COA + Finish COA — same tier as CollapsibleSectionHeader second row */}
-                                                    {(
-                                                        ((effectiveRmCoaQualified || 0) + (effectiveRmCoaUnqualified || 0)) > 0 ||
-                                                        ((effectiveBulkCoaQualified || 0) + (effectiveBulkCoaUnqualified || 0)) > 0 ||
-                                                        ((effectiveFinishCoaQualified || 0) + (effectiveFinishCoaUnqualified || 0)) > 0
-                                                    ) && (
-                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap', marginTop: '2px' }}>
-                                                            {(effectiveBulkCoaQualified > 0 || effectiveBulkCoaUnqualified > 0) && (
-                                                                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'flex-start', flexShrink: 0 }}>
-                                                                    <BatchStatusCapsule
-                                                                        type="Bulk COA"
-                                                                        matched={effectiveBulkCoaQualified}
-                                                                        unmatched={effectiveBulkCoaUnqualified}
-                                                                        onGreenClick={() => openBulkCoaModal('matched', 'main', [formula])}
-                                                                        onRedClick={() => openBulkCoaModal('unmatched', 'main', [formula])}
-                                                                        size="small"
-                                                                    />
-                                                                </div>
-                                                            )}
-                                                            {(effectiveFinishCoaQualified > 0 || effectiveFinishCoaUnqualified > 0) && (
-                                                                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'flex-start', flexShrink: 0 }}>
-                                                                    <BatchStatusCapsule
-                                                                        type="Finish COA"
-                                                                        matched={effectiveFinishCoaQualified}
-                                                                        unmatched={effectiveFinishCoaUnqualified}
-                                                                        onGreenClick={() => openFinishCoaModal('matched', 'main', [formula])}
-                                                                        onRedClick={() => openFinishCoaModal('unmatched', 'main', [formula])}
-                                                                        size="small"
-                                                                    />
-                                                                </div>
-                                                            )}
-                                                        </div>
-                                                    )}
                                                     </div>
                                                 </div>
 
@@ -14093,6 +14755,11 @@ export default function FormulaDataPage() {
                                     pmCoaArMissing={sectionPmCoaArData.lowBatch.missing}
                                     onPmCoaArFoundClick={() => openPmCoaModal('qualified', 'lowBatch', lowBatchFormulas, 'ar')}
                                     onPmCoaArMissingClick={() => openPmCoaModal('unqualified', 'lowBatch', lowBatchFormulas, 'ar')}
+                                    productMasterStats={sectionProductMasterStats?.lowBatch}
+                                    onPmFoundClick={() => openPmCrossRefModal('found', 'Low Batch MFCs (1-2 Batches)', sectionProductMasterStats?.lowBatch?.foundList ?? [])}
+                                    onPmMissingClick={() => openPmCrossRefModal('missing', 'Low Batch MFCs (1-2 Batches)', sectionProductMasterStats?.lowBatch?.missingList ?? [])}
+                                    onPmErrorsClick={() => openPmCrossRefModal('errors', 'Low Batch MFCs (1-2 Batches)', sectionProductMasterStats?.lowBatch?.errorList ?? [])}
+                                    onPmOkClick={() => openPmCrossRefModal('ok', 'Low Batch MFCs (1-2 Batches)', sectionProductMasterStats?.lowBatch?.okList ?? [])}
                                 />
                                 {lowBatchMfcsOpen && (
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
@@ -14315,6 +14982,11 @@ export default function FormulaDataPage() {
                                     pmCoaArMissing={sectionPmCoaArData.noBatch.missing}
                                     onPmCoaArFoundClick={() => openPmCoaModal('qualified', 'noBatch', noBatchFormulas, 'ar')}
                                     onPmCoaArMissingClick={() => openPmCoaModal('unqualified', 'noBatch', noBatchFormulas, 'ar')}
+                                    productMasterStats={sectionProductMasterStats?.noBatch}
+                                    onPmFoundClick={() => openPmCrossRefModal('found', 'No Batch MFCs', sectionProductMasterStats?.noBatch?.foundList ?? [])}
+                                    onPmMissingClick={() => openPmCrossRefModal('missing', 'No Batch MFCs', sectionProductMasterStats?.noBatch?.missingList ?? [])}
+                                    onPmErrorsClick={() => openPmCrossRefModal('errors', 'No Batch MFCs', sectionProductMasterStats?.noBatch?.errorList ?? [])}
+                                    onPmOkClick={() => openPmCrossRefModal('ok', 'No Batch MFCs', sectionProductMasterStats?.noBatch?.okList ?? [])}
                                 />
                                 {noBatchMfcsOpen && (
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
@@ -14538,6 +15210,11 @@ export default function FormulaDataPage() {
                                     pmCoaArMissing={sectionPmCoaArData.placebo.missing}
                                     onPmCoaArFoundClick={() => openPmCoaModal('qualified', 'placebo', placeboFormulas, 'ar')}
                                     onPmCoaArMissingClick={() => openPmCoaModal('unqualified', 'placebo', placeboFormulas, 'ar')}
+                                    productMasterStats={sectionProductMasterStats?.placebo}
+                                    onPmFoundClick={() => openPmCrossRefModal('found', 'Placebo & Media Fill', sectionProductMasterStats?.placebo?.foundList ?? [])}
+                                    onPmMissingClick={() => openPmCrossRefModal('missing', 'Placebo & Media Fill', sectionProductMasterStats?.placebo?.missingList ?? [])}
+                                    onPmErrorsClick={() => openPmCrossRefModal('errors', 'Placebo & Media Fill', sectionProductMasterStats?.placebo?.errorList ?? [])}
+                                    onPmOkClick={() => openPmCrossRefModal('ok', 'Placebo & Media Fill', sectionProductMasterStats?.placebo?.okList ?? [])}
                                 />
                                 {placeboMfcsOpen && (
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
@@ -17077,10 +17754,15 @@ export default function FormulaDataPage() {
                                 📦 PPM (Primary Packing Material) Requisition Data
                             </h3>
                             <p style={{ color: 'rgba(255,255,255,0.9)', fontSize: '0.85rem', marginTop: '4px' }}>
-                                {ppmModalType === 'matched'
-                                    ? `✓ ${ppmModalData.length} batches with PPM data`
-                                    : `✗ ${ppmModalData.length} batches without PPM data`
-                                }
+                                {(() => {
+                                    const normBatch = (b: any) => (b || '').toString().trim().toUpperCase();
+                                    const unique = new Set((ppmModalData || []).map((r: any) => normBatch(r?.batchNumber)));
+                                    const n = Array.from(unique).filter(Boolean).length;
+                                    const scope = ppmModalScopeLabel ? ` • ${ppmModalScopeLabel}` : '';
+                                    return ppmModalType === 'matched'
+                                        ? `✓ ${n.toLocaleString()} batches with PPM data${scope}`
+                                        : `✗ ${n.toLocaleString()} batches without PPM data${scope}`;
+                                })()}
                             </p>
                         </div>
                         <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
@@ -17225,7 +17907,11 @@ export default function FormulaDataPage() {
                                     }}>
                                         <p style={{ fontSize: '0.75rem', color: ppmModalType === 'matched' ? '#059669' : '#dc2626', fontWeight: 600, marginBottom: '4px' }}>Unique Batches</p>
                                         <p style={{ fontSize: '1.5rem', fontWeight: 700, color: ppmModalType === 'matched' ? '#047857' : '#b91c1c' }}>
-                                            {new Set(filteredPpmModalData.map((m: any) => m.batchNumber)).size}
+                                            {(() => {
+                                                const normBatch = (b: any) => (b || '').toString().trim().toUpperCase();
+                                                const unique = new Set(filteredPpmModalData.map((m: any) => normBatch(m?.batchNumber)));
+                                                return Array.from(unique).filter(Boolean).length;
+                                            })()}
                                         </p>
                                     </div>
                                 </div>
@@ -17598,10 +18284,15 @@ export default function FormulaDataPage() {
                                 📦 PM (Packing Material) Requisition Data
                             </h3>
                             <p style={{ color: 'rgba(255,255,255,0.9)', fontSize: '0.85rem', marginTop: '4px' }}>
-                                {pmModalType === 'matched'
-                                    ? `✓ ${pmModalData.length} batches with PM data`
-                                    : `✗ ${pmModalData.length} batches without PM data`
-                                }
+                                {(() => {
+                                    const normBatch = (b: any) => (b || '').toString().trim().toUpperCase();
+                                    const unique = new Set((pmModalData || []).map((r: any) => normBatch(r?.batchNumber)));
+                                    const n = Array.from(unique).filter(Boolean).length;
+                                    const scope = pmModalScopeLabel ? ` • ${pmModalScopeLabel}` : '';
+                                    return pmModalType === 'matched'
+                                        ? `✓ ${n.toLocaleString()} batches with PM data${scope}`
+                                        : `✗ ${n.toLocaleString()} batches without PM data${scope}`;
+                                })()}
                             </p>
                         </div>
                         <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
@@ -17746,7 +18437,11 @@ export default function FormulaDataPage() {
                                     }}>
                                         <p style={{ fontSize: '0.75rem', color: pmModalType === 'matched' ? '#059669' : '#dc2626', fontWeight: 600, marginBottom: '4px' }}>Unique Batches</p>
                                         <p style={{ fontSize: '1.5rem', fontWeight: 700, color: pmModalType === 'matched' ? '#047857' : '#b91c1c' }}>
-                                            {new Set(filteredPmModalData.map((m: any) => m.batchNumber)).size}
+                                            {(() => {
+                                                const normBatch = (b: any) => (b || '').toString().trim().toUpperCase();
+                                                const unique = new Set(filteredPmModalData.map((m: any) => normBatch(m?.batchNumber)));
+                                                return Array.from(unique).filter(Boolean).length;
+                                            })()}
                                         </p>
                                     </div>
                                 </div>
@@ -18183,7 +18878,7 @@ export default function FormulaDataPage() {
                                                     : globalRmCoaUniqueArNumbersMissing
                                                 ).toLocaleString()}
                                             </span>
-                                            <span style={{ color: '#dc2626', fontWeight: 600 }}>Unique AR Numbers (Missing)</span>
+                                            <span style={{ color: '#dc2626', fontWeight: 600 }}>AR Numbers (Missing)</span>
                                         </div>
                                     </>
                                 )}
@@ -18248,7 +18943,6 @@ export default function FormulaDataPage() {
                                     }}>
                                         {matModalData.length.toLocaleString()}
                                     </span>
-                                    <span style={{ color: '#64748b', fontWeight: 500 }}>Total Records</span>
                                 </div>
                             </div>
                             {/* View Toggle & Search */}
@@ -18967,7 +19661,7 @@ export default function FormulaDataPage() {
                                                             {/* Records */}
                                                             <div style={{ textAlign: 'right', fontSize: '0.8rem', color: '#64748b' }}>
                                                                 <div style={{ fontWeight: 600 }}>{items.length} recs</div>
-                                                                <div style={{ fontSize: '0.75rem', opacity: 0.8 }}>{uniqueArs} unique ARs</div>
+                                                                <div style={{ fontSize: '0.75rem', opacity: 0.8 }}>{uniqueArs} ARs</div>
                                                             </div>
 
                                                             {/* Expand Icon */}
@@ -19366,72 +20060,183 @@ export default function FormulaDataPage() {
                             gap: '16px',
                         }}>
                             <div style={{ display: 'flex', gap: '24px', flexWrap: 'wrap' }}>
-                                {pmCoaModalType === 'unqualified' && (
+                                {pmCoaViewMode === 'ar' || pmCoaViewMode === 'batch' ? (
+                                    (() => {
+                                        const normBatch = (b: any) => (b || '').toString().trim().toUpperCase();
+                                        const normCode = (c: any) => (c || '').toString().trim().toUpperCase();
+                                        const accent = pmCoaModalType === 'qualified' ? '#059669' : '#dc2626';
+
+                                        if (pmCoaViewMode === 'ar') {
+                                            const kind = pmCoaModalType === 'qualified' ? 'found' : 'missing';
+                                            const allowSet =
+                                                pmCoaModalSection !== 'all'
+                                                    ? new Set(sectionPmCoaReconciledArSets[kind][pmCoaModalSection])
+                                                    : (() => {
+                                                        const u = new Set<string>();
+                                                        (['main', 'lowBatch', 'noBatch', 'placebo'] as const).forEach(sec => {
+                                                            sectionPmCoaReconciledArSets[kind][sec].forEach(ar => u.add(ar));
+                                                        });
+                                                        return u;
+                                                    })();
+
+                                            const batchMetaMap = new Map<string, any>();
+                                            (yearFilteredBatches as any[]).forEach(b => {
+                                                const bn = normBatch(b?.batchNumber);
+                                                if (!bn || batchMetaMap.has(bn)) return;
+                                                batchMetaMap.set(bn, { itemCode: normCode(b?.itemCode), itemName: (b?.itemName || '').toString().trim() || 'N/A' });
+                                            });
+
+                                            const itemCodeToMfc = new Map<string, string>();
+                                            const getFormulaCodes = (f: any): string[] => {
+                                                const codes: string[] = [];
+                                                const mainCode = f?.masterFormulaDetails?.productCode;
+                                                if (mainCode && mainCode !== 'N/A') codes.push(normCode(mainCode));
+                                                (f?.fillingDetails || []).forEach((fd: any) => {
+                                                    const pc = fd?.productCode;
+                                                    if (pc && pc !== 'N/A') codes.push(normCode(pc));
+                                                });
+                                                (f?.processes || []).forEach((p: any) => {
+                                                    (p?.fillingProducts || []).forEach((fp: any) => {
+                                                        const pc = fp?.productCode;
+                                                        if (pc) codes.push(normCode(pc));
+                                                    });
+                                                });
+                                                return Array.from(new Set(codes.filter(Boolean)));
+                                            };
+                                            (formulas as any[]).forEach((f: any) => {
+                                                const mfc = (f?.masterFormulaDetails?.masterCardNo || '').toString().trim().toUpperCase();
+                                                if (!mfc) return;
+                                                getFormulaCodes(f).forEach(code => {
+                                                    if (!itemCodeToMfc.has(code)) itemCodeToMfc.set(code, mfc);
+                                                });
+                                            });
+
+                                            const byAr = new Map<string, any[]>();
+                                            (pmCoaModalData as any[]).forEach((r: any) => {
+                                                splitArNumbers(r.arNo).forEach(arTok => {
+                                                    if (!allowSet.has(arTok)) return;
+                                                    if (!byAr.has(arTok)) byAr.set(arTok, []);
+                                                    byAr.get(arTok)!.push(r);
+                                                });
+                                            });
+
+                                            const arTableRows = Array.from(byAr.entries()).map(([ar, items]) => {
+                                                const batches = Array.from(new Set(items.map((i: any) => normBatch(i?.batchNumber)).filter(Boolean))).sort();
+                                                const firstBatch = batches[0] || '';
+                                                const meta = firstBatch ? batchMetaMap.get(firstBatch) : null;
+                                                const itemCode = meta?.itemCode || '';
+                                                return {
+                                                    arNo: ar,
+                                                    mfcNo: (itemCode && itemCodeToMfc.get(itemCode)) || 'N/A',
+                                                    productName: meta?.itemName || 'N/A',
+                                                    batch: batches.join(', '),
+                                                };
+                                            });
+
+                                            const filtered = filterRowsBySearch(
+                                                arTableRows,
+                                                pmCoaSearchQuery,
+                                                pmCoaSearchField,
+                                                ['arNo', 'mfcNo', 'productName', 'batch']
+                                            );
+
+                                            return (
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                    <span style={{ padding: '6px 14px', background: '#3b82f6', color: 'white', borderRadius: '8px', fontWeight: 800, fontSize: '1rem' }}>
+                                                        {filtered.length.toLocaleString()}
+                                                    </span>
+                                                <span style={{ color: '#64748b', fontWeight: 700 }}>AR Numbers</span>
+                                                </div>
+                                            );
+                                        }
+
+                                        // Batch view: count unique batches under current search/filter
+                                        const base = filterRowsBySearch(
+                                            pmCoaModalData,
+                                            pmCoaSearchQuery,
+                                            pmCoaSearchField,
+                                            ['batchNumber', 'materialCode', 'materialName', 'arNo', 'formulaMfc', 'mfcNo']
+                                        ) as any[];
+                                        const batches = new Set(base.map(r => normBatch(r?.batchNumber)).filter(Boolean));
+                                        return (
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                <span style={{ padding: '6px 14px', background: accent, color: 'white', borderRadius: '8px', fontWeight: 800, fontSize: '1rem' }}>
+                                                    {batches.size.toLocaleString()}
+                                                </span>
+                                                <span style={{ color: '#64748b', fontWeight: 700 }}>Batches</span>
+                                            </div>
+                                        );
+                                    })()
+                                ) : (
                                     <>
+                                        {pmCoaModalType === 'unqualified' && (
+                                            <>
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                    <span style={{
+                                                        padding: '6px 14px',
+                                                        background: '#dc2626',
+                                                        color: 'white',
+                                                        borderRadius: '8px',
+                                                        fontWeight: 700,
+                                                        fontSize: '1.1rem',
+                                                    }}>
+                                                        {(pmCoaModalPrimaryMetric === 'batches'
+                                                            ? (pmCoaModalSection === 'all'
+                                                                ? (['main', 'lowBatch', 'noBatch', 'placebo'] as const).reduce((a, k) => a + sectionPmCoaData[k].unqualified, 0)
+                                                                : sectionPmCoaData[pmCoaModalSection].unqualified)
+                                                            : (pmCoaModalSection !== 'all'
+                                                                ? sectionPmCoaArData[pmCoaModalSection].missing
+                                                                : globalPmCoaUniqueArNumbersMissing)
+                                                        ).toLocaleString()}
+                                                    </span>
+                                                    <span style={{ color: '#dc2626', fontWeight: 600 }}>
+                                                        {pmCoaModalPrimaryMetric === 'batches' ? 'Batches (Missing COA)' : 'AR Numbers (Missing)'}
+                                                    </span>
+                                                </div>
+                                            </>
+                                        )}
+                                        {pmCoaModalType === 'qualified' && (
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                <span style={{
+                                                    padding: '6px 14px',
+                                                    background: pmCoaModalPrimaryMetric === 'batches' ? '#059669' : '#3b82f6',
+                                                    color: 'white',
+                                                    borderRadius: '8px',
+                                                    fontWeight: 800,
+                                                    fontSize: '1rem',
+                                                }}>
+                                                    {(pmCoaModalPrimaryMetric === 'batches'
+                                                        ? (pmCoaModalSection === 'all'
+                                                            ? (['main', 'lowBatch', 'noBatch', 'placebo'] as const).reduce((a, k) => a + sectionPmCoaData[k].qualified, 0)
+                                                            : sectionPmCoaData[pmCoaModalSection].qualified)
+                                                        : (pmCoaModalSection !== 'all'
+                                                            ? sectionPmCoaArData[pmCoaModalSection].found
+                                                            : globalPmCoaUniqueArNumbersFound)
+                                                    ).toLocaleString()}
+                                                </span>
+                                                <span style={{ color: '#64748b', fontWeight: 600 }}>
+                                                    {pmCoaModalPrimaryMetric === 'batches' ? 'Batches (With COA)' : 'AR Numbers (Found)'}
+                                                </span>
+                                            </div>
+                                        )}
                                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                             <span style={{
                                                 padding: '6px 14px',
-                                                background: '#dc2626',
+                                                background: '#8b5cf6',
                                                 color: 'white',
                                                 borderRadius: '8px',
-                                                fontWeight: 700,
-                                                fontSize: '1.1rem',
+                                                fontWeight: 800,
+                                                fontSize: '1rem',
                                             }}>
-                                                {(pmCoaModalPrimaryMetric === 'batches'
-                                                    ? (pmCoaModalSection === 'all'
-                                                        ? (['main', 'lowBatch', 'noBatch', 'placebo'] as const).reduce((a, k) => a + sectionPmCoaData[k].unqualified, 0)
-                                                        : sectionPmCoaData[pmCoaModalSection].unqualified)
-                                                    : (pmCoaModalSection !== 'all'
-                                                        ? sectionPmCoaArData[pmCoaModalSection].missing
-                                                        : globalPmCoaUniqueArNumbersMissing)
-                                                ).toLocaleString()}
+                                                {(() => {
+                                                    const materials = new Set(pmCoaModalData.map((m: any) => m.materialCode));
+                                                    return materials.size;
+                                                })()}
                                             </span>
-                                            <span style={{ color: '#dc2626', fontWeight: 600 }}>
-                                                {pmCoaModalPrimaryMetric === 'batches' ? 'Batches (Missing COA)' : 'Unique AR Numbers (Missing)'}
-                                            </span>
+                                            <span style={{ color: '#64748b', fontWeight: 600 }}>Unique Materials</span>
                                         </div>
                                     </>
                                 )}
-                                {pmCoaModalType === 'qualified' && (
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                        <span style={{
-                                            padding: '6px 14px',
-                                            background: pmCoaModalPrimaryMetric === 'batches' ? '#059669' : '#3b82f6',
-                                            color: 'white',
-                                            borderRadius: '8px',
-                                            fontWeight: 800,
-                                            fontSize: '1rem',
-                                        }}>
-                                            {(pmCoaModalPrimaryMetric === 'batches'
-                                                ? (pmCoaModalSection === 'all'
-                                                    ? (['main', 'lowBatch', 'noBatch', 'placebo'] as const).reduce((a, k) => a + sectionPmCoaData[k].qualified, 0)
-                                                    : sectionPmCoaData[pmCoaModalSection].qualified)
-                                                : (pmCoaModalSection !== 'all'
-                                                    ? sectionPmCoaArData[pmCoaModalSection].found
-                                                    : globalPmCoaUniqueArNumbersFound)
-                                            ).toLocaleString()}
-                                        </span>
-                                        <span style={{ color: '#64748b', fontWeight: 600 }}>
-                                            {pmCoaModalPrimaryMetric === 'batches' ? 'Batches (With COA)' : 'Unique AR Numbers (Found)'}
-                                        </span>
-                                    </div>
-                                )}
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                    <span style={{
-                                        padding: '6px 14px',
-                                        background: '#8b5cf6',
-                                        color: 'white',
-                                        borderRadius: '8px',
-                                        fontWeight: 800,
-                                        fontSize: '1rem',
-                                    }}>
-                                        {(() => {
-                                            const materials = new Set(pmCoaModalData.map((m: any) => m.materialCode));
-                                            return materials.size;
-                                        })()}
-                                    </span>
-                                    <span style={{ color: '#64748b', fontWeight: 600 }}>Unique Materials</span>
-                                </div>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                     <span style={{
                                         padding: '6px 14px',
@@ -19447,19 +20252,6 @@ export default function FormulaDataPage() {
                                         })()}
                                     </span>
                                     <span style={{ color: '#64748b', fontWeight: 600 }}>Unique Batches</span>
-                                </div>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                    <span style={{
-                                        padding: '6px 14px',
-                                        background: '#0e7490',
-                                        color: 'white',
-                                        borderRadius: '8px',
-                                        fontWeight: 700,
-                                        fontSize: '1.1rem',
-                                    }}>
-                                        {pmCoaModalData.length.toLocaleString()}
-                                    </span>
-                                    <span style={{ color: '#64748b', fontWeight: 500 }}>Total Records</span>
                                 </div>
                             </div>
                             {/* View Toggle & Search */}
@@ -19662,173 +20454,246 @@ export default function FormulaDataPage() {
                                 </div>
                             )}
 
-                            {/* AR View (same layout as RM COA — reconciled AR filter) */}
+                            {/* AR View (table layout like Batch view; AR number first, Batch column) */}
                             {!isPmCoaModalLoading && !pmCoaModalError && pmCoaModalData.length > 0 && pmCoaViewMode === 'ar' && (() => {
-                                const sourceRows = pmCoaModalData as any[];
-                                const q = pmCoaSearchQuery.trim().toLowerCase();
-                                const filtered = sourceRows.filter((item: any) => {
-                                    if (!q) return true;
-                                    const searchLower = q;
-                                    return (
-                                        (item.arNo?.toLowerCase() || '').includes(searchLower) ||
-                                        (item.materialCode?.toLowerCase() || '').includes(searchLower) ||
-                                        (item.materialName?.toLowerCase() || '').includes(searchLower) ||
-                                        (item.batchNumber?.toLowerCase() || '').includes(searchLower) ||
-                                        (item.formulaMfc?.toLowerCase() || '').includes(searchLower)
-                                    );
-                                });
+                                const normBatch = (b: any) => (b || '').toString().trim().toUpperCase();
+                                const normCode = (c: any) => (c || '').toString().trim().toUpperCase();
+
                                 const pmCoaReconciledArAllowSet = (() => {
                                     const kind = pmCoaModalType === 'qualified' ? 'found' : 'missing';
-                                    if (pmCoaModalSection !== 'all') {
-                                        return new Set(sectionPmCoaReconciledArSets[kind][pmCoaModalSection]);
-                                    }
+                                    if (pmCoaModalSection !== 'all') return new Set(sectionPmCoaReconciledArSets[kind][pmCoaModalSection]);
                                     const u = new Set<string>();
-                                    (['main', 'lowBatch', 'noBatch', 'placebo'] as const).forEach(sec => {
-                                        sectionPmCoaReconciledArSets[kind][sec].forEach(ar => u.add(ar));
-                                    });
+                                    (['main', 'lowBatch', 'noBatch', 'placebo'] as const).forEach(sec => sectionPmCoaReconciledArSets[kind][sec].forEach(ar => u.add(ar)));
                                     return u;
                                 })();
+
+                                const batchMetaMap = new Map<string, any>();
+                                (yearFilteredBatches as any[]).forEach(b => {
+                                    const bn = normBatch(b?.batchNumber);
+                                    if (!bn || batchMetaMap.has(bn)) return;
+                                    batchMetaMap.set(bn, {
+                                        itemCode: normCode(b?.itemCode),
+                                        itemName: (b?.itemName || '').toString().trim() || 'N/A',
+                                        batchSize: b?.batchSize != null && b?.batchSize !== '' ? String(b.batchSize) : 'N/A',
+                                        mfgDate: (b?.mfgDate || '').toString().trim() || 'N/A',
+                                        expiryDate: (b?.expiryDate || '').toString().trim() || 'N/A',
+                                        department: (b?.department || '').toString().trim() || 'N/A',
+                                        make: (b?.make || '').toString().trim() || 'N/A',
+                                    });
+                                });
+
+                                const itemCodeToMfc = new Map<string, string>();
+                                const getFormulaCodes = (f: any): string[] => {
+                                    const codes: string[] = [];
+                                    const mainCode = f?.masterFormulaDetails?.productCode;
+                                    if (mainCode && mainCode !== 'N/A') codes.push(normCode(mainCode));
+                                    (f?.fillingDetails || []).forEach((fd: any) => {
+                                        const pc = fd?.productCode;
+                                        if (pc && pc !== 'N/A') codes.push(normCode(pc));
+                                    });
+                                    (f?.processes || []).forEach((p: any) => {
+                                        (p?.fillingProducts || []).forEach((fp: any) => {
+                                            const pc = fp?.productCode;
+                                            if (pc) codes.push(normCode(pc));
+                                        });
+                                    });
+                                    return Array.from(new Set(codes.filter(Boolean)));
+                                };
+                                (formulas as any[]).forEach((f: any) => {
+                                    const mfc = (f?.masterFormulaDetails?.masterCardNo || '').toString().trim().toUpperCase();
+                                    if (!mfc) return;
+                                    getFormulaCodes(f).forEach(code => {
+                                        if (!itemCodeToMfc.has(code)) itemCodeToMfc.set(code, mfc);
+                                    });
+                                });
+
                                 const byAr = new Map<string, any[]>();
-                                filtered.forEach((r: any) => {
+                                (pmCoaModalData as any[]).forEach((r: any) => {
                                     splitArNumbers(r.arNo).forEach(arTok => {
                                         if (!pmCoaReconciledArAllowSet.has(arTok)) return;
                                         if (!byAr.has(arTok)) byAr.set(arTok, []);
                                         byAr.get(arTok)!.push(r);
                                     });
                                 });
-                                const arRows = Array.from(byAr.entries())
+
+                                const joinBatches = (arr: string[], max = 3) => (arr.length <= max ? arr.join(', ') : `${arr.slice(0, max).join(', ')} +${arr.length - max} more`);
+
+                                const arTableRows = Array.from(byAr.entries())
                                     .sort((a, b) => a[0].localeCompare(b[0]))
                                     .map(([ar, items]) => {
-                                        const batchSet = new Set(items.map(i => (i.batchNumber || '').toString()).filter(Boolean));
-                                        const first = items[0] || {};
+                                        const batches = Array.from(new Set(items.map((i: any) => normBatch(i?.batchNumber)).filter(Boolean))).sort();
+                                        const firstBatch = batches[0] || '';
+                                        const meta = firstBatch ? batchMetaMap.get(firstBatch) : null;
+                                        const itemCode = meta?.itemCode || '';
                                         return {
-                                            ar,
+                                            arNo: ar,
+                                            mfcNo: (itemCode && itemCodeToMfc.get(itemCode)) || 'N/A',
+                                            productName: meta?.itemName || 'N/A',
+                                            batch: joinBatches(batches, 3) || 'N/A',
+                                            batches,
                                             items,
-                                            batchCount: batchSet.size,
-                                            materialCode: first.materialCode || 'N/A',
-                                            materialName: first.materialName || 'N/A',
+                                            batchSize: meta?.batchSize || 'N/A',
+                                            mfgDate: meta?.mfgDate || 'N/A',
+                                            expiryDate: meta?.expiryDate || 'N/A',
+                                            department: meta?.department || 'N/A',
+                                            make: meta?.make || 'N/A',
                                         };
                                     });
+
+                                const filteredArTableRows = filterRowsBySearch(
+                                    arTableRows,
+                                    pmCoaSearchQuery,
+                                    pmCoaSearchField,
+                                    ['arNo', 'mfcNo', 'productName', 'batch', 'batchSize', 'mfgDate', 'expiryDate', 'department', 'make']
+                                );
+
                                 const accent = pmCoaModalType === 'qualified' ? '#0891b2' : '#dc2626';
-                                const accentBg = pmCoaModalType === 'qualified' ? '#cffafe' : '#fee2e2';
                                 return (
                                     <>
                                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
                                             <div style={{ color: '#64748b', fontWeight: 700 }}>
-                                                Showing {arRows.length.toLocaleString()} unique AR numbers
-                                                {arRows.length !== pmCoaReconciledArAllowSet.size ? (
-                                                    <span style={{ fontWeight: 500, marginLeft: '8px', fontSize: '0.85rem' }}>
-                                                        (header: {pmCoaReconciledArAllowSet.size.toLocaleString()} — drill may omit some lines)
-                                                    </span>
-                                                ) : null}
+                                                Showing {filteredArTableRows.length.toLocaleString()} AR numbers
                                             </div>
                                             <button
                                                 onClick={() => handleExportToExcel(
-                                                    arRows.flatMap(a => a.items.map((it: any) => ({ ...it, arNo: a.ar }))),
+                                                    filteredArTableRows,
                                                     `PM_COA_AR_${pmCoaModalType}_${new Date().toISOString().split('T')[0]}`
                                                 )}
-                                                style={{
-                                                    padding: '10px 18px',
-                                                    borderRadius: '10px',
-                                                    background: accent,
-                                                    color: 'white',
-                                                    fontWeight: 800,
-                                                    border: 'none',
-                                                    cursor: 'pointer',
-                                                }}
+                                                style={{ padding: '10px 18px', borderRadius: '10px', background: accent, color: 'white', fontWeight: 800, border: 'none', cursor: 'pointer' }}
                                             >
-                                                📥 Export to Excel
+                                                Export
                                             </button>
                                         </div>
-                                        <div style={{ border: '1px solid #e2e8f0', borderRadius: '12px', overflow: 'hidden', background: 'white' }}>
-                                            <div style={{
-                                                display: 'grid',
-                                                gridTemplateColumns: '80px 220px 160px 1fr 140px 50px',
-                                                gap: '12px',
-                                                padding: '14px 16px',
-                                                background: '#f8fafc',
-                                                borderBottom: '1px solid #e2e8f0',
-                                                fontSize: '0.8rem',
-                                                fontWeight: 800,
-                                                color: '#64748b',
-                                                textTransform: 'uppercase',
-                                            }}>
-                                                <div>SR NO</div>
-                                                <div>AR NUMBER</div>
-                                                <div>MATERIAL CODE</div>
-                                                <div>MATERIAL NAME</div>
-                                                <div>BATCHES</div>
-                                                <div />
-                                            </div>
-                                            {arRows.map((a, idx) => {
-                                                const isOpen = expandedPmCoaArNumbers.has(a.ar);
-                                                const batchLabel = `${a.batchCount} ${a.batchCount === 1 ? 'batch' : 'batches'}`;
-                                                return (
-                                                    <div key={`${a.ar}-${idx}`} style={{ borderBottom: '1px solid #eef2f7' }}>
-                                                        <div
-                                                            onClick={() => setExpandedPmCoaArNumbers(prev => {
-                                                                const next = new Set(prev);
-                                                                if (next.has(a.ar)) next.delete(a.ar);
-                                                                else next.add(a.ar);
-                                                                return next;
-                                                            })}
-                                                            style={{
-                                                                display: 'grid',
-                                                                gridTemplateColumns: '80px 220px 160px 1fr 140px 50px',
-                                                                gap: '12px',
-                                                                padding: '14px 16px',
-                                                                alignItems: 'center',
-                                                                cursor: 'pointer',
-                                                                background: isOpen ? '#ecfeff' : 'white',
-                                                            }}
-                                                        >
-                                                            <div style={{ color: '#64748b', fontWeight: 800 }}>{idx + 1}.</div>
-                                                            <div style={{
-                                                                fontFamily: 'monospace',
-                                                                fontWeight: 900,
-                                                                color: accent,
-                                                                background: accentBg,
-                                                                padding: '6px 10px',
-                                                                borderRadius: '10px',
-                                                                width: 'fit-content',
-                                                            }}>
-                                                                {a.ar}
-                                                            </div>
-                                                            <div style={{ fontFamily: 'monospace', fontWeight: 800, color: '#334155' }}>{a.materialCode}</div>
-                                                            <div style={{ color: '#334155', fontWeight: 700 }}>{a.materialName}</div>
-                                                            <div style={{ color: '#334155', fontWeight: 800 }}>{batchLabel}</div>
-                                                            <div style={{ textAlign: 'center', color: '#94a3b8', fontSize: '1rem' }}>{isOpen ? '▲' : '▼'}</div>
-                                                        </div>
-                                                        {isOpen && (
-                                                            <div style={{ background: '#f0f9ff', padding: '0 16px 14px 16px' }}>
-                                                                <div style={{ padding: '12px 0', color: '#64748b', fontWeight: 800, fontSize: '0.8rem' }}>
-                                                                    Lines for {a.ar}
-                                                                </div>
-                                                                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem', background: 'white', border: '1px solid #e2e8f0', borderRadius: '10px', overflow: 'hidden' }}>
-                                                                    <thead>
-                                                                        <tr style={{ background: '#e0f2fe', borderBottom: '1px solid #bae6fd' }}>
-                                                                            <th style={{ padding: '10px 12px', textAlign: 'left' }}>Batch</th>
-                                                                            <th style={{ padding: '10px 12px', textAlign: 'left' }}>MFC</th>
-                                                                            <th style={{ padding: '10px 12px', textAlign: 'left' }}>Expiry</th>
-                                                                            <th style={{ padding: '10px 12px', textAlign: 'right' }}>Qty</th>
+
+                                        <div style={{ background: '#f9fafb', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+                                            <div style={{ overflowX: 'auto' }}>
+                                                <table style={{ width: '100%', minWidth: '1100px', borderCollapse: 'collapse' }}>
+                                                    <thead>
+                                                        <tr style={{ background: '#f3f4f6', borderBottom: '2px solid #e5e7eb' }}>
+                                                            {['AR No', 'MFC No', 'Product Name', 'Batch', 'Batch Size', 'MFG Date', 'Expiry', 'Dept', 'Make'].map((label, i) => (
+                                                                <th key={label} style={{ padding: '10px 8px', textAlign: 'left', fontWeight: 700, fontSize: '0.75rem', color: '#4b5563', background: i === 0 ? '#e0f2fe' : '#f3f4f6', whiteSpace: 'nowrap' }}>
+                                                                    {label}
+                                                                </th>
+                                                            ))}
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        {filteredArTableRows.map((r: any, idx: number) => {
+                                                            const isOpen = expandedPmCoaArNumbers.has(r.arNo);
+                                                            const detailBatches: any[] = Array.isArray(r.batches) ? r.batches : [];
+                                                            const detailRows = detailBatches.map((bn: string) => {
+                                                                const meta = batchMetaMap.get(normBatch(bn)) || {};
+                                                                const lines = (r.items || []).filter((it: any) => normBatch(it?.batchNumber) === normBatch(bn));
+                                                                const qty = lines.reduce((sum: number, it: any) => sum + (typeof it?.quantityToIssue === 'number' ? it.quantityToIssue : 0), 0);
+                                                                const expiry = (lines.find((it: any) => (it?.expiryDate || '').toString().trim())?.expiryDate || meta.expiryDate || 'N/A').toString();
+                                                                const mats = Array.from(new Set(lines.map((it: any) => (it?.materialCode || '').toString().trim()).filter(Boolean)));
+                                                                const reqs = Array.from(new Set(lines.map((it: any) => (it?.matReqNo || '').toString().trim()).filter(Boolean)));
+                                                                return {
+                                                                    batchNumber: bn,
+                                                                    mfcNo: (meta.itemCode && itemCodeToMfc.get(meta.itemCode)) || r.mfcNo || 'N/A',
+                                                                    productName: meta.itemName || r.productName || 'N/A',
+                                                                    batchSize: meta.batchSize || 'N/A',
+                                                                    mfgDate: meta.mfgDate || 'N/A',
+                                                                    expiryDate: expiry || 'N/A',
+                                                                    department: meta.department || 'N/A',
+                                                                    make: meta.make || 'N/A',
+                                                                    qty,
+                                                                    materials: mats.join(', ') || '—',
+                                                                    reqNos: reqs.join(', ') || '—',
+                                                                };
+                                                            });
+
+                                                            return (
+                                                                <React.Fragment key={`${r.arNo}-${idx}`}>
+                                                                    <tr
+                                                                        onClick={() => setExpandedPmCoaArNumbers(prev => {
+                                                                            const next = new Set(prev);
+                                                                            if (next.has(r.arNo)) next.delete(r.arNo);
+                                                                            else next.add(r.arNo);
+                                                                            return next;
+                                                                        })}
+                                                                        style={{ cursor: 'pointer', background: isOpen ? '#ecfeff' : (idx % 2 === 0 ? 'white' : '#fafafa'), borderBottom: '1px solid #f3f4f6' }}
+                                                                        title="Click to expand batch details"
+                                                                    >
+                                                                        <td style={{ padding: '8px', background: '#e0f2fe', fontFamily: 'monospace', fontWeight: 900, color: pmCoaModalType === 'qualified' ? '#0369a1' : '#b91c1c' }}>{r.arNo}</td>
+                                                                        <td style={{ padding: '8px', fontFamily: 'monospace', fontWeight: 700, color: '#f97316' }}>{r.mfcNo}</td>
+                                                                        <td style={{ padding: '8px', fontWeight: 600, color: '#111827' }}>{r.productName}</td>
+                                                                        <td style={{ padding: '8px', fontFamily: 'monospace', fontWeight: 800, color: '#0f172a' }}>{r.batch}</td>
+                                                                        <td style={{ padding: '8px', fontWeight: 700, color: '#7c3aed' }}>{r.batchSize}</td>
+                                                                        <td style={{ padding: '8px', fontFamily: 'monospace', color: '#64748b' }}>{r.mfgDate}</td>
+                                                                        <td style={{ padding: '8px', fontFamily: 'monospace', color: '#dc2626', fontWeight: 700 }}>{r.expiryDate}</td>
+                                                                        <td style={{ padding: '8px', color: '#0891b2', fontWeight: 600 }}>{r.department}</td>
+                                                                        <td style={{ padding: '8px', color: '#6b7280', fontWeight: 600 }}>{r.make}</td>
+                                                                    </tr>
+                                                                    {isOpen && (
+                                                                        <tr style={{ background: '#f8fafc' }}>
+                                                                            <td colSpan={9} style={{ padding: '12px 14px' }}>
+                                                                                <div style={{ fontWeight: 800, color: '#334155', marginBottom: '10px' }}>
+                                                                                    Batches for AR: <span style={{ fontFamily: 'monospace' }}>{r.arNo}</span>
+                                                                                </div>
+                                                                                {(() => {
+                                                                                    const allLines = Array.isArray(r.items) ? r.items : [];
+                                                                                    const totalQty = allLines.reduce((sum: number, it: any) => sum + (typeof it?.quantityToIssue === 'number' ? it.quantityToIssue : 0), 0);
+                                                                                    const matCodes = new Set(allLines.map((it: any) => (it?.materialCode || '').toString().trim()).filter(Boolean));
+                                                                                    const reqNos = new Set(allLines.map((it: any) => (it?.matReqNo || '').toString().trim()).filter(Boolean));
+                                                                                    return (
+                                                                                        <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: '10px' }}>
+                                                                                            <div style={{ padding: '6px 10px', borderRadius: '999px', background: '#e0f2fe', color: '#0369a1', fontWeight: 900 }}>
+                                                                                                {detailRows.length.toLocaleString()} batches
+                                                                                            </div>
+                                                                                            <div style={{ padding: '6px 10px', borderRadius: '999px', background: '#ecfdf5', color: '#047857', fontWeight: 900 }}>
+                                                                                                Qty {Number(totalQty || 0).toLocaleString()}
+                                                                                            </div>
+                                                                                            <div style={{ padding: '6px 10px', borderRadius: '999px', background: '#f5f3ff', color: '#6d28d9', fontWeight: 900 }}>
+                                                                                                {matCodes.size.toLocaleString()} material codes
+                                                                                            </div>
+                                                                                            <div style={{ padding: '6px 10px', borderRadius: '999px', background: '#fff7ed', color: '#9a3412', fontWeight: 900 }}>
+                                                                                                {reqNos.size.toLocaleString()} req nos
+                                                                                            </div>
+                                                                                            <div style={{ padding: '6px 10px', borderRadius: '999px', background: '#f1f5f9', color: '#334155', fontWeight: 900 }}>
+                                                                                                {allLines.length.toLocaleString()} lines
+                                                                                            </div>
+                                                                                        </div>
+                                                                                    );
+                                                                                })()}
+                                                                                <div style={{ overflowX: 'auto' }}>
+                                                                                    <table style={{ width: '100%', minWidth: '520px', borderCollapse: 'collapse', background: 'white', border: '1px solid #e2e8f0', borderRadius: '10px', overflow: 'hidden' }}>
+                                                                                        <thead>
+                                                                                            <tr style={{ background: '#e0f2fe', borderBottom: '1px solid #bae6fd' }}>
+                                                                                                {['Batch No', 'Qty', 'Material Codes', 'Req Nos'].map(h => (
+                                                                                                    <th key={h} style={{ padding: '10px 10px', textAlign: 'left', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.04em', color: '#475569', whiteSpace: 'nowrap' }}>{h}</th>
+                                                                                                ))}
+                                                                                            </tr>
+                                                                                        </thead>
+                                                                                        <tbody>
+                                                                                            {detailRows.length === 0 ? (
+                                                                                                <tr>
+                                                                                                    <td colSpan={4} style={{ padding: '14px', color: '#64748b', fontWeight: 600 }}>
+                                                                                                        No batch details found for this AR.
+                                                                                                    </td>
+                                                                                                </tr>
+                                                                                            ) : (
+                                                                                                detailRows.map((d, i) => (
+                                                                                                    <tr key={`${d.batchNumber}-${i}`} style={{ borderBottom: '1px solid #e2e8f0' }}>
+                                                                                                        <td style={{ padding: '10px 10px', fontFamily: 'monospace', fontWeight: 900 }}>{d.batchNumber}</td>
+                                                                                                        <td style={{ padding: '10px 10px', textAlign: 'left', color: '#059669', fontWeight: 900 }}>{Number(d.qty || 0).toLocaleString()}</td>
+                                                                                                        <td style={{ padding: '10px 10px', fontFamily: 'monospace', color: '#334155' }}>{d.materials}</td>
+                                                                                                        <td style={{ padding: '10px 10px', fontFamily: 'monospace', color: '#64748b' }}>{d.reqNos}</td>
+                                                                                                    </tr>
+                                                                                                ))
+                                                                                            )}
+                                                                                        </tbody>
+                                                                                    </table>
+                                                                                </div>
+                                                                            </td>
                                                                         </tr>
-                                                                    </thead>
-                                                                    <tbody>
-                                                                        {a.items.map((it: any, i: number) => (
-                                                                            <tr key={i} style={{ borderBottom: '1px solid #e2e8f0' }}>
-                                                                                <td style={{ padding: '10px 12px', fontFamily: 'monospace', fontWeight: 900 }}>{it.batchNumber}</td>
-                                                                                <td style={{ padding: '10px 12px', fontFamily: 'monospace' }}>{it.formulaMfc || it.mfcNo || 'N/A'}</td>
-                                                                                <td style={{ padding: '10px 12px', fontFamily: 'monospace', color: '#64748b' }}>{it.expiryDate || 'N/A'}</td>
-                                                                                <td style={{ padding: '10px 12px', textAlign: 'right', color: '#059669', fontWeight: 700 }}>{(it.quantityToIssue || 0).toLocaleString()}</td>
-                                                                            </tr>
-                                                                        ))}
-                                                                    </tbody>
-                                                                </table>
-                                                            </div>
-                                                        )}
-                                                    </div>
-                                                );
-                                            })}
+                                                                    )}
+                                                                </React.Fragment>
+                                                            );
+                                                        })}
+                                                    </tbody>
+                                                </table>
+                                            </div>
                                         </div>
                                     </>
                                 );
@@ -20465,7 +21330,6 @@ export default function FormulaDataPage() {
                                         ? (['main', 'lowBatch', 'noBatch', 'placebo'] as const).reduce((a, s) => a + sectionBulkCoaData[s][k], 0)
                                         : sectionBulkCoaData[bulkCoaModalSection][k];
                                 const tealBatches = sectionBatchTotal > 0 ? sectionBatchTotal : batchFromModal;
-                                const totalRecords = rows.length;
                                 return (
                                     <>
                                         <div style={{ display: 'flex', gap: '18px', flexWrap: 'wrap', marginBottom: '12px' }}>
@@ -20474,7 +21338,7 @@ export default function FormulaDataPage() {
                                                     {uniqueAr.toLocaleString()}
                                                 </span>
                                                 <span style={{ color: '#64748b', fontWeight: 600 }}>
-                                                    Unique AR Numbers {bulkCoaModalType === 'matched' ? '(Found)' : '(Missing)'}
+                                                    AR Numbers {bulkCoaModalType === 'matched' ? '(Found)' : '(Missing)'}
                                                 </span>
                                             </div>
                                             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -20495,12 +21359,7 @@ export default function FormulaDataPage() {
                                                 </span>
                                                 <span style={{ color: '#64748b', fontWeight: 600 }}>Unique Batches</span>
                                             </div>
-                                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                                <span style={{ padding: '6px 14px', background: '#0e7490', color: 'white', borderRadius: '8px', fontWeight: 800 }}>
-                                                    {totalRecords.toLocaleString()}
-                                                </span>
-                                                <span style={{ color: '#64748b', fontWeight: 600 }}>Total Records</span>
-                                            </div>
+                                            
                                         </div>
                                         <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
                                             <div style={{ position: 'relative' }}>
@@ -20787,7 +21646,7 @@ export default function FormulaDataPage() {
                                                     {bulkCoaModalType === 'matched' ? 'PRODUCT NAME' : 'ITEM NAME'} <SortIcon col="materialName" />
                                                 </div>
                                                 <div onClick={() => toggleSort('uniqueArCount')} style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                                                    UNIQUE AR <SortIcon col="uniqueArCount" />
+                                                    AR <SortIcon col="uniqueArCount" />
                                                 </div>
                                                 <div onClick={() => toggleSort('records')} style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>
                                                     RECORDS <SortIcon col="records" />
@@ -21566,7 +22425,6 @@ export default function FormulaDataPage() {
                                         ? (['main', 'lowBatch', 'noBatch', 'placebo'] as const).reduce((a, s) => a + sectionFinishCoaData[s][k], 0)
                                         : sectionFinishCoaData[finishCoaModalSection][k];
                                 const tealBatches = sectionBatchTotal > 0 ? sectionBatchTotal : batchFromModal;
-                                const totalRecords = rows.length;
                                 return (
                                     <>
                                         <div style={{ display: 'flex', gap: '18px', flexWrap: 'wrap', marginBottom: '12px' }}>
@@ -21575,7 +22433,7 @@ export default function FormulaDataPage() {
                                                     {uniqueAr.toLocaleString()}
                                                 </span>
                                                 <span style={{ color: '#64748b', fontWeight: 600 }}>
-                                                    Unique AR Numbers {finishCoaModalType === 'matched' ? '(Found)' : '(Missing)'}
+                                                    AR Numbers {finishCoaModalType === 'matched' ? '(Found)' : '(Missing)'}
                                                 </span>
                                             </div>
                                             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -21596,12 +22454,7 @@ export default function FormulaDataPage() {
                                                 </span>
                                                 <span style={{ color: '#64748b', fontWeight: 600 }}>All batch rows</span>
                                             </div>
-                                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                                <span style={{ padding: '6px 14px', background: '#0e7490', color: 'white', borderRadius: '8px', fontWeight: 800 }}>
-                                                    {totalRecords.toLocaleString()}
-                                                </span>
-                                                <span style={{ color: '#64748b', fontWeight: 600 }}>Total Records</span>
-                                            </div>
+                                            
                                         </div>
                                         <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
                                             <div style={{ position: 'relative' }}>
@@ -21777,6 +22630,28 @@ export default function FormulaDataPage() {
                                             {finishCoaViewMode === 'batch'
                                                 ? `Showing ${(finishCoaSearchQuery.trim() ? filteredData.length : scopeBatchTotalFinish).toLocaleString()} batch rows`
                                                 : `Showing ${filteredData.length.toLocaleString()} records`}
+                                        </div>
+                                        <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                                            <button
+                                                type="button"
+                                                onClick={() => exportFinishCoaModalToExcel(filteredData)}
+                                                title="Export current view to Excel"
+                                                style={{
+                                                    padding: '8px 12px',
+                                                    borderRadius: '10px',
+                                                    border: '1px solid #cbd5e1',
+                                                    background: 'white',
+                                                    cursor: 'pointer',
+                                                    fontWeight: 800,
+                                                    color: '#0f172a',
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    gap: '8px',
+                                                    boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
+                                                }}
+                                            >
+                                                📥 Export to Excel
+                                            </button>
                                         </div>
                                     </div>
                                 );
@@ -22336,7 +23211,7 @@ export default function FormulaDataPage() {
                                                 <div>SR NO</div>
                                                 <div>{finishCoaModalType === 'matched' ? 'PRODUCT CODE' : 'ITEM CODE'}</div>
                                                 <div>{finishCoaModalType === 'matched' ? 'PRODUCT NAME' : 'ITEM NAME'}</div>
-                                                <div style={{ textAlign: 'center' }}>UNIQUE AR</div>
+                                                <div style={{ textAlign: 'center' }}>AR</div>
                                                 <div style={{ textAlign: 'right' }}>RECORDS</div>
                                                 <div></div>
                                             </div>
@@ -22551,8 +23426,6 @@ export default function FormulaDataPage() {
                                     rmCoaModalType === 'matched' ? arCapsule.found : arCapsule.missing;
                                 const matSet = new Set(rows.map(r => (r.materialCode || '').toString().trim()).filter(Boolean));
                                 const batchSet = new Set(rows.map(r => (r.batchNorm || r.batchNumber || '').toString().trim()).filter(Boolean));
-                                const totalRecords = rows.length;
-
                                 return (
                                     <>
                                         <div style={{ display: 'flex', gap: '18px', flexWrap: 'wrap', marginBottom: '12px' }}>
@@ -22561,7 +23434,7 @@ export default function FormulaDataPage() {
                                                     {uniqueArForModal.toLocaleString()}
                                                 </span>
                                                 <span style={{ color: '#64748b', fontWeight: 600 }}>
-                                                    Unique AR Numbers {rmCoaModalType === 'matched' ? '(Found)' : '(Missing)'}
+                                                    AR Numbers {rmCoaModalType === 'matched' ? '(Found)' : '(Missing)'}
                                                 </span>
                                             </div>
                                             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -22576,12 +23449,7 @@ export default function FormulaDataPage() {
                                                 </span>
                                                 <span style={{ color: '#64748b', fontWeight: 600 }}>Unique Batches</span>
                                             </div>
-                                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                                <span style={{ padding: '6px 14px', background: '#0e7490', color: 'white', borderRadius: '8px', fontWeight: 800 }}>
-                                                    {totalRecords.toLocaleString()}
-                                                </span>
-                                                <span style={{ color: '#64748b', fontWeight: 600 }}>Total Records</span>
-                                            </div>
+                                            
                                         </div>
 
                                         <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
@@ -22719,13 +23587,13 @@ export default function FormulaDataPage() {
                                     });
 
                                     const exportCurrent = () => {
-                                        handleExportToExcel(
+                                        exportRmCoaToExcelEnsureAr(
                                             rows,
                                             `RM_COA_${rmCoaModalType === 'matched' ? 'Found' : 'Missing'}_${new Date().toISOString().split('T')[0]}`
                                         );
                                     };
 
-                                    /** Same reconciled AR tokens as header capsules; used to filter AR View so row count matches Unique AR Numbers. */
+                                    /** Same reconciled AR tokens as header capsules; used to filter AR View so row count matches AR Numbers. */
                                     const rmCoaReconciledArAllowSet = (() => {
                                         const kind = rmCoaModalType === 'matched' ? 'found' : 'missing';
                                         if (rmCoaModalSection !== 'all') {
@@ -22884,7 +23752,12 @@ export default function FormulaDataPage() {
                                                         Showing {filteredBatchRows.length.toLocaleString()} batches
                                                     </div>
                                                     <button
-                                                        onClick={() => handleExportToExcel(filteredBatchRows, `RM_COA_Batch_${rmCoaModalType}_${new Date().toISOString().split('T')[0]}`)}
+                                                        onClick={() =>
+                                                            exportRmCoaToExcelEnsureAr(
+                                                                filteredBatchRows,
+                                                                `RM_COA_Batch_${rmCoaModalType}_${new Date().toISOString().split('T')[0]}`
+                                                            )
+                                                        }
                                                         style={{
                                                             padding: '10px 18px',
                                                             borderRadius: '10px',
@@ -23006,151 +23879,369 @@ export default function FormulaDataPage() {
                                     }
 
                                     if (rmCoaViewMode === 'ar') {
+                                        const normBatch = (b: any) => (b || '').toString().trim().toUpperCase();
+                                        const normCode = (c: any) => (c || '').toString().trim().toUpperCase();
+
+                                        // Batch meta from Batch Creation (same data used across Formula Data views)
+                                        const batchMetaMap = new Map<string, any>();
+                                        (yearFilteredBatches as any[]).forEach(b => {
+                                            const bn = normBatch(b?.batchNumber);
+                                            if (!bn || batchMetaMap.has(bn)) return;
+                                            batchMetaMap.set(bn, {
+                                                itemCode: normCode(b?.itemCode),
+                                                itemName: (b?.itemName || '').toString().trim() || 'N/A',
+                                                batchSize: b?.batchSize != null && b?.batchSize !== '' ? String(b.batchSize) : 'N/A',
+                                                mfgDate: (b?.mfgDate || '').toString().trim() || 'N/A',
+                                                expiryDate: (b?.expiryDate || '').toString().trim() || 'N/A',
+                                                department: (b?.department || '').toString().trim() || 'N/A',
+                                                make: (b?.make || '').toString().trim() || 'N/A',
+                                            });
+                                        });
+
+                                        // ItemCode -> MFC mapping from formulas
+                                        const itemCodeToMfc = new Map<string, string>();
+                                        const getFormulaCodes = (f: any): string[] => {
+                                            const codes: string[] = [];
+                                            const mainCode = f?.masterFormulaDetails?.productCode;
+                                            if (mainCode && mainCode !== 'N/A') codes.push(normCode(mainCode));
+                                            (f?.fillingDetails || []).forEach((fd: any) => {
+                                                const pc = fd?.productCode;
+                                                if (pc && pc !== 'N/A') codes.push(normCode(pc));
+                                            });
+                                            (f?.processes || []).forEach((p: any) => {
+                                                (p?.fillingProducts || []).forEach((fp: any) => {
+                                                    const pc = fp?.productCode;
+                                                    if (pc) codes.push(normCode(pc));
+                                                });
+                                            });
+                                            return Array.from(new Set(codes.filter(Boolean)));
+                                        };
+                                        (formulas as any[]).forEach((f: any) => {
+                                            const mfc = (f?.masterFormulaDetails?.masterCardNo || '').toString().trim().toUpperCase();
+                                            if (!mfc) return;
+                                            getFormulaCodes(f).forEach(code => {
+                                                if (!itemCodeToMfc.has(code)) itemCodeToMfc.set(code, mfc);
+                                            });
+                                        });
+
+                                        // Build AR -> verification rows map (filtered to reconciled allow-set)
                                         const byAr = new Map<string, any[]>();
-                                        rows.forEach(r => {
+                                        rows.forEach((r: any) => {
                                             splitArNumbers(r.arNo).forEach(arTok => {
                                                 if (!rmCoaReconciledArAllowSet.has(arTok)) return;
                                                 if (!byAr.has(arTok)) byAr.set(arTok, []);
                                                 byAr.get(arTok)!.push(r);
                                             });
                                         });
-                                        const arRows = Array.from(byAr.entries())
+
+                                        const joinBatches = (arr: string[], max = 3) => {
+                                            if (arr.length <= max) return arr.join(', ');
+                                            return `${arr.slice(0, max).join(', ')} +${arr.length - max} more`;
+                                        };
+
+                                        const arTableRows = Array.from(byAr.entries())
                                             .sort((a, b) => a[0].localeCompare(b[0]))
                                             .map(([ar, items]) => {
-                                            const batchSet = new Set(items.map(i => (i.batchNumber || '').toString()).filter(Boolean));
-                                            const matSet = new Set(items.map(i => (i.materialCode || '').toString()).filter(Boolean));
-                                            const first = items[0] || {};
-                                            return {
-                                                ar,
-                                                items,
-                                                batchCount: batchSet.size,
-                                                materialCode: first.materialCode || (Array.from(matSet.values())[0] || 'N/A'),
-                                                materialName: first.materialName || 'N/A',
-                                            };
-                                        });
-                                        const arHeaderRow = (
-                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                                                <div style={{ color: '#64748b', fontWeight: 700 }}>
-                                                    Showing {arRows.length.toLocaleString()} unique AR numbers
-                                                    {arRows.length !== rmCoaReconciledArAllowSet.size ? (
-                                                        <span style={{ fontWeight: 500, marginLeft: '8px', fontSize: '0.85rem' }}>
-                                                            (header: {rmCoaReconciledArAllowSet.size.toLocaleString()} — drill may omit some lines)
-                                                        </span>
-                                                    ) : null}
-                                                </div>
-                                                <button
-                                                    onClick={exportCurrent}
-                                                    style={{
-                                                        padding: '10px 18px',
-                                                        borderRadius: '10px',
-                                                        background: rmCoaModalType === 'matched' ? '#0891b2' : '#dc2626',
-                                                        color: 'white',
-                                                        fontWeight: 800,
-                                                        border: 'none',
-                                                        cursor: 'pointer',
-                                                        display: 'flex',
-                                                        alignItems: 'center',
-                                                        gap: '8px'
-                                                    }}
-                                                >
-                                                    📥 Export to Excel
-                                                </button>
-                                            </div>
+                                                const batches = Array.from(new Set(items.map((i: any) => normBatch(i?.batchNumber)).filter(Boolean))).sort();
+                                                const firstBatch = batches[0] || '';
+                                                const meta = firstBatch ? batchMetaMap.get(firstBatch) : null;
+                                                const itemCode = meta?.itemCode || '';
+                                                const mfcNo = (itemCode && itemCodeToMfc.get(itemCode)) || 'N/A';
+                                                const productName = meta?.itemName || 'N/A';
+                                                return {
+                                                    arNo: ar,
+                                                    mfcNo,
+                                                    productName,
+                                                    batch: joinBatches(batches, 3) || 'N/A',
+                                                    batches,
+                                                    items,
+                                                    batchSize: meta?.batchSize || 'N/A',
+                                                    mfgDate: meta?.mfgDate || 'N/A',
+                                                    expiryDate: meta?.expiryDate || 'N/A',
+                                                    department: meta?.department || 'N/A',
+                                                    make: meta?.make || 'N/A',
+                                                };
+                                            });
+
+                                        const filteredArTableRows = filterRowsBySearch(
+                                            arTableRows,
+                                            rmCoaSearchQuery,
+                                            rmCoaSearchField,
+                                            ['arNo', 'mfcNo', 'productName', 'batch', 'batchSize', 'mfgDate', 'expiryDate', 'department', 'make']
                                         );
+
                                         return (
                                             <>
-                                                {arHeaderRow}
-                                                <div style={{ border: '1px solid #e2e8f0', borderRadius: '12px', overflow: 'hidden', background: 'white' }}>
-                                                    <div style={{
-                                                        display: 'grid',
-                                                        gridTemplateColumns: '80px 220px 160px 1fr 140px 50px',
-                                                        gap: '12px',
-                                                        padding: '14px 16px',
-                                                        background: '#f8fafc',
-                                                        borderBottom: '1px solid #e2e8f0',
-                                                        fontSize: '0.8rem',
-                                                        fontWeight: 800,
-                                                        color: '#64748b',
-                                                        textTransform: 'uppercase',
-                                                    }}>
-                                                        <div>SR NO</div>
-                                                        <div>AR NUMBER</div>
-                                                        <div>MATERIAL CODE</div>
-                                                        <div>MATERIAL NAME</div>
-                                                        <div style={{ textAlign: 'left' }}>BATCHES</div>
-                                                        <div />
+                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                                                    <div style={{ color: '#64748b', fontWeight: 700 }}>
+                                                        Showing {filteredArTableRows.length.toLocaleString()} AR numbers
                                                     </div>
+                                                    <button
+                                                        onClick={() => {
+                                                            if (!filteredArTableRows || filteredArTableRows.length === 0) return;
 
-                                                    {arRows.map((a, idx) => {
-                                                        const isOpen = expandedRmCoaArNumbers.has(a.ar);
-                                                        const batchLabel = `${a.batchCount} ${a.batchCount === 1 ? 'batch' : 'batches'}`;
-                                                        return (
-                                                            <div key={`${a.ar}-${idx}`} style={{ borderBottom: '1px solid #eef2f7' }}>
-                                                                <div
-                                                                    onClick={() => setExpandedRmCoaArNumbers(prev => {
-                                                                        const next = new Set(prev);
-                                                                        if (next.has(a.ar)) next.delete(a.ar);
-                                                                        else next.add(a.ar);
-                                                                        return next;
-                                                                    })}
-                                                                    style={{
-                                                                        display: 'grid',
-                                                                        gridTemplateColumns: '80px 220px 160px 1fr 140px 50px',
-                                                                        gap: '12px',
-                                                                        padding: '14px 16px',
-                                                                        alignItems: 'center',
-                                                                        cursor: 'pointer',
-                                                                        background: isOpen ? '#ecfeff' : 'white',
-                                                                    }}
-                                                                >
-                                                                    <div style={{ color: '#64748b', fontWeight: 800 }}>{idx + 1}.</div>
-                                                                    <div style={{
-                                                                        fontFamily: 'monospace',
-                                                                        fontWeight: 900,
-                                                                        color: rmCoaModalType === 'matched' ? '#0891b2' : '#dc2626',
-                                                                        background: rmCoaModalType === 'matched' ? '#cffafe' : '#fee2e2',
-                                                                        padding: '6px 10px',
-                                                                        borderRadius: '10px',
-                                                                        width: 'fit-content',
-                                                                    }}>
-                                                                        {a.ar}
-                                                                    </div>
-                                                                    <div style={{ fontFamily: 'monospace', fontWeight: 800, color: '#334155' }}>{a.materialCode}</div>
-                                                                    <div style={{ color: '#334155', fontWeight: 700 }}>{a.materialName}</div>
-                                                                    <div style={{ color: '#334155', fontWeight: 800 }}>{batchLabel}</div>
-                                                                    <div style={{ textAlign: 'center', color: '#94a3b8', fontSize: '1rem' }}>{isOpen ? '▲' : '▼'}</div>
-                                                                </div>
+                                                            const dateStr = new Date().toISOString().split('T')[0];
+                                                            const wb = XLSX.utils.book_new();
 
-                                                                {isOpen && (
-                                                                    <div style={{ background: '#f0f9ff', padding: '0 16px 14px 16px' }}>
-                                                                        <div style={{ padding: '12px 0', color: '#64748b', fontWeight: 800, fontSize: '0.8rem' }}>
-                                                                            Batches for {a.ar}
-                                                                        </div>
-                                                                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem', background: 'white', border: '1px solid #e2e8f0', borderRadius: '10px', overflow: 'hidden' }}>
-                                                                            <thead>
-                                                                                <tr style={{ background: '#e0f2fe', borderBottom: '1px solid #bae6fd' }}>
-                                                                                    <th style={{ padding: '10px 12px', textAlign: 'left' }}>Batch</th>
-                                                                                    <th style={{ padding: '10px 12px', textAlign: 'left' }}>Material Code</th>
-                                                                                    <th style={{ padding: '10px 12px', textAlign: 'left' }}>Material Name</th>
-                                                                                    <th style={{ padding: '10px 12px', textAlign: 'left' }}>Req No</th>
+                                                            const asText = (v: any) => {
+                                                                const s = (v ?? '').toString();
+                                                                return s ? `'${s}` : '';
+                                                            };
+
+                                                            const summaryRows = filteredArTableRows.map((r: any, idx: number) => ({
+                                                                'SR No.': idx + 1,
+                                                                'AR Number': asText(r.arNo || ''),
+                                                                'MFC No': asText(r.mfcNo || 'N/A'),
+                                                                'Product Name': r.productName || 'N/A',
+                                                                'Batch Count': Array.isArray(r.batches) ? r.batches.length : 0,
+                                                                'Batches (all)': Array.isArray(r.batches) ? r.batches.join(', ') : (r.batch || 'N/A'),
+                                                                'Batch Size': r.batchSize || 'N/A',
+                                                                'MFG Date': r.mfgDate || 'N/A',
+                                                                'Expiry Date': r.expiryDate || 'N/A',
+                                                                'Dept': r.department || 'N/A',
+                                                                'Make': r.make || 'N/A',
+                                                                Lines: Array.isArray(r.items) ? r.items.length : 0,
+                                                            }));
+
+                                                            const wsSummary = XLSX.utils.json_to_sheet(summaryRows);
+                                                            {
+                                                                const headers = Object.keys(summaryRows[0] || {});
+                                                                const widths = headers.map((h) => Math.max(h.length, 12));
+                                                                summaryRows.forEach((rr: any) => {
+                                                                    headers.forEach((h, idx) => {
+                                                                        const len = (rr?.[h] ?? '').toString().length;
+                                                                        widths[idx] = Math.min(80, Math.max(widths[idx], len));
+                                                                    });
+                                                                });
+                                                                (wsSummary as any)['!cols'] = widths.map((wch) => ({ wch }));
+                                                            }
+                                                            XLSX.utils.book_append_sheet(wb, wsSummary, 'AR Summary');
+
+                                                            const detailsRows: any[] = [];
+                                                            filteredArTableRows.forEach((r: any) => {
+                                                                const arNo = (r.arNo || '').toString();
+                                                                const detailBatches: string[] = Array.isArray(r.batches) ? r.batches : [];
+                                                                detailBatches.forEach((bn: string) => {
+                                                                    const bnNorm = normBatch(bn);
+                                                                    const meta = batchMetaMap.get(bnNorm) || {};
+                                                                    const lines = (r.items || []).filter(
+                                                                        (it: any) => normBatch(it?.batchNumber) === bnNorm
+                                                                    );
+                                                                    const mats = Array.from(
+                                                                        new Set(
+                                                                            lines
+                                                                                .map((it: any) => (it?.materialCode || '').toString().trim())
+                                                                                .filter(Boolean)
+                                                                        )
+                                                                    );
+                                                                    const matNames = Array.from(
+                                                                        new Set(
+                                                                            lines
+                                                                                .map((it: any) => (it?.materialName || '').toString().trim())
+                                                                                .filter(Boolean)
+                                                                        )
+                                                                    );
+                                                                    const reqNos = Array.from(
+                                                                        new Set(
+                                                                            lines
+                                                                                .map((it: any) => (it?.matReqNo || '').toString().trim())
+                                                                                .filter(Boolean)
+                                                                        )
+                                                                    );
+
+                                                                    detailsRows.push({
+                                                                        'AR Number': asText(arNo),
+                                                                        'Batch Number': asText(bn),
+                                                                        'MFC No':
+                                                                            asText(
+                                                                                (meta.itemCode && itemCodeToMfc.get(meta.itemCode)) ||
+                                                                                    r.mfcNo ||
+                                                                                    'N/A'
+                                                                            ),
+                                                                        'Product Name': meta.itemName || r.productName || 'N/A',
+                                                                        'Batch Size': meta.batchSize || 'N/A',
+                                                                        'MFG Date': meta.mfgDate || 'N/A',
+                                                                        'Expiry Date': meta.expiryDate || 'N/A',
+                                                                        'Dept': meta.department || 'N/A',
+                                                                        'Make': meta.make || 'N/A',
+                                                                        'Material Codes': mats.join(', ') || '—',
+                                                                        'Material Names': matNames.join(', ') || '—',
+                                                                        'Req Nos': reqNos.join(', ') || '—',
+                                                                        'Line Count': lines.length,
+                                                                    });
+                                                                });
+                                                            });
+
+                                                            const wsDetails = XLSX.utils.json_to_sheet(detailsRows);
+                                                            {
+                                                                const headers = Object.keys(detailsRows[0] || {});
+                                                                const widths = headers.map((h) => Math.max(h.length, 12));
+                                                                detailsRows.forEach((rr: any) => {
+                                                                    headers.forEach((h, idx) => {
+                                                                        const len = (rr?.[h] ?? '').toString().length;
+                                                                        widths[idx] = Math.min(80, Math.max(widths[idx], len));
+                                                                    });
+                                                                });
+                                                                (wsDetails as any)['!cols'] = widths.map((wch) => ({ wch }));
+                                                            }
+                                                            XLSX.utils.book_append_sheet(wb, wsDetails, 'AR Batch Details');
+
+                                                            XLSX.writeFile(wb, `RM_COA_AR_${rmCoaModalType}_${dateStr}.xlsx`);
+                                                        }}
+                                                        style={{
+                                                            padding: '10px 18px',
+                                                            borderRadius: '10px',
+                                                            background: rmCoaModalType === 'matched' ? '#0891b2' : '#dc2626',
+                                                            color: 'white',
+                                                            fontWeight: 800,
+                                                            border: 'none',
+                                                            cursor: 'pointer',
+                                                        }}
+                                                    >
+                                                        Export
+                                                    </button>
+                                                </div>
+                                                <div style={{ background: '#f9fafb', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+                                                    <div style={{ overflowX: 'auto' }}>
+                                                        <table style={{ width: '100%', minWidth: '1100px', borderCollapse: 'collapse' }}>
+                                                            <thead>
+                                                                <tr style={{ background: '#f3f4f6', borderBottom: '2px solid #e5e7eb' }}>
+                                                                    {['AR No', 'MFC No', 'Product Name', 'Batch', 'Batch Size', 'MFG Date', 'Expiry', 'Dept', 'Make'].map((label, i) => (
+                                                                        <th
+                                                                            key={label}
+                                                                            style={{
+                                                                                padding: '10px 8px',
+                                                                                textAlign: 'left',
+                                                                                fontWeight: 700,
+                                                                                fontSize: '0.75rem',
+                                                                                color: '#4b5563',
+                                                                                background: i === 0 ? '#e0f2fe' : '#f3f4f6',
+                                                                                whiteSpace: 'nowrap',
+                                                                            }}
+                                                                        >
+                                                                            {label}
+                                                                        </th>
+                                                                    ))}
+                                                                </tr>
+                                                            </thead>
+                                                            <tbody>
+                                                                {filteredArTableRows.map((r: any, idx: number) => {
+                                                                    const isOpen = expandedRmCoaArNumbers.has(r.arNo);
+                                                                    const detailBatches: any[] = Array.isArray(r.batches) ? r.batches : [];
+                                                                    const detailRows = detailBatches.map((bn: string) => {
+                                                                        const meta = batchMetaMap.get(normBatch(bn)) || {};
+                                                                        const lines = (r.items || []).filter((it: any) => normBatch(it?.batchNumber) === normBatch(bn));
+                                                                        const mats = Array.from(new Set(lines.map((it: any) => (it?.materialCode || '').toString().trim()).filter(Boolean)));
+                                                                        const matNames = Array.from(new Set(lines.map((it: any) => (it?.materialName || '').toString().trim()).filter(Boolean)));
+                                                                        const reqs = Array.from(new Set(lines.map((it: any) => (it?.matReqNo || '').toString().trim()).filter(Boolean)));
+                                                                        return {
+                                                                            batchNumber: bn,
+                                                                            mfcNo: (meta.itemCode && itemCodeToMfc.get(meta.itemCode)) || r.mfcNo || 'N/A',
+                                                                            productName: meta.itemName || r.productName || 'N/A',
+                                                                            batchSize: meta.batchSize || 'N/A',
+                                                                            mfgDate: meta.mfgDate || 'N/A',
+                                                                            expiryDate: meta.expiryDate || 'N/A',
+                                                                            department: meta.department || 'N/A',
+                                                                            make: meta.make || 'N/A',
+                                                                            materials: mats.join(', ') || '—',
+                                                                            materialNames: matNames.join(', ') || '—',
+                                                                            reqNos: reqs.join(', ') || '—',
+                                                                        };
+                                                                    });
+
+                                                                    return (
+                                                                        <React.Fragment key={`${r.arNo}-${idx}`}>
+                                                                            <tr
+                                                                                onClick={() => setExpandedRmCoaArNumbers(prev => {
+                                                                                    const next = new Set(prev);
+                                                                                    if (next.has(r.arNo)) next.delete(r.arNo);
+                                                                                    else next.add(r.arNo);
+                                                                                    return next;
+                                                                                })}
+                                                                                style={{ cursor: 'pointer', background: isOpen ? '#ecfeff' : (idx % 2 === 0 ? 'white' : '#fafafa'), borderBottom: '1px solid #f3f4f6' }}
+                                                                                title="Click to expand batch details"
+                                                                            >
+                                                                                <td style={{ padding: '8px', background: '#e0f2fe', fontFamily: 'monospace', fontWeight: 900, color: rmCoaModalType === 'matched' ? '#0369a1' : '#b91c1c' }}>
+                                                                                    {r.arNo}
+                                                                                </td>
+                                                                                <td style={{ padding: '8px', fontFamily: 'monospace', fontWeight: 700, color: '#f97316' }}>{r.mfcNo}</td>
+                                                                                <td style={{ padding: '8px', fontWeight: 600, color: '#111827' }}>{r.productName}</td>
+                                                                                <td style={{ padding: '8px', fontFamily: 'monospace', fontWeight: 800, color: '#0f172a' }}>{r.batch}</td>
+                                                                                <td style={{ padding: '8px', fontWeight: 700, color: '#7c3aed' }}>{r.batchSize}</td>
+                                                                                <td style={{ padding: '8px', fontFamily: 'monospace', color: '#64748b' }}>{r.mfgDate}</td>
+                                                                                <td style={{ padding: '8px', fontFamily: 'monospace', color: '#dc2626', fontWeight: 700 }}>{r.expiryDate}</td>
+                                                                                <td style={{ padding: '8px', color: '#0891b2', fontWeight: 600 }}>{r.department}</td>
+                                                                                <td style={{ padding: '8px', color: '#6b7280', fontWeight: 600 }}>{r.make}</td>
+                                                                            </tr>
+                                                                            {isOpen && (
+                                                                                <tr style={{ background: '#f8fafc' }}>
+                                                                                    <td colSpan={9} style={{ padding: '12px 14px' }}>
+                                                                                        <div style={{ fontWeight: 800, color: '#334155', marginBottom: '10px' }}>
+                                                                                            Batches for AR: <span style={{ fontFamily: 'monospace' }}>{r.arNo}</span>
+                                                                                        </div>
+                                                                                {(() => {
+                                                                                    const allLines = Array.isArray(r.items) ? r.items : [];
+                                                                                    const matCodes = new Set(allLines.map((it: any) => (it?.materialCode || '').toString().trim()).filter(Boolean));
+                                                                                    const matNames = new Set(allLines.map((it: any) => (it?.materialName || '').toString().trim()).filter(Boolean));
+                                                                                    const reqNos = new Set(allLines.map((it: any) => (it?.matReqNo || '').toString().trim()).filter(Boolean));
+                                                                                    return (
+                                                                                        <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: '10px' }}>
+                                                                                            <div style={{ padding: '6px 10px', borderRadius: '999px', background: '#e0f2fe', color: '#0369a1', fontWeight: 900 }}>
+                                                                                                {detailRows.length.toLocaleString()} batches
+                                                                                            </div>
+                                                                                            <div style={{ padding: '6px 10px', borderRadius: '999px', background: '#ecfdf5', color: '#047857', fontWeight: 900 }}>
+                                                                                                {matCodes.size.toLocaleString()} material codes
+                                                                                            </div>
+                                                                                            <div style={{ padding: '6px 10px', borderRadius: '999px', background: '#f5f3ff', color: '#6d28d9', fontWeight: 900 }}>
+                                                                                                {matNames.size.toLocaleString()} material names
+                                                                                            </div>
+                                                                                            <div style={{ padding: '6px 10px', borderRadius: '999px', background: '#fff7ed', color: '#9a3412', fontWeight: 900 }}>
+                                                                                                {reqNos.size.toLocaleString()} req nos
+                                                                                            </div>
+                                                                                            <div style={{ padding: '6px 10px', borderRadius: '999px', background: '#f1f5f9', color: '#334155', fontWeight: 900 }}>
+                                                                                                {allLines.length.toLocaleString()} lines
+                                                                                            </div>
+                                                                                        </div>
+                                                                                    );
+                                                                                })()}
+                                                                                        <div style={{ overflowX: 'auto' }}>
+                                                                                            <table style={{ width: '100%', minWidth: '760px', borderCollapse: 'collapse', background: 'white', border: '1px solid #e2e8f0', borderRadius: '10px', overflow: 'hidden' }}>
+                                                                                                <thead>
+                                                                                                    <tr style={{ background: '#e0f2fe', borderBottom: '1px solid #bae6fd' }}>
+                                                                                                {['Batch No', 'Material Codes', 'Material Names', 'Req Nos'].map(h => (
+                                                                                                            <th key={h} style={{ padding: '10px 10px', textAlign: 'left', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.04em', color: '#475569', whiteSpace: 'nowrap' }}>{h}</th>
+                                                                                                        ))}
+                                                                                                    </tr>
+                                                                                                </thead>
+                                                                                                <tbody>
+                                                                                                    {detailRows.length === 0 ? (
+                                                                                                        <tr>
+                                                                                                    <td colSpan={4} style={{ padding: '14px', color: '#64748b', fontWeight: 600 }}>
+                                                                                                                No batch details found for this AR.
+                                                                                                            </td>
+                                                                                                        </tr>
+                                                                                                    ) : (
+                                                                                                        detailRows.map((d, i) => (
+                                                                                                            <tr key={`${d.batchNumber}-${i}`} style={{ borderBottom: '1px solid #e2e8f0' }}>
+                                                                                                                <td style={{ padding: '10px 10px', fontFamily: 'monospace', fontWeight: 900 }}>{d.batchNumber}</td>
+                                                                                                                <td style={{ padding: '10px 10px', fontFamily: 'monospace', color: '#334155' }}>{d.materials}</td>
+                                                                                                        <td style={{ padding: '10px 10px', color: '#334155' }}>{d.materialNames}</td>
+                                                                                                                <td style={{ padding: '10px 10px', fontFamily: 'monospace', color: '#64748b' }}>{d.reqNos}</td>
+                                                                                                            </tr>
+                                                                                                        ))
+                                                                                                    )}
+                                                                                                </tbody>
+                                                                                            </table>
+                                                                                        </div>
+                                                                                    </td>
                                                                                 </tr>
-                                                                            </thead>
-                                                                            <tbody>
-                                                                                {a.items.map((it: any, i: number) => (
-                                                                                    <tr key={i} style={{ borderBottom: '1px solid #e2e8f0' }}>
-                                                                                        <td style={{ padding: '10px 12px', fontFamily: 'monospace', fontWeight: 900 }}>{it.batchNumber}</td>
-                                                                                        <td style={{ padding: '10px 12px', fontFamily: 'monospace' }}>{it.materialCode}</td>
-                                                                                        <td style={{ padding: '10px 12px' }}>{it.materialName}</td>
-                                                                                        <td style={{ padding: '10px 12px', fontFamily: 'monospace', color: '#64748b' }}>{it.matReqNo || '-'}</td>
-                                                                                    </tr>
-                                                                                ))}
-                                                                            </tbody>
-                                                                        </table>
-                                                                    </div>
-                                                                )}
-                                                            </div>
-                                                        );
-                                                    })}
+                                                                            )}
+                                                                        </React.Fragment>
+                                                                    );
+                                                                })}
+                                                            </tbody>
+                                                        </table>
+                                                    </div>
                                                 </div>
                                             </>
                                         );
@@ -23347,72 +24438,182 @@ export default function FormulaDataPage() {
                             gap: '16px',
                         }}>
                             <div style={{ display: 'flex', gap: '24px', flexWrap: 'wrap' }}>
-                                {ppmCoaModalType === 'unqualified' && (
+                                {ppmCoaViewMode === 'ar' || ppmCoaViewMode === 'batch' ? (
+                                    (() => {
+                                        const normBatch = (b: any) => (b || '').toString().trim().toUpperCase();
+                                        const normCode = (c: any) => (c || '').toString().trim().toUpperCase();
+                                        const accent = ppmCoaModalType === 'qualified' ? '#059669' : '#dc2626';
+
+                                        if (ppmCoaViewMode === 'ar') {
+                                            const kind = ppmCoaModalType === 'qualified' ? 'found' : 'missing';
+                                            const allowSet =
+                                                ppmCoaModalSection !== 'all'
+                                                    ? new Set(sectionPpmCoaReconciledArSets[kind][ppmCoaModalSection])
+                                                    : (() => {
+                                                        const u = new Set<string>();
+                                                        (['main', 'lowBatch', 'noBatch', 'placebo'] as const).forEach(sec => {
+                                                            sectionPpmCoaReconciledArSets[kind][sec].forEach(ar => u.add(ar));
+                                                        });
+                                                        return u;
+                                                    })();
+
+                                            const batchMetaMap = new Map<string, any>();
+                                            (yearFilteredBatches as any[]).forEach(b => {
+                                                const bn = normBatch(b?.batchNumber);
+                                                if (!bn || batchMetaMap.has(bn)) return;
+                                                batchMetaMap.set(bn, { itemCode: normCode(b?.itemCode), itemName: (b?.itemName || '').toString().trim() || 'N/A' });
+                                            });
+
+                                            const itemCodeToMfc = new Map<string, string>();
+                                            const getFormulaCodes = (f: any): string[] => {
+                                                const codes: string[] = [];
+                                                const mainCode = f?.masterFormulaDetails?.productCode;
+                                                if (mainCode && mainCode !== 'N/A') codes.push(normCode(mainCode));
+                                                (f?.fillingDetails || []).forEach((fd: any) => {
+                                                    const pc = fd?.productCode;
+                                                    if (pc && pc !== 'N/A') codes.push(normCode(pc));
+                                                });
+                                                (f?.processes || []).forEach((p: any) => {
+                                                    (p?.fillingProducts || []).forEach((fp: any) => {
+                                                        const pc = fp?.productCode;
+                                                        if (pc) codes.push(normCode(pc));
+                                                    });
+                                                });
+                                                return Array.from(new Set(codes.filter(Boolean)));
+                                            };
+                                            (formulas as any[]).forEach((f: any) => {
+                                                const mfc = (f?.masterFormulaDetails?.masterCardNo || '').toString().trim().toUpperCase();
+                                                if (!mfc) return;
+                                                getFormulaCodes(f).forEach(code => {
+                                                    if (!itemCodeToMfc.has(code)) itemCodeToMfc.set(code, mfc);
+                                                });
+                                            });
+
+                                            const byAr = new Map<string, any[]>();
+                                            (ppmCoaModalData as any[]).forEach((r: any) => {
+                                                splitArNumbers(r.arNo).forEach(arTok => {
+                                                    if (!allowSet.has(arTok)) return;
+                                                    if (!byAr.has(arTok)) byAr.set(arTok, []);
+                                                    byAr.get(arTok)!.push(r);
+                                                });
+                                            });
+
+                                            const arTableRows = Array.from(byAr.entries()).map(([ar, items]) => {
+                                                const batches = Array.from(new Set(items.map((i: any) => normBatch(i?.batchNumber)).filter(Boolean))).sort();
+                                                const firstBatch = batches[0] || '';
+                                                const meta = firstBatch ? batchMetaMap.get(firstBatch) : null;
+                                                const itemCode = meta?.itemCode || '';
+                                                return {
+                                                    arNo: ar,
+                                                    mfcNo: (itemCode && itemCodeToMfc.get(itemCode)) || 'N/A',
+                                                    productName: meta?.itemName || 'N/A',
+                                                    batch: batches.join(', '),
+                                                };
+                                            });
+
+                                            const filtered = filterRowsBySearch(
+                                                arTableRows,
+                                                ppmCoaSearchQuery,
+                                                ppmCoaSearchField,
+                                                ['arNo', 'mfcNo', 'productName', 'batch']
+                                            );
+
+                                            return (
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                    <span style={{ padding: '6px 14px', background: '#3b82f6', color: 'white', borderRadius: '8px', fontWeight: 800, fontSize: '1rem' }}>
+                                                        {filtered.length.toLocaleString()}
+                                                    </span>
+                                                    <span style={{ color: '#64748b', fontWeight: 700 }}>AR Numbers</span>
+                                                </div>
+                                            );
+                                        }
+
+                                        const base = filterRowsBySearch(
+                                            ppmCoaModalData,
+                                            ppmCoaSearchQuery,
+                                            ppmCoaSearchField,
+                                            ['batchNumber', 'materialCode', 'materialName', 'arNo', 'formulaMfc', 'mfcNo']
+                                        ) as any[];
+                                        const batches = new Set(base.map(r => normBatch(r?.batchNumber)).filter(Boolean));
+                                        return (
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                <span style={{ padding: '6px 14px', background: accent, color: 'white', borderRadius: '8px', fontWeight: 800, fontSize: '1rem' }}>
+                                                    {batches.size.toLocaleString()}
+                                                </span>
+                                                <span style={{ color: '#64748b', fontWeight: 700 }}>Batches</span>
+                                            </div>
+                                        );
+                                    })()
+                                ) : (
                                     <>
+                                        {ppmCoaModalType === 'unqualified' && (
+                                            <>
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                    <span style={{
+                                                        padding: '6px 14px',
+                                                        background: '#dc2626',
+                                                        color: 'white',
+                                                        borderRadius: '8px',
+                                                        fontWeight: 700,
+                                                        fontSize: '1.1rem',
+                                                    }}>
+                                                        {(ppmCoaModalPrimaryMetric === 'batches'
+                                                            ? (ppmCoaModalSection === 'all'
+                                                                ? (['main', 'lowBatch', 'noBatch', 'placebo'] as const).reduce((a, k) => a + sectionPpmCoaData[k].unqualified, 0)
+                                                                : sectionPpmCoaData[ppmCoaModalSection].unqualified)
+                                                            : (ppmCoaModalSection !== 'all'
+                                                                ? sectionPpmCoaArData[ppmCoaModalSection].missing
+                                                                : globalPpmCoaUniqueArNumbersMissing)
+                                                        ).toLocaleString()}
+                                                    </span>
+                                                    <span style={{ color: '#dc2626', fontWeight: 600 }}>
+                                                        {ppmCoaModalPrimaryMetric === 'batches' ? 'Batches (Missing COA)' : 'AR Numbers (Missing)'}
+                                                    </span>
+                                                </div>
+                                            </>
+                                        )}
+                                        {ppmCoaModalType === 'qualified' && (
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                <span style={{
+                                                    padding: '6px 14px',
+                                                    background: ppmCoaModalPrimaryMetric === 'batches' ? '#059669' : '#3b82f6',
+                                                    color: 'white',
+                                                    borderRadius: '8px',
+                                                    fontWeight: 800,
+                                                    fontSize: '1rem',
+                                                }}>
+                                                    {(ppmCoaModalPrimaryMetric === 'batches'
+                                                        ? (ppmCoaModalSection === 'all'
+                                                            ? (['main', 'lowBatch', 'noBatch', 'placebo'] as const).reduce((a, k) => a + sectionPpmCoaData[k].qualified, 0)
+                                                            : sectionPpmCoaData[ppmCoaModalSection].qualified)
+                                                        : (ppmCoaModalSection !== 'all'
+                                                            ? sectionPpmCoaArData[ppmCoaModalSection].found
+                                                            : globalPpmCoaUniqueArNumbersFound)
+                                                    ).toLocaleString()}
+                                                </span>
+                                                <span style={{ color: '#64748b', fontWeight: 600 }}>
+                                                    {ppmCoaModalPrimaryMetric === 'batches' ? 'Batches (With COA)' : 'AR Numbers (Found)'}
+                                                </span>
+                                            </div>
+                                        )}
                                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                             <span style={{
                                                 padding: '6px 14px',
-                                                background: '#dc2626',
+                                                background: '#8b5cf6',
                                                 color: 'white',
                                                 borderRadius: '8px',
-                                                fontWeight: 700,
-                                                fontSize: '1.1rem',
+                                                fontWeight: 800,
+                                                fontSize: '1rem',
                                             }}>
-                                                {(ppmCoaModalPrimaryMetric === 'batches'
-                                                    ? (ppmCoaModalSection === 'all'
-                                                        ? (['main', 'lowBatch', 'noBatch', 'placebo'] as const).reduce((a, k) => a + sectionPpmCoaData[k].unqualified, 0)
-                                                        : sectionPpmCoaData[ppmCoaModalSection].unqualified)
-                                                    : (ppmCoaModalSection !== 'all'
-                                                        ? sectionPpmCoaArData[ppmCoaModalSection].missing
-                                                        : globalPpmCoaUniqueArNumbersMissing)
-                                                ).toLocaleString()}
+                                                {(() => {
+                                                    const materials = new Set(ppmCoaModalData.map((m: any) => m.materialCode));
+                                                    return materials.size;
+                                                })()}
                                             </span>
-                                            <span style={{ color: '#dc2626', fontWeight: 600 }}>
-                                                {ppmCoaModalPrimaryMetric === 'batches' ? 'Batches (Missing COA)' : 'Unique AR Numbers (Missing)'}
-                                            </span>
+                                            <span style={{ color: '#64748b', fontWeight: 600 }}>Unique Materials</span>
                                         </div>
                                     </>
                                 )}
-                                {ppmCoaModalType === 'qualified' && (
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                        <span style={{
-                                            padding: '6px 14px',
-                                            background: ppmCoaModalPrimaryMetric === 'batches' ? '#059669' : '#3b82f6',
-                                            color: 'white',
-                                            borderRadius: '8px',
-                                            fontWeight: 800,
-                                            fontSize: '1rem',
-                                        }}>
-                                            {(ppmCoaModalPrimaryMetric === 'batches'
-                                                ? (ppmCoaModalSection === 'all'
-                                                    ? (['main', 'lowBatch', 'noBatch', 'placebo'] as const).reduce((a, k) => a + sectionPpmCoaData[k].qualified, 0)
-                                                    : sectionPpmCoaData[ppmCoaModalSection].qualified)
-                                                : (ppmCoaModalSection !== 'all'
-                                                    ? sectionPpmCoaArData[ppmCoaModalSection].found
-                                                    : globalPpmCoaUniqueArNumbersFound)
-                                            ).toLocaleString()}
-                                        </span>
-                                        <span style={{ color: '#64748b', fontWeight: 600 }}>
-                                            {ppmCoaModalPrimaryMetric === 'batches' ? 'Batches (With COA)' : 'Unique AR Numbers (Found)'}
-                                        </span>
-                                    </div>
-                                )}
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                    <span style={{
-                                        padding: '6px 14px',
-                                        background: '#8b5cf6',
-                                        color: 'white',
-                                        borderRadius: '8px',
-                                        fontWeight: 800,
-                                        fontSize: '1rem',
-                                    }}>
-                                        {(() => {
-                                            const materials = new Set(ppmCoaModalData.map((m: any) => m.materialCode));
-                                            return materials.size;
-                                        })()}
-                                    </span>
-                                    <span style={{ color: '#64748b', fontWeight: 600 }}>Unique Materials</span>
-                                </div>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                     <span style={{
                                         padding: '6px 14px',
@@ -23429,19 +24630,7 @@ export default function FormulaDataPage() {
                                     </span>
                                     <span style={{ color: '#64748b', fontWeight: 600 }}>Unique Batches</span>
                                 </div>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                    <span style={{
-                                        padding: '6px 14px',
-                                        background: '#0e7490',
-                                        color: 'white',
-                                        borderRadius: '8px',
-                                        fontWeight: 700,
-                                        fontSize: '1.1rem',
-                                    }}>
-                                        {ppmCoaModalData.length.toLocaleString()}
-                                    </span>
-                                    <span style={{ color: '#64748b', fontWeight: 500 }}>Total Records</span>
-                                </div>
+                                
                             </div>
                             {/* View Toggle & Search */}
                             <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
@@ -23643,174 +24832,246 @@ export default function FormulaDataPage() {
                                 </div>
                             )}
 
-                            {/* AR View (same layout as RM COA — reconciled AR filter) */}
+                            {/* AR View (table layout like Batch view; AR number first, Batch column) */}
                             {!isPpmCoaModalLoading && !ppmCoaModalError && ppmCoaModalData.length > 0 && ppmCoaViewMode === 'ar' && (() => {
-                                const sourceRows = ppmCoaModalData as any[];
-                                const q = ppmCoaSearchQuery.trim().toLowerCase();
-                                const filtered = sourceRows.filter((item: any) => {
-                                    if (!q) return true;
-                                    const searchLower = q;
-                                    return (
-                                        (item.arNo?.toLowerCase() || '').includes(searchLower) ||
-                                        (item.materialCode?.toLowerCase() || '').includes(searchLower) ||
-                                        (item.materialName?.toLowerCase() || '').includes(searchLower) ||
-                                        (item.batchNumber?.toLowerCase() || '').includes(searchLower) ||
-                                        (item.formulaMfc?.toLowerCase() || '').includes(searchLower) ||
-                                        (String(item.quantityToIssue || '').toLowerCase()).includes(searchLower)
-                                    );
-                                });
+                                const normBatch = (b: any) => (b || '').toString().trim().toUpperCase();
+                                const normCode = (c: any) => (c || '').toString().trim().toUpperCase();
+
                                 const ppmCoaReconciledArAllowSet = (() => {
                                     const kind = ppmCoaModalType === 'qualified' ? 'found' : 'missing';
-                                    if (ppmCoaModalSection !== 'all') {
-                                        return new Set(sectionPpmCoaReconciledArSets[kind][ppmCoaModalSection]);
-                                    }
+                                    if (ppmCoaModalSection !== 'all') return new Set(sectionPpmCoaReconciledArSets[kind][ppmCoaModalSection]);
                                     const u = new Set<string>();
-                                    (['main', 'lowBatch', 'noBatch', 'placebo'] as const).forEach(sec => {
-                                        sectionPpmCoaReconciledArSets[kind][sec].forEach(ar => u.add(ar));
-                                    });
+                                    (['main', 'lowBatch', 'noBatch', 'placebo'] as const).forEach(sec => sectionPpmCoaReconciledArSets[kind][sec].forEach(ar => u.add(ar)));
                                     return u;
                                 })();
+
+                                const batchMetaMap = new Map<string, any>();
+                                (yearFilteredBatches as any[]).forEach(b => {
+                                    const bn = normBatch(b?.batchNumber);
+                                    if (!bn || batchMetaMap.has(bn)) return;
+                                    batchMetaMap.set(bn, {
+                                        itemCode: normCode(b?.itemCode),
+                                        itemName: (b?.itemName || '').toString().trim() || 'N/A',
+                                        batchSize: b?.batchSize != null && b?.batchSize !== '' ? String(b.batchSize) : 'N/A',
+                                        mfgDate: (b?.mfgDate || '').toString().trim() || 'N/A',
+                                        expiryDate: (b?.expiryDate || '').toString().trim() || 'N/A',
+                                        department: (b?.department || '').toString().trim() || 'N/A',
+                                        make: (b?.make || '').toString().trim() || 'N/A',
+                                    });
+                                });
+
+                                const itemCodeToMfc = new Map<string, string>();
+                                const getFormulaCodes = (f: any): string[] => {
+                                    const codes: string[] = [];
+                                    const mainCode = f?.masterFormulaDetails?.productCode;
+                                    if (mainCode && mainCode !== 'N/A') codes.push(normCode(mainCode));
+                                    (f?.fillingDetails || []).forEach((fd: any) => {
+                                        const pc = fd?.productCode;
+                                        if (pc && pc !== 'N/A') codes.push(normCode(pc));
+                                    });
+                                    (f?.processes || []).forEach((p: any) => {
+                                        (p?.fillingProducts || []).forEach((fp: any) => {
+                                            const pc = fp?.productCode;
+                                            if (pc) codes.push(normCode(pc));
+                                        });
+                                    });
+                                    return Array.from(new Set(codes.filter(Boolean)));
+                                };
+                                (formulas as any[]).forEach((f: any) => {
+                                    const mfc = (f?.masterFormulaDetails?.masterCardNo || '').toString().trim().toUpperCase();
+                                    if (!mfc) return;
+                                    getFormulaCodes(f).forEach(code => {
+                                        if (!itemCodeToMfc.has(code)) itemCodeToMfc.set(code, mfc);
+                                    });
+                                });
+
                                 const byAr = new Map<string, any[]>();
-                                filtered.forEach((r: any) => {
+                                (ppmCoaModalData as any[]).forEach((r: any) => {
                                     splitArNumbers(r.arNo).forEach(arTok => {
                                         if (!ppmCoaReconciledArAllowSet.has(arTok)) return;
                                         if (!byAr.has(arTok)) byAr.set(arTok, []);
                                         byAr.get(arTok)!.push(r);
                                     });
                                 });
-                                const arRows = Array.from(byAr.entries())
+
+                                const joinBatches = (arr: string[], max = 3) => (arr.length <= max ? arr.join(', ') : `${arr.slice(0, max).join(', ')} +${arr.length - max} more`);
+
+                                const arTableRows = Array.from(byAr.entries())
                                     .sort((a, b) => a[0].localeCompare(b[0]))
                                     .map(([ar, items]) => {
-                                        const batchSet = new Set(items.map(i => (i.batchNumber || '').toString()).filter(Boolean));
-                                        const first = items[0] || {};
+                                        const batches = Array.from(new Set(items.map((i: any) => normBatch(i?.batchNumber)).filter(Boolean))).sort();
+                                        const firstBatch = batches[0] || '';
+                                        const meta = firstBatch ? batchMetaMap.get(firstBatch) : null;
+                                        const itemCode = meta?.itemCode || '';
                                         return {
-                                            ar,
+                                            arNo: ar,
+                                            mfcNo: (itemCode && itemCodeToMfc.get(itemCode)) || 'N/A',
+                                            productName: meta?.itemName || 'N/A',
+                                            batch: joinBatches(batches, 3) || 'N/A',
+                                            batches,
                                             items,
-                                            batchCount: batchSet.size,
-                                            materialCode: first.materialCode || 'N/A',
-                                            materialName: first.materialName || 'N/A',
+                                            batchSize: meta?.batchSize || 'N/A',
+                                            mfgDate: meta?.mfgDate || 'N/A',
+                                            expiryDate: meta?.expiryDate || 'N/A',
+                                            department: meta?.department || 'N/A',
+                                            make: meta?.make || 'N/A',
                                         };
                                     });
+
+                                const filteredArTableRows = filterRowsBySearch(
+                                    arTableRows,
+                                    ppmCoaSearchQuery,
+                                    ppmCoaSearchField,
+                                    ['arNo', 'mfcNo', 'productName', 'batch', 'batchSize', 'mfgDate', 'expiryDate', 'department', 'make']
+                                );
+
                                 const accent = ppmCoaModalType === 'qualified' ? '#0891b2' : '#dc2626';
-                                const accentBg = ppmCoaModalType === 'qualified' ? '#cffafe' : '#fee2e2';
                                 return (
                                     <>
                                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
                                             <div style={{ color: '#64748b', fontWeight: 700 }}>
-                                                Showing {arRows.length.toLocaleString()} unique AR numbers
-                                                {arRows.length !== ppmCoaReconciledArAllowSet.size ? (
-                                                    <span style={{ fontWeight: 500, marginLeft: '8px', fontSize: '0.85rem' }}>
-                                                        (header: {ppmCoaReconciledArAllowSet.size.toLocaleString()} — drill may omit some lines)
-                                                    </span>
-                                                ) : null}
+                                                Showing {filteredArTableRows.length.toLocaleString()} AR numbers
                                             </div>
                                             <button
                                                 onClick={() => handleExportToExcel(
-                                                    arRows.flatMap(a => a.items.map((it: any) => ({ ...it, arNo: a.ar }))),
+                                                    filteredArTableRows,
                                                     `PPM_COA_AR_${ppmCoaModalType}_${new Date().toISOString().split('T')[0]}`
                                                 )}
-                                                style={{
-                                                    padding: '10px 18px',
-                                                    borderRadius: '10px',
-                                                    background: accent,
-                                                    color: 'white',
-                                                    fontWeight: 800,
-                                                    border: 'none',
-                                                    cursor: 'pointer',
-                                                }}
+                                                style={{ padding: '10px 18px', borderRadius: '10px', background: accent, color: 'white', fontWeight: 800, border: 'none', cursor: 'pointer' }}
                                             >
-                                                📥 Export to Excel
+                                                Export
                                             </button>
                                         </div>
-                                        <div style={{ border: '1px solid #e2e8f0', borderRadius: '12px', overflow: 'hidden', background: 'white' }}>
-                                            <div style={{
-                                                display: 'grid',
-                                                gridTemplateColumns: '80px 220px 160px 1fr 140px 50px',
-                                                gap: '12px',
-                                                padding: '14px 16px',
-                                                background: '#f8fafc',
-                                                borderBottom: '1px solid #e2e8f0',
-                                                fontSize: '0.8rem',
-                                                fontWeight: 800,
-                                                color: '#64748b',
-                                                textTransform: 'uppercase',
-                                            }}>
-                                                <div>SR NO</div>
-                                                <div>AR NUMBER</div>
-                                                <div>MATERIAL CODE</div>
-                                                <div>MATERIAL NAME</div>
-                                                <div>BATCHES</div>
-                                                <div />
-                                            </div>
-                                            {arRows.map((a, idx) => {
-                                                const isOpen = expandedPpmCoaArNumbers.has(a.ar);
-                                                const batchLabel = `${a.batchCount} ${a.batchCount === 1 ? 'batch' : 'batches'}`;
-                                                return (
-                                                    <div key={`${a.ar}-${idx}`} style={{ borderBottom: '1px solid #eef2f7' }}>
-                                                        <div
-                                                            onClick={() => setExpandedPpmCoaArNumbers(prev => {
-                                                                const next = new Set(prev);
-                                                                if (next.has(a.ar)) next.delete(a.ar);
-                                                                else next.add(a.ar);
-                                                                return next;
-                                                            })}
-                                                            style={{
-                                                                display: 'grid',
-                                                                gridTemplateColumns: '80px 220px 160px 1fr 140px 50px',
-                                                                gap: '12px',
-                                                                padding: '14px 16px',
-                                                                alignItems: 'center',
-                                                                cursor: 'pointer',
-                                                                background: isOpen ? '#ecfeff' : 'white',
-                                                            }}
-                                                        >
-                                                            <div style={{ color: '#64748b', fontWeight: 800 }}>{idx + 1}.</div>
-                                                            <div style={{
-                                                                fontFamily: 'monospace',
-                                                                fontWeight: 900,
-                                                                color: accent,
-                                                                background: accentBg,
-                                                                padding: '6px 10px',
-                                                                borderRadius: '10px',
-                                                                width: 'fit-content',
-                                                            }}>
-                                                                {a.ar}
-                                                            </div>
-                                                            <div style={{ fontFamily: 'monospace', fontWeight: 800, color: '#334155' }}>{a.materialCode}</div>
-                                                            <div style={{ color: '#334155', fontWeight: 700 }}>{a.materialName}</div>
-                                                            <div style={{ color: '#334155', fontWeight: 800 }}>{batchLabel}</div>
-                                                            <div style={{ textAlign: 'center', color: '#94a3b8', fontSize: '1rem' }}>{isOpen ? '▲' : '▼'}</div>
-                                                        </div>
-                                                        {isOpen && (
-                                                            <div style={{ background: '#f0f9ff', padding: '0 16px 14px 16px' }}>
-                                                                <div style={{ padding: '12px 0', color: '#64748b', fontWeight: 800, fontSize: '0.8rem' }}>
-                                                                    Lines for {a.ar}
-                                                                </div>
-                                                                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem', background: 'white', border: '1px solid #e2e8f0', borderRadius: '10px', overflow: 'hidden' }}>
-                                                                    <thead>
-                                                                        <tr style={{ background: '#e0f2fe', borderBottom: '1px solid #bae6fd' }}>
-                                                                            <th style={{ padding: '10px 12px', textAlign: 'left' }}>Batch</th>
-                                                                            <th style={{ padding: '10px 12px', textAlign: 'left' }}>MFC</th>
-                                                                            <th style={{ padding: '10px 12px', textAlign: 'left' }}>Expiry</th>
-                                                                            <th style={{ padding: '10px 12px', textAlign: 'right' }}>Qty</th>
+
+                                        <div style={{ background: '#f9fafb', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+                                            <div style={{ overflowX: 'auto' }}>
+                                                <table style={{ width: '100%', minWidth: '1100px', borderCollapse: 'collapse' }}>
+                                                    <thead>
+                                                        <tr style={{ background: '#f3f4f6', borderBottom: '2px solid #e5e7eb' }}>
+                                                            {['AR No', 'MFC No', 'Product Name', 'Batch', 'Batch Size', 'MFG Date', 'Expiry', 'Dept', 'Make'].map((label, i) => (
+                                                                <th key={label} style={{ padding: '10px 8px', textAlign: 'left', fontWeight: 700, fontSize: '0.75rem', color: '#4b5563', background: i === 0 ? '#e0f2fe' : '#f3f4f6', whiteSpace: 'nowrap' }}>
+                                                                    {label}
+                                                                </th>
+                                                            ))}
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        {filteredArTableRows.map((r: any, idx: number) => {
+                                                            const isOpen = expandedPpmCoaArNumbers.has(r.arNo);
+                                                            const detailBatches: any[] = Array.isArray(r.batches) ? r.batches : [];
+                                                            const detailRows = detailBatches.map((bn: string) => {
+                                                                const meta = batchMetaMap.get(normBatch(bn)) || {};
+                                                                const lines = (r.items || []).filter((it: any) => normBatch(it?.batchNumber) === normBatch(bn));
+                                                                const qty = lines.reduce((sum: number, it: any) => sum + (typeof it?.quantityToIssue === 'number' ? it.quantityToIssue : 0), 0);
+                                                                const expiry = (lines.find((it: any) => (it?.expiryDate || '').toString().trim())?.expiryDate || meta.expiryDate || 'N/A').toString();
+                                                                const mats = Array.from(new Set(lines.map((it: any) => (it?.materialCode || '').toString().trim()).filter(Boolean)));
+                                                                const reqs = Array.from(new Set(lines.map((it: any) => (it?.matReqNo || '').toString().trim()).filter(Boolean)));
+                                                                return {
+                                                                    batchNumber: bn,
+                                                                    mfcNo: (meta.itemCode && itemCodeToMfc.get(meta.itemCode)) || r.mfcNo || 'N/A',
+                                                                    productName: meta.itemName || r.productName || 'N/A',
+                                                                    batchSize: meta.batchSize || 'N/A',
+                                                                    mfgDate: meta.mfgDate || 'N/A',
+                                                                    expiryDate: expiry || 'N/A',
+                                                                    department: meta.department || 'N/A',
+                                                                    make: meta.make || 'N/A',
+                                                                    qty,
+                                                                    materials: mats.join(', ') || '—',
+                                                                    reqNos: reqs.join(', ') || '—',
+                                                                };
+                                                            });
+
+                                                            return (
+                                                                <React.Fragment key={`${r.arNo}-${idx}`}>
+                                                                    <tr
+                                                                        onClick={() => setExpandedPpmCoaArNumbers(prev => {
+                                                                            const next = new Set(prev);
+                                                                            if (next.has(r.arNo)) next.delete(r.arNo);
+                                                                            else next.add(r.arNo);
+                                                                            return next;
+                                                                        })}
+                                                                        style={{ cursor: 'pointer', background: isOpen ? '#ecfeff' : (idx % 2 === 0 ? 'white' : '#fafafa'), borderBottom: '1px solid #f3f4f6' }}
+                                                                        title="Click to expand batch details"
+                                                                    >
+                                                                        <td style={{ padding: '8px', background: '#e0f2fe', fontFamily: 'monospace', fontWeight: 900, color: ppmCoaModalType === 'qualified' ? '#0369a1' : '#b91c1c' }}>{r.arNo}</td>
+                                                                        <td style={{ padding: '8px', fontFamily: 'monospace', fontWeight: 700, color: '#f97316' }}>{r.mfcNo}</td>
+                                                                        <td style={{ padding: '8px', fontWeight: 600, color: '#111827' }}>{r.productName}</td>
+                                                                        <td style={{ padding: '8px', fontFamily: 'monospace', fontWeight: 800, color: '#0f172a' }}>{r.batch}</td>
+                                                                        <td style={{ padding: '8px', fontWeight: 700, color: '#7c3aed' }}>{r.batchSize}</td>
+                                                                        <td style={{ padding: '8px', fontFamily: 'monospace', color: '#64748b' }}>{r.mfgDate}</td>
+                                                                        <td style={{ padding: '8px', fontFamily: 'monospace', color: '#dc2626', fontWeight: 700 }}>{r.expiryDate}</td>
+                                                                        <td style={{ padding: '8px', color: '#0891b2', fontWeight: 600 }}>{r.department}</td>
+                                                                        <td style={{ padding: '8px', color: '#6b7280', fontWeight: 600 }}>{r.make}</td>
+                                                                    </tr>
+                                                                    {isOpen && (
+                                                                        <tr style={{ background: '#f8fafc' }}>
+                                                                            <td colSpan={9} style={{ padding: '12px 14px' }}>
+                                                                                <div style={{ fontWeight: 800, color: '#334155', marginBottom: '10px' }}>
+                                                                                    Batches for AR: <span style={{ fontFamily: 'monospace' }}>{r.arNo}</span>
+                                                                                </div>
+                                                                                {(() => {
+                                                                                    const allLines = Array.isArray(r.items) ? r.items : [];
+                                                                                    const totalQty = allLines.reduce((sum: number, it: any) => sum + (typeof it?.quantityToIssue === 'number' ? it.quantityToIssue : 0), 0);
+                                                                                    const matCodes = new Set(allLines.map((it: any) => (it?.materialCode || '').toString().trim()).filter(Boolean));
+                                                                                    const reqNos = new Set(allLines.map((it: any) => (it?.matReqNo || '').toString().trim()).filter(Boolean));
+                                                                                    return (
+                                                                                        <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: '10px' }}>
+                                                                                            <div style={{ padding: '6px 10px', borderRadius: '999px', background: '#e0f2fe', color: '#0369a1', fontWeight: 900 }}>
+                                                                                                {detailRows.length.toLocaleString()} batches
+                                                                                            </div>
+                                                                                            <div style={{ padding: '6px 10px', borderRadius: '999px', background: '#ecfdf5', color: '#047857', fontWeight: 900 }}>
+                                                                                                Qty {Number(totalQty || 0).toLocaleString()}
+                                                                                            </div>
+                                                                                            <div style={{ padding: '6px 10px', borderRadius: '999px', background: '#f5f3ff', color: '#6d28d9', fontWeight: 900 }}>
+                                                                                                {matCodes.size.toLocaleString()} material codes
+                                                                                            </div>
+                                                                                            <div style={{ padding: '6px 10px', borderRadius: '999px', background: '#fff7ed', color: '#9a3412', fontWeight: 900 }}>
+                                                                                                {reqNos.size.toLocaleString()} req nos
+                                                                                            </div>
+                                                                                            <div style={{ padding: '6px 10px', borderRadius: '999px', background: '#f1f5f9', color: '#334155', fontWeight: 900 }}>
+                                                                                                {allLines.length.toLocaleString()} lines
+                                                                                            </div>
+                                                                                        </div>
+                                                                                    );
+                                                                                })()}
+                                                                                <div style={{ overflowX: 'auto' }}>
+                                                                                    <table style={{ width: '100%', minWidth: '520px', borderCollapse: 'collapse', background: 'white', border: '1px solid #e2e8f0', borderRadius: '10px', overflow: 'hidden' }}>
+                                                                                        <thead>
+                                                                                            <tr style={{ background: '#e0f2fe', borderBottom: '1px solid #bae6fd' }}>
+                                                                                                {['Batch No', 'Qty', 'Material Codes', 'Req Nos'].map(h => (
+                                                                                                    <th key={h} style={{ padding: '10px 10px', textAlign: 'left', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.04em', color: '#475569', whiteSpace: 'nowrap' }}>{h}</th>
+                                                                                                ))}
+                                                                                            </tr>
+                                                                                        </thead>
+                                                                                        <tbody>
+                                                                                            {detailRows.length === 0 ? (
+                                                                                                <tr>
+                                                                                                    <td colSpan={4} style={{ padding: '14px', color: '#64748b', fontWeight: 600 }}>
+                                                                                                        No batch details found for this AR.
+                                                                                                    </td>
+                                                                                                </tr>
+                                                                                            ) : (
+                                                                                                detailRows.map((d, i) => (
+                                                                                                    <tr key={`${d.batchNumber}-${i}`} style={{ borderBottom: '1px solid #e2e8f0' }}>
+                                                                                                        <td style={{ padding: '10px 10px', fontFamily: 'monospace', fontWeight: 900 }}>{d.batchNumber}</td>
+                                                                                                        <td style={{ padding: '10px 10px', textAlign: 'left', color: '#059669', fontWeight: 900 }}>{Number(d.qty || 0).toLocaleString()}</td>
+                                                                                                        <td style={{ padding: '10px 10px', fontFamily: 'monospace', color: '#334155' }}>{d.materials}</td>
+                                                                                                        <td style={{ padding: '10px 10px', fontFamily: 'monospace', color: '#64748b' }}>{d.reqNos}</td>
+                                                                                                    </tr>
+                                                                                                ))
+                                                                                            )}
+                                                                                        </tbody>
+                                                                                    </table>
+                                                                                </div>
+                                                                            </td>
                                                                         </tr>
-                                                                    </thead>
-                                                                    <tbody>
-                                                                        {a.items.map((it: any, i: number) => (
-                                                                            <tr key={i} style={{ borderBottom: '1px solid #e2e8f0' }}>
-                                                                                <td style={{ padding: '10px 12px', fontFamily: 'monospace', fontWeight: 900 }}>{it.batchNumber}</td>
-                                                                                <td style={{ padding: '10px 12px', fontFamily: 'monospace' }}>{it.formulaMfc || it.mfcNo || 'N/A'}</td>
-                                                                                <td style={{ padding: '10px 12px', fontFamily: 'monospace', color: '#64748b' }}>{it.expiryDate || 'N/A'}</td>
-                                                                                <td style={{ padding: '10px 12px', textAlign: 'right', color: '#059669', fontWeight: 700 }}>{(it.quantityToIssue || 0).toLocaleString()}</td>
-                                                                            </tr>
-                                                                        ))}
-                                                                    </tbody>
-                                                                </table>
-                                                            </div>
-                                                        )}
-                                                    </div>
-                                                );
-                                            })}
+                                                                    )}
+                                                                </React.Fragment>
+                                                            );
+                                                        })}
+                                                    </tbody>
+                                                </table>
+                                            </div>
                                         </div>
                                     </>
                                 );
@@ -24377,7 +25638,7 @@ export default function FormulaDataPage() {
                                                                 {/* Records Info */}
                                                                 <div style={{ textAlign: 'right', fontSize: '0.8rem', color: '#64748b' }}>
                                                                     <span style={{ fontWeight: 600 }}>{items.length}</span> recs<br />
-                                                                    <span style={{ fontSize: '0.75rem' }}>{uniqueArs} unique ARs</span>
+                                                                    <span style={{ fontSize: '0.75rem' }}>{uniqueArs} ARs</span>
                                                                 </div>
 
                                                                 {/* Expand Icon */}

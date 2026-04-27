@@ -178,7 +178,8 @@ export async function GET(request: NextRequest): Promise<NextResponse<PpmVerific
 
     const ppmLines: PpmLine[] = [];
     const ppmBatchSet = new Set<string>(); // normalized
-    const arByBatchNorm = new Map<string, Set<string>>();
+    const arByBatchNorm = new Map<string, Set<string>>(); // includes base variants for inward matching
+    const allArsByBatchNorm = new Map<string, Set<string>>(); // original AR numbers only (for display)
 
     for (const rec of requisitions as any[]) {
       const rid = rec._id?.toString?.() ?? '';
@@ -201,6 +202,9 @@ export async function GET(request: NextRequest): Promise<NextResponse<PpmVerific
               arByBatchNorm.get(batchNorm)!.add(norm);
               const base = baseAr(norm);
               if (base && base !== norm) arByBatchNorm.get(batchNorm)!.add(base);
+              // Track original normalised AR for display
+              if (!allArsByBatchNorm.has(batchNorm)) allArsByBatchNorm.set(batchNorm, new Set());
+              allArsByBatchNorm.get(batchNorm)!.add(norm);
             }
           }
           ppmLines.push({
@@ -260,12 +264,16 @@ export async function GET(request: NextRequest): Promise<NextResponse<PpmVerific
       const firstLine = ppmLines.find(l => l.batchNorm === rec.batchNorm);
       const found = isReqFound(rec);
       const coaFound = isCoaFound(rec);
+      // Collect ALL AR numbers for this batch (comma-separated) so the frontend
+      // can count them correctly with splitArNumbers().
+      const allArs = Array.from(allArsByBatchNorm.get(rec.batchNorm) ?? []);
+      const arNo = allArs.length > 0 ? allArs.join(', ') : (firstLine?.arNo || '');
       return {
         id: `${drill}|${rec.recordId}`,
         matReqNo: firstLine?.matReqNo || '-',
         materialName: firstLine?.materialName || rec.itemName,
         materialCode: firstLine?.materialCode || rec.itemCode,
-        arNo: firstLine?.arNo || '',
+        arNo,
         batchNumber: rec.batchNumberRaw,
         requisitionStatus: found ? 'Requisition Found' : 'Requisition Missing',
         ppmCoaStatus: found ? (coaFound ? 'PPM COA Found' : 'PPM COA Missing') : '-',

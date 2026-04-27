@@ -178,7 +178,8 @@ export async function GET(request: NextRequest): Promise<NextResponse<PmVerifica
 
     const pmLines: PmLine[] = [];
     const pmBatchSet = new Set<string>(); // normalized batches that have PM requisition lines
-    const arByBatchNorm = new Map<string, Set<string>>();
+    const arByBatchNorm = new Map<string, Set<string>>(); // includes base variants for inward matching
+    const allArsByBatchNorm = new Map<string, Set<string>>(); // original AR numbers only (for display)
 
     for (const rec of requisitions as any[]) {
       const rid = rec._id?.toString?.() ?? '';
@@ -202,6 +203,9 @@ export async function GET(request: NextRequest): Promise<NextResponse<PmVerifica
               arByBatchNorm.get(batchNorm)!.add(norm);
               const base = baseAr(norm);
               if (base && base !== norm) arByBatchNorm.get(batchNorm)!.add(base);
+              // Track original normalised AR for display
+              if (!allArsByBatchNorm.has(batchNorm)) allArsByBatchNorm.set(batchNorm, new Set());
+              allArsByBatchNorm.get(batchNorm)!.add(norm);
             }
           }
 
@@ -262,12 +266,16 @@ export async function GET(request: NextRequest): Promise<NextResponse<PmVerifica
       const firstLine = pmLines.find(l => l.batchNorm === rec.batchNorm);
       const found = isReqFound(rec);
       const coaFound = isCoaFound(rec);
+      // Collect ALL AR numbers for this batch (comma-separated) so the frontend
+      // can count them correctly with splitArNumbers().
+      const allArs = Array.from(allArsByBatchNorm.get(rec.batchNorm) ?? []);
+      const arNo = allArs.length > 0 ? allArs.join(', ') : (firstLine?.arNo || '');
       return {
         id: `${drill}|${rec.recordId}`,
         matReqNo: firstLine?.matReqNo || '-',
         materialName: firstLine?.materialName || rec.itemName,
         materialCode: firstLine?.materialCode || rec.itemCode,
-        arNo: firstLine?.arNo || '',
+        arNo,
         batchNumber: rec.batchNumberRaw,
         requisitionStatus: found ? 'Requisition Found' : 'Requisition Missing',
         pmCoaStatus: found ? (coaFound ? 'PM COA Found' : 'PM COA Missing') : '-',

@@ -13,23 +13,44 @@ function normalizeCode(c: string | null | undefined): string {
 }
 
 function normalizeAr(ar: string | null | undefined): string {
-  return (ar || '').trim().toUpperCase();
+  return (ar || '')
+    .toString()
+    .normalize('NFKC')
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .replace(/\s+/g, '')
+    .trim()
+    .toUpperCase();
 }
 
 function baseAr(ar: string): string {
-  return ar.split('.')[0] || ar;
+  const s = normalizeAr(ar);
+  return s.split('.')[0] || s;
 }
 
 function isRmCoaCandidateAr(arNo: string): boolean {
   return arNo.length > 0 && !arNo.includes('PRM');
 }
 
+function splitArTokens(raw: unknown): string[] {
+  const s = (raw ?? '').toString();
+  if (!s) return [];
+  return s
+    .split(/[,\\n\\r]+/)
+    .map(t => normalizeAr(t))
+    .filter(Boolean);
+}
+
 function arMatches(lineArRaw: string | undefined, coaArNorm: string): boolean {
-  const lineAr = normalizeAr(lineArRaw);
-  if (!lineAr || !coaArNorm) return false;
-  if (!isRmCoaCandidateAr(lineAr)) return false;
-  if (lineAr === coaArNorm) return true;
-  if (baseAr(lineAr) === baseAr(coaArNorm)) return true;
+  const lineArs = splitArTokens(lineArRaw);
+  if (lineArs.length === 0 || !coaArNorm) return false;
+  const coaAr = normalizeAr(coaArNorm);
+  if (!coaAr) return false;
+  const coaBase = baseAr(coaAr);
+  for (const lineAr of lineArs) {
+    if (!isRmCoaCandidateAr(lineAr)) continue;
+    if (lineAr === coaAr) return true;
+    if (baseAr(lineAr) === coaBase) return true;
+  }
   return false;
 }
 
@@ -393,17 +414,33 @@ export async function GET(request: NextRequest): Promise<NextResponse<RmCoaVerif
           const materialName = (material.materialName || '').trim() || '-';
           const materialCode = (material.materialCode || '').trim() || '-';
           const lineMatReqNo = (material.matReqNo || headerMatReqNo || '').trim() || '-';
-          const arNo = (material.arNo || '').trim();
+          const arNoRaw = (material.arNo || '').trim();
+          const arTokens = splitArTokens(arNoRaw);
 
           reqBatchSet.add(batchNorm);
-          reqLines.push({
-            id: [rid, material.matReqDtlId || '', batchNorm, materialCode].join('|'),
-            matReqNo: lineMatReqNo,
-            materialName,
-            materialCode,
-            batchNorm,
-            arNo,
-          });
+          // Keep ALL AR occurrences (do not dedupe). If a single requisition line
+          // has multiple AR tokens, create one ReqLine per token.
+          if (arTokens.length === 0) {
+            reqLines.push({
+              id: [rid, material.matReqDtlId || '', batchNorm, materialCode].join('|'),
+              matReqNo: lineMatReqNo,
+              materialName,
+              materialCode,
+              batchNorm,
+              arNo: arNoRaw,
+            });
+          } else {
+            arTokens.forEach((tok, idx) => {
+              reqLines.push({
+                id: [rid, material.matReqDtlId || '', batchNorm, materialCode, idx].join('|'),
+                matReqNo: lineMatReqNo,
+                materialName,
+                materialCode,
+                batchNorm,
+                arNo: tok,
+              });
+            });
+          }
         }
       }
     }
