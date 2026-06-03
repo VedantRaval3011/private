@@ -33,6 +33,10 @@ const AssayResultSchema = new Schema({
   result: { type: String, default: '' },
   resultAlt: { type: String },
   complies: { type: Boolean, default: true },
+  // Pharmacopoeial section this assay was parsed under (from "AS PER IP/USP"
+  // markers). Keeps APQR Section 5.3.2 assay columns confined to the right
+  // pharmacopoeia table. 'OTHER' when the COA has no section markers.
+  standard: { type: String, enum: ['IP', 'USP', 'OTHER'], default: 'OTHER' },
 }, { _id: false });
 
 // Sub-schema for Identification Tests
@@ -42,6 +46,9 @@ const IdentificationTestSchema = new Schema({
   specification: { type: String, default: '' },
   result: { type: String, default: '' },
   complies: { type: Boolean, default: true },
+  // Pharmacopoeial section (IP/USP) — confines APQR 5.3.2 identification
+  // columns to the correct pharmacopoeia table.
+  standard: { type: String, enum: ['IP', 'USP', 'OTHER'], default: 'OTHER' },
 }, { _id: false });
 
 // Sub-schema for Critical Parameters
@@ -50,6 +57,9 @@ const CriticalParameterSchema = new Schema({
   limit: { type: String, default: '' },
   result: { type: String, default: '' },
   complies: { type: Boolean, default: true },
+  // Pharmacopoeial section (IP/USP) — lets APQR 5.3.2 select the correct
+  // per-pharmacopoeia limit (e.g. IP vs USP pH range).
+  standard: { type: String, enum: ['IP', 'USP', 'OTHER'], default: 'OTHER' },
 }, { _id: false });
 
 // Sub-schema for Related Substances
@@ -60,6 +70,9 @@ const RelatedSubstanceSchema = new Schema({
   limit: { type: String, default: '' },
   result: { type: String, default: '' },
   complies: { type: Boolean, default: true },
+  // Pharmacopoeial section (IP/USP) — keeps IP-only HPLC related substances and
+  // USP-only early/late-eluting compounds in their respective tables.
+  standard: { type: String, enum: ['IP', 'USP', 'OTHER'], default: 'OTHER' },
 }, { _id: false });
 
 // Sub-schema for COA table tests (FINISH stage, supports IP/USP grouping + hierarchy)

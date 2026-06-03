@@ -9,6 +9,12 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import Link from 'next/link';
 import * as XLSX from 'xlsx';
+import type {
+    MfcBulkCapability,
+    MfcCapabilityColumn,
+    MfcFinishSpecCapability,
+    MfcProcessCapabilitySummary,
+} from '@/lib/apqr-utils';
 
 // Complete MasterFormulaDetails interface matching the parsed data
 interface MasterFormulaDetails {
@@ -667,7 +673,7 @@ interface BatchStatusCapsuleProps {
     onGreenClick?: () => void | Promise<void>;
     onRedClick?: () => void | Promise<void>;
     size?: 'small' | 'medium' | 'large';
-    type: 'RM' | 'PPM' | 'PM' | 'RM COA' | 'PM COA' | 'PPM COA' | 'Bulk COA' | 'Finish COA';
+    type: 'RM' | 'PPM' | 'PM' | 'RM COA' | 'PM COA' | 'PPM COA' | 'Bulk COA' | 'Finish COA' | 'Yield';
     /** When set, the row fills available width (aligned stacked columns in MFC headers). */
     stretch?: boolean;
 }
@@ -709,7 +715,7 @@ function BatchStatusCapsule({ matched, unmatched, onGreenClick, onRedClick, size
                 background: '#ecfdf5',
                 padding: size === 'small' ? '2px 5px' : '3px 6px',
                 borderRadius: '4px',
-                textTransform: (type === 'RM COA' || type === 'PM COA' || type === 'PPM COA' || type === 'Bulk COA' || type === 'Finish COA') ? 'none' : 'uppercase',
+                textTransform: (type === 'RM COA' || type === 'PM COA' || type === 'PPM COA' || type === 'Bulk COA' || type === 'Finish COA' || type === 'Yield') ? 'none' : 'uppercase',
                 letterSpacing: '0.5px',
                 width: size === 'small' ? '56px' : undefined,
                 minWidth: size === 'small' ? '56px' : undefined,
@@ -923,6 +929,146 @@ function MiniArStatusCapsule({ label, found, missing, accent: _accent, onFoundCl
                     </button>
                 )}
             </div>
+        </div>
+    );
+}
+
+// ============================================
+// Process Capability indices (Cpk / Ppk) — APQR Section 5.3.1 / 5.3.2
+// ============================================
+function CapabilityValuePill({ label, value }: { label: string; value: number | null }) {
+    const fmt = value != null && !isNaN(value) ? value.toFixed(2) : '—';
+    const capable = value != null && value >= 1.33;
+    return (
+        <span style={{
+            fontSize: '10px',
+            fontWeight: 700,
+            color: capable ? '#047857' : value != null ? '#b45309' : '#6b7280',
+            background: capable ? 'rgba(16, 185, 129, 0.12)' : value != null ? 'rgba(245, 158, 11, 0.12)' : '#f3f4f6',
+            padding: '2px 6px',
+            borderRadius: '6px',
+            border: `1px solid ${capable ? 'rgba(16, 185, 129, 0.35)' : value != null ? 'rgba(245, 158, 11, 0.35)' : '#e5e7eb'}`,
+            whiteSpace: 'nowrap',
+        }}>
+            {label} {fmt}
+        </span>
+    );
+}
+
+function CapabilityParameterColumn({ column }: { column: MfcCapabilityColumn }) {
+    return (
+        <div
+            style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '3px',
+                flexShrink: 0,
+            }}
+            title={`${column.label}: Cpk & Ppk (APQR process capability)`}
+        >
+            <span style={{
+                fontSize: '9px',
+                fontWeight: 700,
+                color: '#0e7490',
+                background: '#ecfeff',
+                padding: '2px 5px',
+                borderRadius: '4px',
+                textAlign: 'center',
+                whiteSpace: 'nowrap',
+                maxWidth: '140px',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+            }}>
+                {column.label}
+            </span>
+            <div style={{ display: 'flex', flexWrap: 'nowrap', gap: '4px' }}>
+                <CapabilityValuePill label="Cpk" value={column.cpk} />
+                <CapabilityValuePill label="Ppk" value={column.ppk} />
+            </div>
+        </div>
+    );
+}
+
+function CapabilityStageSection({
+    title,
+    columns,
+    accent = '#0e7490',
+}: {
+    title: string;
+    columns: MfcCapabilityColumn[];
+    accent?: string;
+}) {
+    if (!columns.length) return null;
+    return (
+        <div style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '6px',
+            padding: '6px 8px',
+            background: 'rgba(255,255,255,0.65)',
+            borderRadius: '8px',
+            border: '1px solid rgba(14, 116, 144, 0.15)',
+            flexShrink: 0,
+        }}>
+            <span style={{
+                fontSize: '9px',
+                fontWeight: 800,
+                color: accent,
+                letterSpacing: '0.04em',
+                textTransform: 'uppercase',
+                whiteSpace: 'nowrap',
+            }}>
+                {title}
+            </span>
+            <div style={{ display: 'flex', flexDirection: 'row', flexWrap: 'nowrap', gap: '10px', alignItems: 'flex-start' }}>
+                {columns.map((col, i) => (
+                    <CapabilityParameterColumn key={`${title}-${col.label}-${i}`} column={col} />
+                ))}
+            </div>
+        </div>
+    );
+}
+
+interface CapabilityIndicesGroupProps {
+    bulk: MfcBulkCapability;
+    finish: MfcFinishSpecCapability[];
+    loading?: boolean;
+}
+
+/** Bulk + each finish pharmacopoeia (IP, USP, …) with all parameter columns. */
+function CapabilityIndicesGroup({ bulk, finish, loading }: CapabilityIndicesGroupProps) {
+    const hasBulk = bulk.columns.length > 0;
+    const hasFinish = finish.some(s => s.columns.length > 0);
+    if (!hasBulk && !hasFinish && !loading) return null;
+
+    return (
+        <div
+            style={{
+                display: 'flex',
+                flexDirection: 'row',
+                flexWrap: 'wrap',
+                alignItems: 'flex-start',
+                gap: '10px',
+                width: '100%',
+                maxWidth: '100%',
+            }}
+            title="Process capability Cpk / Ppk per parameter (APQR Sections 5.3.1 & 5.3.2)"
+        >
+            {loading && !hasBulk && !hasFinish ? (
+                <span style={{ fontSize: '0.6rem', color: '#9ca3af' }}>Cpk/Ppk …</span>
+            ) : (
+                <>
+                    <CapabilityStageSection title="Bulk" columns={bulk.columns} accent="#0891b2" />
+                    {finish.map(spec => (
+                        <CapabilityStageSection
+                            key={spec.specLabel || spec.spec}
+                            title={(spec.specLabel || `AS PER ${spec.spec}:`).replace(/:$/, '')}
+                            columns={spec.columns}
+                            accent="#7c3aed"
+                        />
+                    ))}
+                </>
+            )}
         </div>
     );
 }
@@ -1326,6 +1472,21 @@ export default function FormulaDataPage() {
     const [globalFinishCoaUnqualified, setGlobalFinishCoaUnqualified] = useState<number>(0);
     // Set of batch numbers that have Finish COA data (for per-section calculation)
     const [finishCoaQualifiedBatchNumbers, setFinishCoaQualifiedBatchNumbers] = useState<Set<string>>(new Set());
+    // Set of batch numbers that exist in yield data (for per-section Yield capsule calculation)
+    const [yieldBatchNumbers, setYieldBatchNumbers] = useState<Set<string>>(new Set());
+    // Full yield records map (batchNo → yield record) for the modal
+    const [yieldRecordsByBatch, setYieldRecordsByBatch] = useState<Map<string, any>>(new Map());
+    // Yield modal state
+    const [showYieldModal, setShowYieldModal] = useState(false);
+    const [yieldModalType, setYieldModalType] = useState<'matched' | 'unmatched'>('matched');
+    const [yieldModalSubtitle, setYieldModalSubtitle] = useState('');
+    const [yieldModalSection, setYieldModalSection] = useState<'main' | 'lowBatch' | 'noBatch' | 'placebo' | 'all'>('all');
+    const [yieldModalData, setYieldModalData] = useState<any[]>([]);
+    const [yieldModalSearchQuery, setYieldModalSearchQuery] = useState('');
+    const [yieldModalSearchField, setYieldModalSearchField] = useState('all');
+    // Per-product Cpk/Ppk for MFC headers (bulk + finish, APQR process capability logic)
+    const [processCapabilityByProduct, setProcessCapabilityByProduct] = useState<Record<string, MfcProcessCapabilitySummary>>({});
+    const [processCapabilityLoading, setProcessCapabilityLoading] = useState(false);
     // Product Master cross-reference data: productCode (uppercase) -> full error info
     const [productMasterCrossRef, setProductMasterCrossRef] = useState<Record<string, { productName: string; masterCardNo: string; missingFields: string[]; mismatchFields: string[] }> | null>(null);
     // Global RM COA unique AR numbers count for footer display
@@ -2990,11 +3151,72 @@ export default function FormulaDataPage() {
         return () => { cancelled = true; };
     }, [selectedFilterYear]);
 
+    // Fetch Cpk/Ppk summaries for all visible MFCs (batched; respects year filter)
+    useEffect(() => {
+        if (filteredFormulas.length === 0) {
+            setProcessCapabilityByProduct({});
+            return;
+        }
+        const productCodes = [...new Set(
+            filteredFormulas
+                .map(f => (f.masterFormulaDetails?.productCode || '').trim())
+                .filter(c => c && c !== 'N/A'),
+        )];
+        if (productCodes.length === 0) {
+            setProcessCapabilityByProduct({});
+            return;
+        }
+
+        let cancelled = false;
+        setProcessCapabilityLoading(true);
+        fetch('/api/apqr/process-capability', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                productCodes,
+                year: selectedFilterYear
+                    ? parseInt(selectedFilterYear, 10)
+                    : new Date().getFullYear(),
+            }),
+        })
+            .then(r => r.json())
+            .then(d => {
+                if (cancelled) return;
+                setProcessCapabilityByProduct(d.success && d.summaries ? d.summaries : {});
+            })
+            .catch(() => {
+                if (!cancelled) setProcessCapabilityByProduct({});
+            })
+            .finally(() => {
+                if (!cancelled) setProcessCapabilityLoading(false);
+            });
+
+        return () => { cancelled = true; };
+    }, [filteredFormulas, selectedFilterYear]);
+
     useEffect(() => {
         fetchFormulas();
         fetchBatchReconciliation();
         fetchAllBatches();
         fetchTrialBatches();
+        // Fetch yield batch numbers for the Yield capsule and modal
+        fetch('/api/yield?page=1&limit=10000')
+            .then(r => r.json())
+            .then(d => {
+                if (d.success && d.data) {
+                    const batchNos = new Set<string>();
+                    const recordsMap = new Map<string, any>();
+                    (d.data as any[]).forEach((item: any) => {
+                        const key = (item.batchNo || '').toString().trim().toUpperCase();
+                        if (!key) return;
+                        batchNos.add(key);
+                        if (!recordsMap.has(key)) recordsMap.set(key, item);
+                    });
+                    setYieldBatchNumbers(batchNos);
+                    setYieldRecordsByBatch(recordsMap);
+                }
+            })
+            .catch(() => { /* silently ignore if unavailable */ });
         // Fetch AST & RST availability data
         fetch('/api/ast-rst')
             .then(r => r.json())
@@ -5337,6 +5559,124 @@ export default function FormulaDataPage() {
         setFinishCoaSearchField('all');
     }, []);
 
+    const openYieldModal = useCallback((
+        type: 'matched' | 'unmatched',
+        section: 'main' | 'lowBatch' | 'noBatch' | 'placebo' | 'all' = 'all',
+        explicitFormulas: any[] = []
+    ) => {
+        const normBatch = (b: string | null | undefined) => (b || '').toString().trim().toUpperCase();
+
+        setShowYieldModal(true);
+        setYieldModalType(type);
+        setYieldModalSection(section);
+        setYieldModalSearchQuery('');
+        setYieldModalSearchField('all');
+
+        const yearSuffix = selectedFilterYear ? ` • Year: ${selectedFilterYear}` : '';
+        if (explicitFormulas && explicitFormulas.length === 1) {
+            const mfc = explicitFormulas[0].masterFormulaDetails?.masterCardNo || 'Unknown MFC';
+            const product = explicitFormulas[0].masterFormulaDetails?.productName || '';
+            setYieldModalSubtitle(`Filtered by MFC: ${mfc} - ${product}${yearSuffix}`);
+        } else if (section !== 'all') {
+            setYieldModalSubtitle(
+                `Filtered by ${section === 'main'
+                    ? 'MFCs with 3+ batches'
+                    : section === 'lowBatch'
+                        ? 'MFCs with 1–2 batches'
+                        : section === 'noBatch'
+                            ? 'MFCs with 0 batches'
+                            : 'Placebo & Media Fill'
+                }${yearSuffix}`
+            );
+        } else {
+            setYieldModalSubtitle(selectedFilterYear ? `Year: ${selectedFilterYear}` : '');
+        }
+
+        // Build allowed batch numbers for this scope
+        const getFormulaProductCodes = (f: any): string[] => {
+            const codes: string[] = [];
+            const mainCode = f.masterFormulaDetails?.productCode;
+            if (mainCode && mainCode !== 'N/A') codes.push(mainCode);
+            if (f.fillingDetails && Array.isArray(f.fillingDetails)) {
+                f.fillingDetails.forEach((fd: any) => {
+                    if (fd.productCode && fd.productCode !== 'N/A' && !codes.includes(fd.productCode)) codes.push(fd.productCode);
+                });
+            }
+            if (f.processes && Array.isArray(f.processes)) {
+                f.processes.forEach((p: any) => {
+                    if (p.fillingProducts && Array.isArray(p.fillingProducts)) {
+                        p.fillingProducts.forEach((fp: any) => {
+                            if (fp.productCode && !codes.includes(fp.productCode)) codes.push(fp.productCode);
+                        });
+                    }
+                });
+            }
+            return codes;
+        };
+
+        const isFiltering = explicitFormulas && explicitFormulas.length > 0;
+        const validProductCodes = new Set<string>();
+        if (isFiltering) explicitFormulas.forEach(f => getFormulaProductCodes(f).forEach(code => validProductCodes.add(code)));
+
+        const productCodeToSection = buildProductCodeToSectionMap();
+
+        // Build rows from yearFilteredBatches — deduplicate by batchNorm so count matches capsule
+        const seenBatches = new Set<string>();
+        const rows: any[] = [];
+        yearFilteredBatches.forEach((batch: any) => {
+            const bnNorm = normBatch(batch.batchNumber);
+            if (!bnNorm) return;
+            if (seenBatches.has(bnNorm)) return; // deduplicate
+
+            if (isFiltering) {
+                const ic = (batch.itemCode || '').toString().trim().toUpperCase();
+                if (!validProductCodes.has(ic) && !validProductCodes.has(batch.itemCode)) return;
+            } else if (section !== 'all') {
+                const ic = (batch.itemCode || '').toString().trim().toUpperCase();
+                const cat = (ic ? productCodeToSection.get(ic) : undefined) ?? 'main';
+                if (cat !== section) return;
+            }
+
+            const inYield = yieldBatchNumbers.has(bnNorm);
+            if (type === 'matched' && !inYield) return;
+            if (type === 'unmatched' && inYield) return;
+
+            seenBatches.add(bnNorm);
+
+            const yieldRecord = yieldRecordsByBatch.get(bnNorm);
+            rows.push({
+                batchNumber: batch.batchNumber,
+                batchNorm: bnNorm,
+                itemCode: batch.itemCode || 'N/A',
+                batchSize: batch.batchSize || batch.quantity || 'N/A',
+                batchMfgDate: batch.mfgDate || batch.manufacturingDate || 'N/A',
+                batchExpDate: batch.expiryDate || batch.expDate || 'N/A',
+                // yield fields (populated for matched, N/A for unmatched)
+                yieldProductName: yieldRecord?.productName || 'N/A',
+                yieldProductCode: yieldRecord?.productCode || 'N/A',
+                yieldMfgDate: yieldRecord?.mfgDate || 'N/A',
+                yieldExpDate: yieldRecord?.expDate || 'N/A',
+                actualYield: yieldRecord?.actualYield ?? 'N/A',
+                standardYield: yieldRecord?.standardYield ?? 'N/A',
+                startDate: yieldRecord?.startDate || 'N/A',
+                completeDate: yieldRecord?.completeDate || 'N/A',
+                totalDays: yieldRecord?.totalDays ?? 'N/A',
+                batchSizeLtrOrKg: yieldRecord?.batchSizeLtrOrKg || 'N/A',
+            });
+        });
+
+        setYieldModalData(rows);
+    }, [selectedFilterYear, yearFilteredBatches, yieldBatchNumbers, yieldRecordsByBatch, buildProductCodeToSectionMap]);
+
+    const closeYieldModal = useCallback(() => {
+        setShowYieldModal(false);
+        setYieldModalData([]);
+        setYieldModalSubtitle('');
+        setYieldModalSection('all');
+        setYieldModalSearchQuery('');
+        setYieldModalSearchField('all');
+    }, []);
+
     const openRmCoaModal = useCallback(async (
         type: 'matched' | 'unmatched',
         section: 'main' | 'lowBatch' | 'noBatch' | 'placebo' | 'all' = 'all',
@@ -7141,6 +7481,71 @@ export default function FormulaDataPage() {
         return counts;
     }, [yearFilteredBatches, finishCoaQualifiedBatchNumbers, mainFormulas, lowBatchFormulas, noBatchFormulas, placeboFormulas]);
 
+    // Per-section Yield: count unique batch numbers (same dedup rule as sectionBulkCoaData)
+    const sectionYieldData = useMemo(() => {
+        if (!yearFilteredBatches || yearFilteredBatches.length === 0) {
+            return {
+                main: { qualified: 0, unqualified: 0 },
+                lowBatch: { qualified: 0, unqualified: 0 },
+                noBatch: { qualified: 0, unqualified: 0 },
+                placebo: { qualified: 0, unqualified: 0 },
+            };
+        }
+
+        const productCodeToCategory = new Map<string, 'main' | 'lowBatch' | 'noBatch' | 'placebo'>();
+        const getFormulaProductCodes = (f: FormulaRecord): string[] => {
+            const codes: string[] = [];
+            const mainCode = f.masterFormulaDetails?.productCode;
+            if (mainCode && mainCode !== 'N/A') codes.push(mainCode);
+            if (f.fillingDetails && Array.isArray(f.fillingDetails)) {
+                f.fillingDetails.forEach((fd: FillingDetail) => {
+                    if (fd.productCode && fd.productCode !== 'N/A' && !codes.includes(fd.productCode)) codes.push(fd.productCode);
+                });
+            }
+            if (f.processes && Array.isArray(f.processes)) {
+                f.processes.forEach((p: ProcessData) => {
+                    if (p.fillingProducts && Array.isArray(p.fillingProducts)) {
+                        p.fillingProducts.forEach((fp: AsepticFillingProduct) => {
+                            if (fp.productCode && !codes.includes(fp.productCode)) codes.push(fp.productCode);
+                        });
+                    }
+                });
+            }
+            return codes;
+        };
+
+        mainFormulas.forEach(f => { getFormulaProductCodes(f).forEach(code => { if (!productCodeToCategory.has(code)) productCodeToCategory.set(code, 'main'); }); });
+        lowBatchFormulas.forEach(f => { getFormulaProductCodes(f).forEach(code => { if (!productCodeToCategory.has(code)) productCodeToCategory.set(code, 'lowBatch'); }); });
+        noBatchFormulas.forEach(f => { getFormulaProductCodes(f).forEach(code => { if (!productCodeToCategory.has(code)) productCodeToCategory.set(code, 'noBatch'); }); });
+        placeboFormulas.forEach(f => { getFormulaProductCodes(f).forEach(code => { if (!productCodeToCategory.has(code)) productCodeToCategory.set(code, 'placebo'); }); });
+
+        const counts = {
+            main: { qualified: 0, unqualified: 0 },
+            lowBatch: { qualified: 0, unqualified: 0 },
+            noBatch: { qualified: 0, unqualified: 0 },
+            placebo: { qualified: 0, unqualified: 0 },
+        };
+
+        // Deduplicate by batch number (first occurrence wins for category)
+        const uniqueBatchMap = new Map<string, { batchNumber: string; itemCode?: string }>();
+        yearFilteredBatches.forEach(batch => {
+            const key = (batch?.batchNumber || '').toString().trim().toUpperCase();
+            if (!key || uniqueBatchMap.has(key)) return;
+            uniqueBatchMap.set(key, { batchNumber: batch.batchNumber, itemCode: batch.itemCode });
+        });
+
+        uniqueBatchMap.forEach(batch => {
+            const itemCode = batch.itemCode;
+            const category = (itemCode ? productCodeToCategory.get(itemCode) : undefined) || 'main';
+            const bnNorm = (batch.batchNumber || '').toString().trim().toUpperCase();
+            if (!bnNorm) return;
+            if (yieldBatchNumbers.has(bnNorm)) counts[category].qualified++;
+            else counts[category].unqualified++;
+        });
+
+        return counts;
+    }, [yearFilteredBatches, yieldBatchNumbers, mainFormulas, lowBatchFormulas, noBatchFormulas, placeboFormulas]);
+
     // Per-formula stats for MFC row badges from the same batch universe as `yearFilteredBatches`
     // (all batches when no year is selected; year-sliced when a year is selected).
     const perFormulaYearFilteredStats = useMemo(() => {
@@ -7175,6 +7580,7 @@ export default function FormulaDataPage() {
             pmMatched: number; pmUnmatched: number;
             bulkCoaQualified: number; bulkCoaUnqualified: number;
             finishCoaQualified: number; finishCoaUnqualified: number;
+            yieldQualified: number; yieldUnqualified: number;
             rmCoaQualified: number; rmCoaUnqualified: number;
             rmCoaArFound: number; rmCoaArMissing: number;
             ppmCoaQualified: number; ppmCoaUnqualified: number;
@@ -7230,6 +7636,12 @@ export default function FormulaDataPage() {
                     if (!bnNorm) return;
                     if (finishCoaQualifiedBatchNumbers.has(bnNorm)) finishCoaQualified++; else finishCoaUnqualified++;
                 }
+            });
+            // Yield: per unique batch (same dedup as RM — found + missing = unique batch count)
+            let yieldQualified = 0, yieldUnqualified = 0;
+            uniqueBatchNums.forEach(bnNorm => {
+                if (!bnNorm) return;
+                if (yieldBatchNumbers.has(bnNorm)) yieldQualified++; else yieldUnqualified++;
             });
 
             // RM COA (unique batches among requisition-found), same rules as section RM COA
@@ -7300,6 +7712,7 @@ export default function FormulaDataPage() {
                 pmMatched, pmUnmatched,
                 bulkCoaQualified, bulkCoaUnqualified,
                 finishCoaQualified, finishCoaUnqualified,
+                yieldQualified, yieldUnqualified,
                 rmCoaQualified, rmCoaUnqualified,
                 rmCoaArFound: rmCoaFoundAr.size,
                 rmCoaArMissing: rmCoaMissAr.size,
@@ -7313,7 +7726,7 @@ export default function FormulaDataPage() {
         });
 
         return statsMap;
-    }, [filteredFormulas, yearFilteredBatches, rmBatchNumbers, ppmBatchNumbers, pmBatchNumbers, bulkCoaQualifiedBatchNumbers, finishCoaQualifiedBatchNumbers, rmCoaReqFoundBatchNumbers, rmCoaFoundBatchNumbers, rmCoaVerificationRows, ppmCoaReqFoundBatchNumbers, ppmCoaFoundBatchNumbers, ppmCoaVerificationRows, pmCoaReqFoundBatchNumbers, pmCoaFoundBatchNumbers, pmCoaVerificationRows]);
+    }, [filteredFormulas, yearFilteredBatches, rmBatchNumbers, ppmBatchNumbers, pmBatchNumbers, bulkCoaQualifiedBatchNumbers, finishCoaQualifiedBatchNumbers, yieldBatchNumbers, rmCoaReqFoundBatchNumbers, rmCoaFoundBatchNumbers, rmCoaVerificationRows, ppmCoaReqFoundBatchNumbers, ppmCoaFoundBatchNumbers, ppmCoaVerificationRows, pmCoaReqFoundBatchNumbers, pmCoaFoundBatchNumbers, pmCoaVerificationRows]);
 
     const toggleMfc = (mfcId: string) => {
         setExpandedMfc(expandedMfc === mfcId ? null : mfcId);
@@ -7352,6 +7765,10 @@ export default function FormulaDataPage() {
         finishCoaUnqualified,
         onFinishCoaQualifiedClick,
         onFinishCoaUnqualifiedClick,
+        yieldQualified,
+        yieldUnqualified,
+        onYieldQualifiedClick,
+        onYieldUnqualifiedClick,
         rmCoaQualified,
         rmCoaUnqualified,
         onRmCoaQualifiedClick,
@@ -7413,6 +7830,10 @@ export default function FormulaDataPage() {
         finishCoaUnqualified?: number;
         onFinishCoaQualifiedClick?: () => void;
         onFinishCoaUnqualifiedClick?: () => void;
+        yieldQualified?: number;
+        yieldUnqualified?: number;
+        onYieldQualifiedClick?: () => void;
+        onYieldUnqualifiedClick?: () => void;
         rmCoaQualified?: number;
         rmCoaUnqualified?: number;
         onRmCoaQualifiedClick?: () => void;
@@ -7689,11 +8110,11 @@ export default function FormulaDataPage() {
                             </div>
                         )}
                     </div>
-                    {/* Second Row: Bulk COA, Finish COA, and Product Master capsules */}
+                    {/* Second Row: Bulk COA, Finish COA, and Yield capsules */}
                     {((rmCoaQualified !== undefined || rmCoaUnqualified !== undefined) && ((rmCoaQualified || 0) + (rmCoaUnqualified || 0)) > 0) ||
                         ((bulkCoaQualified !== undefined || bulkCoaUnqualified !== undefined) && (bulkCoaQualified! + bulkCoaUnqualified!) > 0) ||
                         ((finishCoaQualified !== undefined || finishCoaUnqualified !== undefined) && (finishCoaQualified! + finishCoaUnqualified!) > 0) ||
-                        (productMasterStats && (productMasterStats.found + productMasterStats.missingFromPM) > 0) ? (
+                        ((yieldQualified !== undefined || yieldUnqualified !== undefined) && ((yieldQualified || 0) + (yieldUnqualified || 0)) > 0) ? (
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginTop: '8px', paddingLeft: '480px', flexWrap: 'wrap' }}>
                             {/* Bulk COA Status Capsule */}
                             {(bulkCoaQualified !== undefined || bulkCoaUnqualified !== undefined) && (bulkCoaQualified! + bulkCoaUnqualified!) > 0 && (
@@ -7721,15 +8142,18 @@ export default function FormulaDataPage() {
                                     />
                                 </div>
                             )}
-                            {/* Product Master Capsule */}
-                            {productMasterStats && (productMasterStats.found + productMasterStats.missingFromPM) > 0 && (
-                                <ProductMasterCapsule
-                                    stats={productMasterStats}
-                                    onFoundClick={onPmFoundClick}
-                                    onMissingClick={onPmMissingClick}
-                                    onErrorsClick={onPmErrorsClick}
-                                    onOkClick={onPmOkClick}
-                                />
+                            {/* Yield Status Capsule */}
+                            {(yieldQualified !== undefined || yieldUnqualified !== undefined) && ((yieldQualified || 0) + (yieldUnqualified || 0)) > 0 && (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'flex-start', width: 'auto', flexShrink: 0 }}>
+                                    <BatchStatusCapsule
+                                        matched={yieldQualified || 0}
+                                        unmatched={yieldUnqualified || 0}
+                                        onGreenClick={onYieldQualifiedClick}
+                                        onRedClick={onYieldUnqualifiedClick}
+                                        size="medium"
+                                        type="Yield"
+                                    />
+                                </div>
                             )}
                         </div>
                     ) : null}
@@ -12809,6 +13233,10 @@ export default function FormulaDataPage() {
                                 finishCoaUnqualified={sectionFinishCoaData.main.unqualified}
                                 onFinishCoaQualifiedClick={() => openFinishCoaModal('matched', 'main', mainFormulas)}
                                 onFinishCoaUnqualifiedClick={() => openFinishCoaModal('unmatched', 'main', mainFormulas)}
+                                yieldQualified={sectionYieldData.main.qualified}
+                                yieldUnqualified={sectionYieldData.main.unqualified}
+                                onYieldQualifiedClick={() => openYieldModal('matched', 'main', mainFormulas)}
+                                onYieldUnqualifiedClick={() => openYieldModal('unmatched', 'main', mainFormulas)}
                                 rmCoaQualified={sectionRmCoaData.main.qualified}
                                 rmCoaUnqualified={sectionRmCoaData.main.unqualified}
                                 onRmCoaQualifiedClick={() => openRmCoaModal('matched', 'main', mainFormulas)}
@@ -12865,6 +13293,12 @@ export default function FormulaDataPage() {
                                     const effectiveBulkCoaUnqualified = yearStats ? yearStats.bulkCoaUnqualified : ((formula as any).bulkCoaUnqualified || 0);
                                     const effectiveFinishCoaQualified = yearStats ? yearStats.finishCoaQualified : ((formula as any).finishCoaQualified || 0);
                                     const effectiveFinishCoaUnqualified = yearStats ? yearStats.finishCoaUnqualified : ((formula as any).finishCoaUnqualified || 0);
+                                    const effectiveYieldQualified = yearStats ? yearStats.yieldQualified : 0;
+                                    const effectiveYieldUnqualified = yearStats ? yearStats.yieldUnqualified : 0;
+                                    const mfcProductCode = (formula.masterFormulaDetails?.productCode || '').trim();
+                                    const mfcCapability = mfcProductCode
+                                        ? processCapabilityByProduct[mfcProductCode]
+                                        : undefined;
                                     const effectiveRmCoaQualified = yearStats?.rmCoaQualified ?? 0;
                                     const effectiveRmCoaUnqualified = yearStats?.rmCoaUnqualified ?? 0;
                                     const effectiveRmCoaArFound = yearStats?.rmCoaArFound ?? 0;
@@ -13193,12 +13627,18 @@ export default function FormulaDataPage() {
 
                                                         const showBulkCoa = ((effectiveBulkCoaQualified || 0) + (effectiveBulkCoaUnqualified || 0)) > 0;
                                                         const showFinishCoa = ((effectiveFinishCoaQualified || 0) + (effectiveFinishCoaUnqualified || 0)) > 0;
+                                                        const showYield = ((effectiveYieldQualified || 0) + (effectiveYieldUnqualified || 0)) > 0;
+                                                        const showCapabilityGroup = processCapabilityLoading || (mfcCapability && (
+                                                            mfcCapability.bulk.columns.length > 0
+                                                            || mfcCapability.finish.some(s => s.columns.length > 0)
+                                                        ));
 
                                                         // Fixed, table-like layout (no borders): columns never reflow per card.
-                                                        // Layout matches the section header (image 1):
+                                                        // Layout matches the section header:
                                                         // - Row 1: RM / PPM / PM + RM COA / PPM COA / PM COA
                                                         // - Row 2: RM total + AR rows under COA columns
-                                                        // - Row 3: Bulk COA + Finish COA on the left
+                                                        // - Row 3: Bulk COA + Finish COA + Yield
+                                                        // - Row 4: Bulk + Finish Cpk/Ppk grouped side-by-side
                                                         // Each cell contains: LABEL (fixed ~56px) + CAPSULE.
                                                         // So columns must be wide enough to avoid squeezing the capsule.
                                                         const reqColWidth = 155;
@@ -13390,10 +13830,39 @@ export default function FormulaDataPage() {
                                                                             />
                                                                         ) : placeholder(26)}
                                                                     </div>
+                                                                    <div style={{ ...cellBase, justifyContent: 'flex-start' }}>
+                                                                        {showYield ? (
+                                                                            <BatchStatusCapsule
+                                                                                type="Yield"
+                                                                                matched={effectiveYieldQualified}
+                                                                                unmatched={effectiveYieldUnqualified}
+                                                                                onGreenClick={() => openYieldModal('matched', 'main', [formula])}
+                                                                                onRedClick={() => openYieldModal('unmatched', 'main', [formula])}
+                                                                                size="small"
+                                                                                stretch
+                                                                            />
+                                                                        ) : placeholder(26)}
+                                                                    </div>
                                                                     <div style={{ ...cellBase, justifyContent: 'flex-start' }}>{placeholder(26)}</div>
                                                                     <div style={{ ...cellBase, justifyContent: 'flex-start' }}>{placeholder(26)}</div>
-                                                                    <div style={{ ...cellBase, justifyContent: 'flex-start' }}>{placeholder(26)}</div>
-                                                                    <div style={{ ...cellBase, justifyContent: 'flex-start' }}>{placeholder(26)}</div>
+
+                                                                    {/* Row 4: Bulk + Finish (IP, USP, …) Cpk/Ppk per parameter column */}
+                                                                    <div style={{
+                                                                        ...cellBase,
+                                                                        justifyContent: 'flex-start',
+                                                                        gridColumn: '1 / -1',
+                                                                        overflowX: 'auto',
+                                                                    }}>
+                                                                        {showCapabilityGroup ? (
+                                                                            <CapabilityIndicesGroup
+                                                                                bulk={mfcCapability?.bulk ?? { columns: [] }}
+                                                                                finish={mfcCapability?.finish ?? []}
+                                                                                loading={processCapabilityLoading && !mfcCapability}
+                                                                            />
+                                                                        ) : (
+                                                                            placeholder(26)
+                                                                        )}
+                                                                    </div>
                                                                     </div>
                                                                 </div>
 
@@ -14731,6 +15200,10 @@ export default function FormulaDataPage() {
                                     finishCoaUnqualified={sectionFinishCoaData.lowBatch.unqualified}
                                     onFinishCoaQualifiedClick={() => openFinishCoaModal('matched', 'lowBatch', lowBatchFormulas)}
                                     onFinishCoaUnqualifiedClick={() => openFinishCoaModal('unmatched', 'lowBatch', lowBatchFormulas)}
+                                    yieldQualified={sectionYieldData.lowBatch.qualified}
+                                    yieldUnqualified={sectionYieldData.lowBatch.unqualified}
+                                    onYieldQualifiedClick={() => openYieldModal('matched', 'lowBatch', lowBatchFormulas)}
+                                    onYieldUnqualifiedClick={() => openYieldModal('unmatched', 'lowBatch', lowBatchFormulas)}
                                     rmCoaQualified={sectionRmCoaData.lowBatch.qualified}
                                     rmCoaUnqualified={sectionRmCoaData.lowBatch.unqualified}
                                     onRmCoaQualifiedClick={() => openRmCoaModal('matched', 'lowBatch', lowBatchFormulas)}
@@ -14917,6 +15390,28 @@ export default function FormulaDataPage() {
                                                             );
                                                         })()}
 
+                                                        {rowYearStatsLb && ((rowYearStatsLb.yieldQualified || 0) + (rowYearStatsLb.yieldUnqualified || 0)) > 0 && (
+                                                            <BatchStatusCapsule
+                                                                type="Yield"
+                                                                matched={rowYearStatsLb.yieldQualified}
+                                                                unmatched={rowYearStatsLb.yieldUnqualified}
+                                                                onGreenClick={() => openYieldModal('matched', 'lowBatch', [formula])}
+                                                                onRedClick={() => openYieldModal('unmatched', 'lowBatch', [formula])}
+                                                                size="small"
+                                                            />
+                                                        )}
+                                                        {(() => {
+                                                            const cap = processCapabilityByProduct[(formula.masterFormulaDetails?.productCode || '').trim()];
+                                                            if (!cap && !processCapabilityLoading) return null;
+                                                            return (
+                                                                <CapabilityIndicesGroup
+                                                                    bulk={cap?.bulk ?? { columns: [] }}
+                                                                    finish={cap?.finish ?? []}
+                                                                    loading={processCapabilityLoading && !cap}
+                                                                />
+                                                            );
+                                                        })()}
+
                                                     </div>
                                                 </div>
                                             );
@@ -14958,6 +15453,10 @@ export default function FormulaDataPage() {
                                     finishCoaUnqualified={sectionFinishCoaData.noBatch.unqualified}
                                     onFinishCoaQualifiedClick={() => openFinishCoaModal('matched', 'noBatch', noBatchFormulas)}
                                     onFinishCoaUnqualifiedClick={() => openFinishCoaModal('unmatched', 'noBatch', noBatchFormulas)}
+                                    yieldQualified={sectionYieldData.noBatch.qualified}
+                                    yieldUnqualified={sectionYieldData.noBatch.unqualified}
+                                    onYieldQualifiedClick={() => openYieldModal('matched', 'noBatch', noBatchFormulas)}
+                                    onYieldUnqualifiedClick={() => openYieldModal('unmatched', 'noBatch', noBatchFormulas)}
                                     rmCoaQualified={sectionRmCoaData.noBatch.qualified}
                                     rmCoaUnqualified={sectionRmCoaData.noBatch.unqualified}
                                     onRmCoaQualifiedClick={() => openRmCoaModal('matched', 'noBatch', noBatchFormulas)}
@@ -15145,6 +15644,17 @@ export default function FormulaDataPage() {
                                                                 />
                                                             );
                                                         })()}
+
+                                                        {rowYearStatsNb && ((rowYearStatsNb.yieldQualified || 0) + (rowYearStatsNb.yieldUnqualified || 0)) > 0 && (
+                                                            <BatchStatusCapsule
+                                                                type="Yield"
+                                                                matched={rowYearStatsNb.yieldQualified}
+                                                                unmatched={rowYearStatsNb.yieldUnqualified}
+                                                                onGreenClick={() => openYieldModal('matched', 'noBatch', [formula])}
+                                                                onRedClick={() => openYieldModal('unmatched', 'noBatch', [formula])}
+                                                                size="small"
+                                                            />
+                                                        )}
                                                     </div>
                                                 </div>
                                             );
@@ -15186,6 +15696,10 @@ export default function FormulaDataPage() {
                                     finishCoaUnqualified={sectionFinishCoaData.placebo.unqualified}
                                     onFinishCoaQualifiedClick={() => openFinishCoaModal('matched', 'placebo', placeboFormulas)}
                                     onFinishCoaUnqualifiedClick={() => openFinishCoaModal('unmatched', 'placebo', placeboFormulas)}
+                                    yieldQualified={sectionYieldData.placebo.qualified}
+                                    yieldUnqualified={sectionYieldData.placebo.unqualified}
+                                    onYieldQualifiedClick={() => openYieldModal('matched', 'placebo', placeboFormulas)}
+                                    onYieldUnqualifiedClick={() => openYieldModal('unmatched', 'placebo', placeboFormulas)}
                                     rmCoaQualified={sectionRmCoaData.placebo.qualified}
                                     rmCoaUnqualified={sectionRmCoaData.placebo.unqualified}
                                     onRmCoaQualifiedClick={() => openRmCoaModal('matched', 'placebo', placeboFormulas)}
@@ -15374,6 +15888,17 @@ export default function FormulaDataPage() {
                                                                 />
                                                             );
                                                         })()}
+
+                                                        {rowYearStatsPb && ((rowYearStatsPb.yieldQualified || 0) + (rowYearStatsPb.yieldUnqualified || 0)) > 0 && (
+                                                            <BatchStatusCapsule
+                                                                type="Yield"
+                                                                matched={rowYearStatsPb.yieldQualified}
+                                                                unmatched={rowYearStatsPb.yieldUnqualified}
+                                                                onGreenClick={() => openYieldModal('matched', 'placebo', [formula])}
+                                                                onRedClick={() => openYieldModal('unmatched', 'placebo', [formula])}
+                                                                size="small"
+                                                            />
+                                                        )}
                                                     </div>
                                                 </div>
                                             );
@@ -23314,6 +23839,252 @@ export default function FormulaDataPage() {
                                         : 'All year-filtered batches have Finish COA coverage for this scope.'}
                                 </div>
                             )}
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Yield Modal */}
+            {showYieldModal && (
+                <div
+                    style={{
+                        position: 'fixed',
+                        inset: 0,
+                        background: 'rgba(0, 0, 0, 0.6)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        zIndex: 1000,
+                        padding: '20px',
+                    }}
+                    onClick={closeYieldModal}
+                >
+                    <div
+                        onClick={(e) => e.stopPropagation()}
+                        style={{
+                            background: 'white',
+                            borderRadius: '16px',
+                            boxShadow: '0 25px 50px rgba(0, 0, 0, 0.25)',
+                            width: '100%',
+                            maxWidth: '1400px',
+                            maxHeight: '90vh',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            overflow: 'hidden',
+                        }}
+                    >
+                        {/* Header */}
+                        <div style={{
+                            padding: '20px 24px',
+                            borderBottom: '1px solid #e2e8f0',
+                            background: yieldModalType === 'matched'
+                                ? 'linear-gradient(to right, #ecfdf5, #d1fae5)'
+                                : 'linear-gradient(to right, #fef2f2, #fff1f1)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                        }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                                <div style={{
+                                    width: '44px',
+                                    height: '44px',
+                                    borderRadius: '12px',
+                                    background: yieldModalType === 'matched'
+                                        ? 'linear-gradient(135deg, #059669, #10b981)'
+                                        : 'linear-gradient(135deg, #ef4444, #dc2626)',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    color: 'white',
+                                    fontSize: '22px',
+                                    fontWeight: 800,
+                                }}>
+                                    {yieldModalType === 'matched' ? '✓' : '✗'}
+                                </div>
+                                <div>
+                                    <h2 style={{ fontSize: '1.35rem', fontWeight: 800, color: '#0f172a', margin: 0 }}>
+                                        Yield - {yieldModalType === 'matched' ? 'Found' : 'Missing'}
+                                    </h2>
+                                    <p style={{ fontSize: '0.9rem', color: '#64748b', margin: '4px 0 0 0' }}>
+                                        {yieldModalSubtitle || (yieldModalType === 'matched'
+                                            ? 'Batches found in both Batch Creation and Yield data'
+                                            : 'Batches in Batch Creation with no matching Yield record')}
+                                    </p>
+                                </div>
+                            </div>
+                            <button
+                                onClick={closeYieldModal}
+                                style={{
+                                    width: '40px',
+                                    height: '40px',
+                                    borderRadius: '10px',
+                                    border: 'none',
+                                    background: '#f1f5f9',
+                                    color: '#64748b',
+                                    fontSize: '20px',
+                                    cursor: 'pointer',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                }}
+                            >
+                                ×
+                            </button>
+                        </div>
+
+                        {/* Stats + Search */}
+                        <div style={{ padding: '16px 24px', background: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
+                            {(() => {
+                                const rows = yieldModalData;
+                                const uniqueProducts = new Set(rows.map(r => (r.itemCode || '').toString().trim()).filter(Boolean));
+                                const uniqueBatches = new Set(rows.map(r => r.batchNorm).filter(Boolean));
+                                return (
+                                    <>
+                                        <div style={{ display: 'flex', gap: '18px', flexWrap: 'wrap', marginBottom: '12px' }}>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                <span style={{ padding: '6px 14px', background: '#8b5cf6', color: 'white', borderRadius: '8px', fontWeight: 800 }}>
+                                                    {uniqueProducts.size.toLocaleString()}
+                                                </span>
+                                                <span style={{ color: '#64748b', fontWeight: 600 }}>Unique Products</span>
+                                            </div>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                <span style={{ padding: '6px 14px', background: yieldModalType === 'matched' ? '#059669' : '#dc2626', color: 'white', borderRadius: '8px', fontWeight: 800 }}>
+                                                    {uniqueBatches.size.toLocaleString()}
+                                                </span>
+                                                <span style={{ color: '#64748b', fontWeight: 600 }}>
+                                                    Batches {yieldModalType === 'matched' ? '(In Yield)' : '(Missing from Yield)'}
+                                                </span>
+                                            </div>
+                                        </div>
+                                        <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
+                                            <div style={{ position: 'relative' }}>
+                                                <input
+                                                    type="text"
+                                                    placeholder="Search batch, product, date..."
+                                                    value={yieldModalSearchQuery}
+                                                    onChange={(e) => setYieldModalSearchQuery(e.target.value)}
+                                                    style={{
+                                                        padding: '8px 12px 8px 32px',
+                                                        borderRadius: '8px',
+                                                        border: '1px solid #cbd5e1',
+                                                        fontSize: '0.85rem',
+                                                        width: '280px',
+                                                        outline: 'none',
+                                                        background: 'white',
+                                                    }}
+                                                />
+                                                <span style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', opacity: 0.4, fontSize: '0.8rem' }}>🔍</span>
+                                            </div>
+                                            <select
+                                                value={yieldModalSearchField}
+                                                onChange={(e) => setYieldModalSearchField(e.target.value)}
+                                                style={{
+                                                    minWidth: '160px',
+                                                    padding: '8px 12px',
+                                                    borderRadius: '8px',
+                                                    border: '1px solid #cbd5e1',
+                                                    fontSize: '0.85rem',
+                                                    background: 'white',
+                                                }}
+                                            >
+                                                <option value="all">All Fields</option>
+                                                <option value="batchNumber">Batch No</option>
+                                                <option value="itemCode">Item Code</option>
+                                                <option value="yieldProductName">Product Name</option>
+                                                <option value="yieldProductCode">Product Code</option>
+                                                <option value="yieldMfgDate">MFG Date</option>
+                                                <option value="yieldExpDate">Exp Date</option>
+                                            </select>
+                                        </div>
+                                    </>
+                                );
+                            })()}
+                        </div>
+
+                        {/* Table */}
+                        <div style={{ flex: 1, overflow: 'auto', padding: '18px 24px' }}>
+                            {(() => {
+                                const q = yieldModalSearchQuery.trim().toLowerCase();
+                                const rows = yieldModalData.filter(r => {
+                                    if (!q) return true;
+                                    const fields = yieldModalSearchField === 'all'
+                                        ? ['batchNumber', 'itemCode', 'yieldProductName', 'yieldProductCode', 'yieldMfgDate', 'yieldExpDate', 'batchMfgDate', 'batchExpDate']
+                                        : [yieldModalSearchField];
+                                    return fields.some(f => (r[f] || '').toString().toLowerCase().includes(q));
+                                });
+
+                                if (rows.length === 0) {
+                                    return (
+                                        <div style={{ textAlign: 'center', padding: '48px 0', color: '#94a3b8' }}>
+                                            {q ? `No results for "${yieldModalSearchQuery}"` : 'No data to display.'}
+                                        </div>
+                                    );
+                                }
+
+                                return (
+                                    <>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                                            <div style={{ color: '#64748b', fontWeight: 700 }}>
+                                                Showing {rows.length.toLocaleString()} records
+                                            </div>
+                                        </div>
+                                        <div style={{ overflowX: 'auto' }}>
+                                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                                                <thead>
+                                                    <tr style={{ background: '#f1f5f9', borderBottom: '2px solid #e2e8f0' }}>
+                                                        <th style={{ padding: '10px 14px', textAlign: 'left', fontWeight: 700, color: '#374151', whiteSpace: 'nowrap' }}>#</th>
+                                                        <th style={{ padding: '10px 14px', textAlign: 'left', fontWeight: 700, color: '#374151', whiteSpace: 'nowrap' }}>Batch No</th>
+                                                        <th style={{ padding: '10px 14px', textAlign: 'left', fontWeight: 700, color: '#374151', whiteSpace: 'nowrap' }}>Item Code</th>
+                                                        {yieldModalType === 'matched' && <>
+                                                            <th style={{ padding: '10px 14px', textAlign: 'left', fontWeight: 700, color: '#374151', whiteSpace: 'nowrap' }}>Product Name</th>
+                                                            <th style={{ padding: '10px 14px', textAlign: 'left', fontWeight: 700, color: '#374151', whiteSpace: 'nowrap' }}>Batch Size</th>
+                                                            <th style={{ padding: '10px 14px', textAlign: 'left', fontWeight: 700, color: '#374151', whiteSpace: 'nowrap' }}>MFG Date</th>
+                                                            <th style={{ padding: '10px 14px', textAlign: 'left', fontWeight: 700, color: '#374151', whiteSpace: 'nowrap' }}>Exp Date</th>
+                                                            <th style={{ padding: '10px 14px', textAlign: 'right', fontWeight: 700, color: '#374151', whiteSpace: 'nowrap' }}>Actual Yield</th>
+                                                            <th style={{ padding: '10px 14px', textAlign: 'right', fontWeight: 700, color: '#374151', whiteSpace: 'nowrap' }}>Std Yield</th>
+                                                            <th style={{ padding: '10px 14px', textAlign: 'left', fontWeight: 700, color: '#374151', whiteSpace: 'nowrap' }}>Start Date</th>
+                                                            <th style={{ padding: '10px 14px', textAlign: 'left', fontWeight: 700, color: '#374151', whiteSpace: 'nowrap' }}>Complete Date</th>
+                                                            <th style={{ padding: '10px 14px', textAlign: 'right', fontWeight: 700, color: '#374151', whiteSpace: 'nowrap' }}>Total Days</th>
+                                                        </>}
+                                                        {yieldModalType === 'unmatched' && <>
+                                                            <th style={{ padding: '10px 14px', textAlign: 'left', fontWeight: 700, color: '#374151', whiteSpace: 'nowrap' }}>Batch Size</th>
+                                                            <th style={{ padding: '10px 14px', textAlign: 'left', fontWeight: 700, color: '#374151', whiteSpace: 'nowrap' }}>MFG Date</th>
+                                                            <th style={{ padding: '10px 14px', textAlign: 'left', fontWeight: 700, color: '#374151', whiteSpace: 'nowrap' }}>Exp Date</th>
+                                                        </>}
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {rows.map((r, i) => (
+                                                        <tr key={r.batchNorm + i} style={{ borderBottom: '1px solid #f1f5f9', background: i % 2 === 0 ? 'white' : '#fafafa' }}>
+                                                            <td style={{ padding: '9px 14px', color: '#94a3b8', fontWeight: 600 }}>{i + 1}</td>
+                                                            <td style={{ padding: '9px 14px', fontFamily: 'monospace', fontWeight: 700, color: yieldModalType === 'matched' ? '#059669' : '#dc2626' }}>
+                                                                {r.batchNumber}
+                                                            </td>
+                                                            <td style={{ padding: '9px 14px', color: '#64748b' }}>{r.itemCode}</td>
+                                                            {yieldModalType === 'matched' && <>
+                                                                <td style={{ padding: '9px 14px', color: '#0f172a' }}>{r.yieldProductName}</td>
+                                                                <td style={{ padding: '9px 14px', color: '#64748b' }}>{r.batchSizeLtrOrKg}</td>
+                                                                <td style={{ padding: '9px 14px', color: '#64748b' }}>{r.yieldMfgDate}</td>
+                                                                <td style={{ padding: '9px 14px', color: '#64748b' }}>{r.yieldExpDate}</td>
+                                                                <td style={{ padding: '9px 14px', textAlign: 'right', fontWeight: 700, color: '#0891b2' }}>{r.actualYield}</td>
+                                                                <td style={{ padding: '9px 14px', textAlign: 'right', color: '#64748b' }}>{r.standardYield}</td>
+                                                                <td style={{ padding: '9px 14px', color: '#64748b' }}>{r.startDate}</td>
+                                                                <td style={{ padding: '9px 14px', color: '#64748b' }}>{r.completeDate}</td>
+                                                                <td style={{ padding: '9px 14px', textAlign: 'right', color: '#64748b' }}>{r.totalDays}</td>
+                                                            </>}
+                                                            {yieldModalType === 'unmatched' && <>
+                                                                <td style={{ padding: '9px 14px', color: '#64748b' }}>{r.batchSize}</td>
+                                                                <td style={{ padding: '9px 14px', color: '#64748b' }}>{r.batchMfgDate}</td>
+                                                                <td style={{ padding: '9px 14px', color: '#dc2626' }}>{r.batchExpDate}</td>
+                                                            </>}
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </>
+                                );
+                            })()}
                         </div>
                     </div>
                 </div>

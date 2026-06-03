@@ -9,6 +9,7 @@
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import * as XLSX from 'xlsx-js-style';
+import { normalizeStorageCondition } from '@/lib/storageCondition';
 
 interface ProductMaster {
   _id: string;
@@ -82,12 +83,6 @@ const isValidEffBatch = (value: string | undefined | null): boolean => {
   if (EFF_BATCH_MISSING_VALUES.has(trimmed.toLowerCase())) return false;
   if (!/\w/.test(trimmed)) return false;
   return true;
-};
-
-// Normalize storage condition: replace '?' that is a mis-encoded degree symbol (e.g. "2-8?C" → "2-8°C")
-const normalizeStorageCondition = (val: string | undefined | null): string => {
-  if (!val) return val as string;
-  return val.replace(/\?(?=[Cc])/g, '°');
 };
 
 // Dynamic column config — all table fields to be checked for missing data.

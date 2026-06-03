@@ -39,6 +39,11 @@ export interface AssayResult {
   result: string;       // e.g., "103.1%"
   resultAlt?: string;   // Alternative format, e.g., "2.06 % w/v"
   complies: boolean;
+  // Pharmacopoeial section this assay was parsed under, derived from
+  // "[... AS PER IP]"/"[... AS PER USP]" markers. 'OTHER' when the COA has no
+  // section markers (single-pharmacopoeia). Used to keep APQR Section 5.3.2
+  // assay columns confined to the correct pharmacopoeia table.
+  standard?: TestStandard;
 }
 
 /**
@@ -50,6 +55,11 @@ export interface IdentificationTest {
   specification: string;
   result: string;       // e.g., "Complies"
   complies: boolean;
+  // Pharmacopoeial section this test was parsed under (IP/USP). Keeps APQR
+  // Section 5.3.2 identification columns confined to the correct pharmacopoeia
+  // table (e.g. "IDENTIFICATION B" is USP-only). 'OTHER' for single-pharmacopoeia
+  // COAs with no section markers.
+  standard?: TestStandard;
 }
 
 /**
@@ -60,6 +70,10 @@ export interface CriticalParameter {
   limit: string;
   result: string;
   complies: boolean;
+  // Pharmacopoeial section this parameter was parsed under (IP/USP). Lets APQR
+  // Section 5.3.2 pick the correct per-pharmacopoeia limit (e.g. IP pH "6.3 to
+  // 7.3" vs USP pH "6.3 to 7.9"). 'OTHER' for single-pharmacopoeia COAs.
+  standard?: TestStandard;
 }
 
 /**
@@ -76,6 +90,11 @@ export interface RelatedSubstance {
   limit: string;          // individual compound limit, e.g., "NMT 1.1%"
   result: string;         // e.g., "ND" or "0.030 %"
   complies: boolean;
+  // Pharmacopoeial section this substance was parsed under (IP/USP). Keeps
+  // IP-only "Related Substance by HPLC" out of the USP table and USP-only
+  // "Early/Late-Eluting Related Compounds" out of the IP table. 'OTHER' for
+  // single-pharmacopoeia COAs.
+  standard?: TestStandard;
 }
 
 // ============================================

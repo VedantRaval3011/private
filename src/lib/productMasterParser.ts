@@ -6,6 +6,7 @@
 import { parseStringPromise } from 'xml2js';
 import { IProductMaster } from '@/models/ProductMaster';
 import { healXmlContent } from './xmlParser';
+import { normalizeStorageCondition } from './storageCondition';
 
 interface ParsedProductMaster {
   productCode: string;
@@ -139,7 +140,9 @@ export async function parseProductMasterXml(xmlContent: string): Promise<ParsedP
         productName: productName || 'N/A',
         department: findValue(item, ['DEPARTMENT', 'DEPT', 'DPT_NAME']) || 'N/A',
         masterCardNo: findValue(item, ['MCADNO', 'MASTERCARDNO', 'MASTER_CARD_NO', 'MC_NO']) || 'N/A',
-        storageCondition: findValue(item, ['STOCOND', 'STORAGECONDITION', 'STORAGE_CONDITION', 'STORAGE', 'STORE_AT']) || 'N/A',
+        storageCondition: normalizeStorageCondition(
+          findValue(item, ['STOCOND', 'STORAGECONDITION', 'STORAGE_CONDITION', 'STORAGE', 'STORE_AT']) || 'N/A'
+        ) || 'N/A',
         productType: findValue(item, ['LOCEXP', 'PRODUCTTYPE', 'PRODUCT_TYPE', 'TYPE', 'CAT', 'CATEGORY']) || 'N/A',
         therapeuticCategory: findValue(item, ['ITMGROUP', 'THERAPEUTICCATE', 'THERAPEUTIC_CATEGORY', 'THERAP_CAT', 'CATEGORY', 'THERAPEUTIC']) || 'N/A',
         

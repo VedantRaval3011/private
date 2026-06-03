@@ -484,12 +484,12 @@ export function detectStage(xmlContent: string, filename?: string): DetectedStag
 // Test Parameter Classification
 // ============================================
 
-type TestCategory = 'description' | 'ph' | 'assay' | 'identification' | 'sterility' | 
-                    'uniformity' | 'capping' | 'related_substances' | 'other';
+type TestCategory = 'description' | 'ph' | 'assay' | 'identification' | 'sterility' |
+                    'uniformity' | 'capping' | 'osmolality' | 'related_substances' | 'other';
 
 function classifyTest(testName: string): TestCategory {
   const upper = testName.toUpperCase();
-  
+
   if (upper === 'DESCRIPTION') return 'description';
   if (upper === 'PH') return 'ph';
   if (upper.includes('ASSAY')) return 'assay';
@@ -497,8 +497,9 @@ function classifyTest(testName: string): TestCategory {
   if (upper.includes('STERILITY')) return 'sterility';
   if (upper.includes('UNIFORMITY')) return 'uniformity';
   if (upper.includes('CAPPING')) return 'capping';
+  if (upper.includes('OSMOLALITY') || upper.includes('OSMOLARITY')) return 'osmolality';
   if (upper.includes('RELATED SUBSTANCES') || upper.includes('IMPURITY')) return 'related_substances';
-  
+
   return 'other';
 }
 
@@ -823,7 +824,21 @@ function extractFinishData(g1Data: unknown, rootData: unknown): FinishStageData 
   let capping: TestParameter | undefined;
   
   const testGroups = getTestGroups(g1Data);
-  
+
+  // Tracks the active pharmacopoeial section as we walk the test rows.
+  // Flipped by "[... AS PER IP]" / "[... AS PER USP]" marker rows so that each
+  // parsed result (notably assays) can be tagged with its source pharmacopoeia.
+  let currentStandard: TestStandard = 'OTHER';
+
+  // Tracks the active sub-section within the flat row list. Many COAs lay tests
+  // out as a header row (e.g. "IDENTIFICATION" / "ASSAY" with a "." result)
+  // followed by the actual compound rows whose names ("MOXIFLOXACIN ...") give
+  // no hint of their category. Without this, those compound rows fall through as
+  // 'other' and are dropped (e.g. the IP/USP identification rows). The header
+  // sets the sub-category; following generic rows inherit it until a row with a
+  // definite category (pH, Description, …) or a new header ends the block.
+  let currentSubCategory: TestCategory | null = null;
+
   for (const group of testGroups) {
     let groupName = findValueCI(group as Record<string, unknown>, ['PROTEST'], '');
     const details = getTestDetails(group);
@@ -851,12 +866,42 @@ function extractFinishData(g1Data: unknown, rootData: unknown): FinishStageData 
       const result = findValueCI(dRecord, ['RESULT'], '');
       
       if (!testName || testName === '.') continue;
-      
+
+      // Pharmacopoeial section marker (e.g. "[ALL SPECIFICATION BELOW ARE AS PER USP]").
+      // Flip the active standard and skip — it is a section label, not a test row.
+      const markerStd = detectStandardMarker(testName);
+      if (markerStd && isSectionMarkerTestName(testName)) {
+        currentStandard = markerStd;
+        currentSubCategory = null;   // a new pharmacopoeia block resets sub-section
+        continue;
+      }
+
       let category = classifyTest(testName);
       // Override category based on group title if necessary
       if (groupCategory === 'related_substances') category = 'related_substances';
       if (groupCategory === 'assay' && category === 'other') category = 'assay';
       if (groupCategory === 'identification' && category === 'other') category = 'identification';
+
+      // ── Sub-section tracking ──────────────────────────────────────────────
+      // A header row only labels the following block: empty/"." result and limit.
+      const upperName = testName.toUpperCase().trim();
+      const isHeaderRow =
+        (result === '.' || result === '' || result.trim() === '') &&
+        (limits === '.' || limits === '' || limits.trim() === '');
+
+      if (isHeaderRow) {
+        if (upperName === 'IDENTIFICATION') currentSubCategory = 'identification';
+        else if (upperName === 'ASSAY') currentSubCategory = 'assay';
+        else if (upperName.includes('ORGANIC IMPURITIES') || upperName.includes('RELATED SUBSTANCE'))
+          currentSubCategory = 'related_substances';
+        else currentSubCategory = null;  // e.g. "ADDITIONAL TEST IF REQUIRED ANY"
+      } else if (category === 'other' && currentSubCategory) {
+        // Generic compound row inside a recognised block → inherit its category.
+        category = currentSubCategory;
+      } else if (category !== 'other') {
+        // A row with a definite category of its own ends the current block.
+        currentSubCategory = null;
+      }
 
       const complies = checkCompliance(result, limits);
       
@@ -864,7 +909,7 @@ function extractFinishData(g1Data: unknown, rootData: unknown): FinishStageData 
         case 'description':
           description = result;
           // Also store in criticalParameters so it is queryable for APQR 5.3.2
-          criticalParameters.push({ name: 'Description', limit: limits, result, complies: true });
+          criticalParameters.push({ name: 'Description', limit: limits, result, complies: true, standard: currentStandard });
           break;
           
         case 'identification': {
@@ -887,23 +932,29 @@ function extractFinishData(g1Data: unknown, rootData: unknown): FinishStageData 
             specification: limits,
             result,
             complies: idComplies,
+            standard: currentStandard,
           });
           break;
         }
           
         case 'sterility':
           sterility = { srNo: 0, name: testName, limits, result, complies };
-          criticalParameters.push({ name: testName, limit: limits, result, complies });
+          criticalParameters.push({ name: testName, limit: limits, result, complies, standard: currentStandard });
           break;
           
         case 'uniformity':
           uniformityOfVolume = { srNo: 0, name: testName, limits, result, complies };
-          criticalParameters.push({ name: testName, limit: limits, result, complies });
+          criticalParameters.push({ name: testName, limit: limits, result, complies, standard: currentStandard });
           break;
           
         case 'capping':
           capping = { srNo: 0, name: testName, limits, result, complies };
-          criticalParameters.push({ name: testName, limit: limits, result, complies });
+          criticalParameters.push({ name: testName, limit: limits, result, complies, standard: currentStandard });
+          break;
+
+        case 'osmolality':
+          // Quantitative USP ophthalmic parameter (e.g. "349 mosmol/kg").
+          criticalParameters.push({ name: 'Osmolality', limit: limits, result, complies, standard: currentStandard });
           break;
           
         case 'related_substances': {
@@ -940,6 +991,7 @@ function extractFinishData(g1Data: unknown, rootData: unknown): FinishStageData 
                     complies: impurityResult.toUpperCase().includes('ND') ||
                               impurityResult.toUpperCase().includes('NOT DETECTED') ||
                               !impurityResult.toUpperCase().includes('FAIL'),
+                    standard: currentStandard,
                   });
                 }
               }
@@ -962,11 +1014,14 @@ function extractFinishData(g1Data: unknown, rootData: unknown): FinishStageData 
                     complies: impurityResult.toUpperCase().includes('ND') ||
                               impurityResult.toUpperCase().includes('NOT DETECTED') ||
                               !impurityResult.toUpperCase().includes('FAIL'),
+                    standard: currentStandard,
                   });
                 }
               }
             }
-          } else {
+          } else if (result.trim() !== '.' && result.trim() !== '') {
+            // Skip pure header rows (e.g. "ORGANIC IMPURITIES" with a "." result)
+            // which only label the block; keep real single-value rows (ND, 0.03%).
             relatedSubstances.push({
               compound: testName,
               group: testName,
@@ -974,6 +1029,7 @@ function extractFinishData(g1Data: unknown, rootData: unknown): FinishStageData 
               limit: limits,
               result,
               complies,
+              standard: currentStandard,
             });
           }
           break;
@@ -990,6 +1046,7 @@ function extractFinishData(g1Data: unknown, rootData: unknown): FinishStageData 
               limit: limits,
               result,
               complies,
+              standard: currentStandard,
             });
             break;
           }
@@ -1010,13 +1067,14 @@ function extractFinishData(g1Data: unknown, rootData: unknown): FinishStageData 
                 result,
                 resultAlt: result.includes('\n') ? result.split('\n')[1]?.trim() : undefined,
                 complies,
+                standard: currentStandard,
               });
             }
           }
           break;
-          
+
         case 'ph':
-          criticalParameters.push({ name: 'pH', limit: limits, result, complies });
+          criticalParameters.push({ name: 'pH', limit: limits, result, complies, standard: currentStandard });
           break;
           
         default:
@@ -1030,6 +1088,7 @@ function extractFinishData(g1Data: unknown, rootData: unknown): FinishStageData 
               limit: limits,
               result,
               complies,
+              standard: currentStandard,
             });
             break;
           }
@@ -1049,6 +1108,7 @@ function extractFinishData(g1Data: unknown, rootData: unknown): FinishStageData 
               result,
               resultAlt: result.includes('\n') ? result.split('\n')[1]?.trim() : undefined,
               complies,
+              standard: currentStandard,
             });
           }
           break;

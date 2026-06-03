@@ -6,12 +6,20 @@ import { InwardRegister } from '@/models/InwardRegister';
 import { Requisition } from '@/models/Requisition';
 import { MaterialRejection } from '@/models/MaterialRejection';
 import { COA } from '@/models/COA';
+import RetainedSample from '@/models/RetainedSample';
 import Yield from '@/models/Yield';
 import type { CompositionItem, ProcessData } from '@/types/formula';
 import connectToDatabase from '@/lib/mongodb';
+import { normalizeStorageCondition } from '@/lib/storageCondition';
+import {
+  applyApqrExcelReviewSections,
+  logApqrReviewSectionReport,
+} from '@/lib/apqr-review-sections';
+import { loadReviewExcelCatalog } from '@/lib/review-excel';
 import JSZip from 'jszip';
 import fs from 'fs';
 import path from 'path';
+import * as XLSX from 'xlsx';
 
 
 
@@ -86,6 +94,41 @@ export function formatMonthYear(date: Date): string {
   const month = (date.getMonth() + 1).toString().padStart(2, '0');
   const year = date.getFullYear();
   return `${month}/${year}`;
+}
+
+/** Volume UOMs from Batch Creation (BATCHUOM field). */
+const BATCH_VOLUME_UOMS = new Set(['LTR', 'L', 'ML', 'KG', 'G', 'GM', 'GMS']);
+
+/**
+ * Formats batch size the same way as Batch Creation / batches UI:
+ * `${batchSize} ${batchUom}` (e.g. "30 LTR"), not pack-count unit (BOT/NOS).
+ */
+export function formatBatchCreationSize(batch: {
+  batchSize?: string | null;
+  batchUom?: string | null;
+  unit?: string | null;
+}): string {
+  const sizeRaw = (batch.batchSize ?? '').toString().trim();
+  if (!sizeRaw || sizeRaw === 'N/A') return 'N/A';
+
+  const batchSizeNum = parseFloat(sizeRaw.replace(/,/g, ''));
+  const formattedNum = !isNaN(batchSizeNum)
+    ? (Number.isInteger(batchSizeNum)
+      ? batchSizeNum.toString()
+      : batchSizeNum.toFixed(2).replace(/\.?0+$/, ''))
+    : sizeRaw;
+
+  const batchUom = (batch.batchUom ?? '').toString().trim().toUpperCase();
+  if (batchUom && batchUom !== 'N/A') {
+    return `${formattedNum} ${batchUom}`;
+  }
+
+  const unit = (batch.unit ?? '').toString().trim().toUpperCase();
+  if (unit && unit !== 'N/A') {
+    return `${formattedNum} ${unit}`;
+  }
+
+  return formattedNum;
 }
 
 interface MaterialVendorDetail {
@@ -192,6 +235,88 @@ interface BulkInProcessRow {
   assays: { compound: string; value: string }[];  // ALL assay compounds
 }
 
+interface SterilityTestingRow {
+  batchNumber: string;
+  result: string;
+}
+
+const DEFAULT_STERILITY_LIMIT =
+  'Growth or turbidity should not present in the original clear media.';
+
+/** Normalise FINISH COA sterility result text for Section 5.3.3 display. */
+function normalizeSterilityResult(raw: string | undefined | null): string {
+  const s = (raw ?? '').trim();
+  if (!s) return 'Complies';
+  if (/growth or turbidity was not present/i.test(s)) return 'Complies';
+  if (/^complies?\.?$/i.test(s)) return 'Complies';
+  return s;
+}
+
+/** Extract sterility result + limit from a FINISH COA finishData object. */
+function extractSterilityFromFinishData(fd: any): { result: string; limit: string } | null {
+  if (!fd) return null;
+
+  for (const cp of (fd.criticalParameters || [])) {
+    const name = (cp.name || '').toUpperCase();
+    if (name.includes('STERILITY') || name.includes('STERILE')) {
+      let limit = (cp.limit || '').trim();
+      if (limit.includes('\n')) limit = limit.split('\n')[0].trim();
+      return {
+        result: normalizeSterilityResult(cp.result),
+        limit: limit || DEFAULT_STERILITY_LIMIT,
+      };
+    }
+  }
+
+  if (fd.sterility?.name) {
+    let limit = (fd.sterility.limits || '').trim();
+    if (limit.includes('\n')) limit = limit.split('\n')[0].trim();
+    return {
+      result: normalizeSterilityResult(fd.sterility.result),
+      limit: limit || DEFAULT_STERILITY_LIMIT,
+    };
+  }
+
+  return null;
+}
+
+/**
+ * Build one sterility row per manufactured batch (Section 5.3.3) from FINISH COAs.
+ */
+export function buildSterilityTestingData(
+  finalBatches: Array<{ batchNumber: string }>,
+  finishCoas: any[],
+): { rows: SterilityTestingRow[]; limit: string } {
+  const coasByBatch = new Map<string, any[]>();
+  for (const coa of finishCoas) {
+    const bn = (coa.batchNumber || '').trim();
+    if (!bn) continue;
+    if (!coasByBatch.has(bn)) coasByBatch.set(bn, []);
+    coasByBatch.get(bn)!.push(coa);
+  }
+
+  let limit = DEFAULT_STERILITY_LIMIT;
+  const rows: SterilityTestingRow[] = [];
+
+  for (const batch of finalBatches) {
+    const bn = batch.batchNumber;
+    const coas = coasByBatch.get(bn) || [];
+    let result = '--';
+
+    for (const coa of coas) {
+      const extracted = extractSterilityFromFinishData((coa as any).finishData);
+      if (extracted) {
+        result = extracted.result;
+        if (extracted.limit) limit = extracted.limit;
+        break;
+      }
+    }
+
+    rows.push({ batchNumber: bn, result });
+  }
+
+  return { rows, limit };
+}
 
 const KNOWN_SPECS = [
   'IP/BP/USP/NF', 'IP/USP/NF', 'IP/BP/USP', 'IP/BP/NF', 'IP/BP/IH',
@@ -296,112 +421,17 @@ function scaleQuantity(
 }
 
 // ── Statistical & Process Capability Helpers ──
+import {
+  calculateProcessCapability,
+  parseLimits,
+  type ProcessCapabilityResults,
+} from '@/lib/apqr-capability-math';
 
-export interface ProcessCapabilityResults {
-  average: number;
-  max: number;
-  min: number;
-  lsl: number;
-  usl: number;
-  sigmaEstimated: number; // Short-term (moving range)
-  sigmaSample: number;    // Long-term (sample std dev)
-  cpku: number;
-  cpkl: number;
-  cpk: number;
-  cp: number;
-  ppku: number;
-  ppkl: number;
-  ppk: number;
-  pp: number;
-  isCapable: boolean; // true if all > 1.33
-}
-
-/**
- * Parses numerical limits from strings like "(5.0 to 8.0)" or "90.0 % to 120.0 % Of labeled amount"
- */
-function parseLimits(limitString: string): { lsl: number | null, usl: number | null } {
-  // Extract all numbers (including decimals) from the string
-  const matches = limitString.match(/[-+]?[0-9]*\.?[0-9]+/g);
-  if (!matches || matches.length < 2) return { lsl: null, usl: null };
-  const n1 = parseFloat(matches[0]);
-  const n2 = parseFloat(matches[1]);
-  return {
-    lsl: Math.min(n1, n2),
-    usl: Math.max(n1, n2)
-  };
-}
-
-function calculateAverage(data: number[]): number {
-  if (data.length === 0) return 0;
-  const sum = data.reduce((acc, val) => acc + val, 0);
-  return sum / data.length;
-}
-
-/**
- * Calculates Sample Standard Deviation (S) for long-term variation
- */
-function calculateSampleStdDev(data: number[], mean: number): number {
-  if (data.length < 2) return 0; // Need at least 2 points
-  const sumSq = data.reduce((acc, val) => acc + Math.pow(val - mean, 2), 0);
-  return Math.sqrt(sumSq / (data.length - 1));
-}
-
-/**
- * Calculates Estimated Standard Deviation (σ) using Moving Range (MR) for short-term variation
- * Uses d2 = 1.128 for subgroup size n=2
- */
-function calculateEstimatedStdDevMR(data: number[]): number {
-  if (data.length < 2) return 0;
-  let mrSum = 0;
-  for (let i = 1; i < data.length; i++) {
-    mrSum += Math.abs(data[i] - data[i - 1]);
-  }
-  const avgMr = mrSum / (data.length - 1);
-  return avgMr / 1.128; // 1.128 is d2 for n=2
-}
-
-/**
- * Computes all Process Capability & Performance parameters
- */
-function calculateProcessCapability(data: number[], limitStr: string): ProcessCapabilityResults | null {
-  const nums = data.filter(n => !isNaN(n));
-  if (nums.length < 2) return null; // Need at least 2 points
-
-  const { lsl, usl } = parseLimits(limitStr);
-  if (lsl === null || usl === null) return null;
-
-  const average = calculateAverage(nums);
-  const max = Math.max(...nums);
-  const min = Math.min(...nums);
-
-  const sigmaSample = calculateSampleStdDev(nums, average);    // S (Long-term)
-  const sigmaEst = calculateEstimatedStdDevMR(nums);             // σ (Short-term)
-
-  // Capability indices require non-zero standard deviation
-  if (sigmaEst === 0 || sigmaSample === 0) return null;
-
-  // Short-term (Cp, Cpk)
-  const cpku = (usl - average) / (3 * sigmaEst);
-  const cpkl = (average - lsl) / (3 * sigmaEst);
-  const cpk = Math.min(cpku, cpkl);
-  const cp = (usl - lsl) / (6 * sigmaEst);
-
-  // Long-term (Pp, Ppk)
-  const ppku = (usl - average) / (3 * sigmaSample);
-  const ppkl = (average - lsl) / (3 * sigmaSample);
-  const ppk = Math.min(ppku, ppkl);
-  const pp = (usl - lsl) / (6 * sigmaSample);
-
-  const isCapable = cpk > 1.33 && cp > 1.33 && ppk > 1.33 && pp > 1.33;
-
-  return {
-    average, max, min, lsl, usl,
-    sigmaEstimated: sigmaEst, sigmaSample,
-    cpku, cpkl, cpk, cp,
-    ppku, ppkl, ppk, pp,
-    isCapable
-  };
-}
+export {
+  calculateProcessCapability,
+  parseLimits,
+  type ProcessCapabilityResults,
+} from '@/lib/apqr-capability-math';
 
 // ============================================
 // Section 5.3.2 — Finished Product Table Builder
@@ -432,6 +462,20 @@ function specsForCoa532(specField: string): string[] {
 }
 
 /**
+ * Whether an assay result belongs in the table for a given canonical spec.
+ *
+ * Assays tagged with a pharmacopoeial section (e.g. an "AS PER USP" assay)
+ * appear only in that pharmacopoeia's table. Untagged assays ('OTHER' / blank
+ * — i.e. a COA with no section markers) fall back to appearing in whichever
+ * spec table(s) the COA itself belongs to, preserving single-pharmacopoeia COAs.
+ */
+function assayInSpec532(assay: any, spec: string): boolean {
+  const raw = (assay?.standard || '').toUpperCase().trim();
+  if (!raw || raw === 'OTHER') return true;
+  return normaliseSpec532(raw) === spec;
+}
+
+/**
  * Build the array of Finish532Table objects from all FINISH stage COAs.
  *
  * Produces:
@@ -440,7 +484,7 @@ function specsForCoa532(specField: string): string[] {
  *  • One "Organic Impurities" table when Early-Eluting or Late-Eluting data
  *    exists (placed after all spec tables).
  */
-function buildFinish532Tables(finishCoas: any[], batchOrder: string[]): any[] {
+export function buildFinish532Tables(finishCoas: any[], batchOrder: string[]): any[] {
   if (!finishCoas || finishCoas.length === 0) return [];
 
   const tables: any[] = [];
@@ -478,9 +522,16 @@ function buildFinish532Tables(finishCoas: any[], batchOrder: string[]): any[] {
     const refFd: any = refCoa?.finishData;
     if (!refFd) continue;
 
+    // Restrict every parameter family to the rows tagged for THIS pharmacopoeia
+    // (assayInSpec532 also accepts untagged 'OTHER' rows, preserving
+    // single-pharmacopoeia COAs). This keeps the "As Per IP" table from showing
+    // USP-only tests (e.g. IDENTIFICATION B, early/late-eluting compounds) and
+    // ensures each table uses its own limits (e.g. IP pH "6.3 to 7.3" vs USP
+    // "6.3 to 7.9").
+    const refCrit = ((refFd.criticalParameters || []) as any[]).filter((p: any) => assayInSpec532(p, spec));
+
     const getCritLimit = (pat: RegExp): string =>
-      ((refFd.criticalParameters || []) as any[])
-        .find((p: any) => pat.test((p.name || '').toUpperCase()))?.limit || '';
+      refCrit.find((p: any) => pat.test((p.name || '').toUpperCase()))?.limit || '';
 
     // Build parameter columns separated into qualitative and quantitative groups.
     // Sterility is intentionally excluded — it is handled in Section 5.3.3.
@@ -497,8 +548,14 @@ function buildFinish532Tables(finishCoas: any[], batchOrder: string[]): any[] {
       qualCols.push({ name: 'Description', subHeader: '', limitText: descLim, valKey: 'Description' });
     }
 
-    // Identification tests (one column per compound)
-    for (const idTest of (refFd.identificationTests as any[] || [])) {
+    // Identification tests (one column per compound), restricted to this
+    // pharmacopoeia and de-duplicated by compound name (a dual IP/USP COA lists
+    // the same compound once per section).
+    const seenIdCompounds = new Set<string>();
+    for (const idTest of ((refFd.identificationTests as any[]) || []).filter((id: any) => assayInSpec532(id, spec))) {
+      const idKey = (idTest.compound || '').trim().toUpperCase();
+      if (seenIdCompounds.has(idKey)) continue;
+      seenIdCompounds.add(idKey);
       qualCols.push({
         name: 'Identification',
         subHeader: idTest.compound || '',
@@ -507,9 +564,10 @@ function buildFinish532Tables(finishCoas: any[], batchOrder: string[]): any[] {
       });
     }
 
-    // Related Substance by HPLC (multi-line limit text)
+    // Related Substance by HPLC (multi-line limit text) — IP-section only on
+    // dual-pharmacopoeia COAs.
     const hplcEntries: any[] = ((refFd.relatedSubstances as any[]) || []).filter(
-      (rs: any) => /RELATED SUBSTANCE BY HPLC/i.test(rs.group || ''),
+      (rs: any) => /RELATED SUBSTANCE BY HPLC/i.test(rs.group || '') && assayInSpec532(rs, spec),
     );
     if (hplcEntries.length > 0) {
       const hplcGroupLimit = hplcEntries[0]?.groupLimit || '';
@@ -522,27 +580,45 @@ function buildFinish532Tables(finishCoas: any[], batchOrder: string[]): any[] {
 
     // pH
     const phLim = getCritLimit(/\bPH\b/);
-    if (phLim || ((refFd.criticalParameters as any[]) || []).some((p: any) => /\bPH\b/.test((p.name || '').toUpperCase()))) {
+    if (phLim || refCrit.some((p: any) => /\bPH\b/.test((p.name || '').toUpperCase()))) {
       quantCols.push({ name: 'pH', subHeader: '', limitText: phLim, valKey: 'pH' });
     }
 
-    // Uniformity of Volume
-    const uniLim = refFd.uniformityOfVolume?.limits || getCritLimit(/UNIFORMITY/);
-    if (uniLim || refFd.uniformityOfVolume?.result) {
+    // Uniformity of Volume — prefer the spec-tagged criticalParameters limit over
+    // the single (last-write-wins, standard-agnostic) uniformityOfVolume field.
+    const uniLim = getCritLimit(/UNIFORMITY/) || refFd.uniformityOfVolume?.limits;
+    if (refCrit.some((p: any) => /UNIFORMITY/.test((p.name || '').toUpperCase())) || uniLim) {
       quantCols.push({ name: 'Uniformity of Volume', subHeader: '', limitText: uniLim, valKey: 'Uniformity of Volume' });
     }
 
     // Capping
-    const capLim = refFd.capping?.limits || getCritLimit(/CAPPING/);
-    if (capLim || refFd.capping?.result) {
+    const capLim = getCritLimit(/CAPPING/) || refFd.capping?.limits;
+    if (refCrit.some((p: any) => /CAPPING/.test((p.name || '').toUpperCase())) || capLim) {
       quantCols.push({ name: 'Capping', subHeader: '', limitText: capLim, valKey: 'Capping' });
     }
 
-    // Assay (one column per entry, keyed by index to handle duplicate compound names)
-    (refFd.assayResults as any[] || []).forEach((assay: any, i: number) => {
+    // Osmolality (USP ophthalmic parameter, e.g. "260 to 370 mOsmol/kg")
+    const osmoLim = getCritLimit(/OSMOLALITY|OSMOLARITY/);
+    if (refCrit.some((p: any) => /OSMOLALITY|OSMOLARITY/.test((p.name || '').toUpperCase())) || osmoLim) {
+      quantCols.push({ name: 'Osmolality', subHeader: '', limitText: osmoLim, valKey: 'Osmolality' });
+    }
+
+    // Assay — only the assays belonging to THIS pharmacopoeia. A dual-pharmacopoeia
+    // COA (e.g. IP + USP) carries one assay per spec, often with identical compound
+    // names; restricting to the current spec keeps the "As Per IP" table from
+    // showing the USP assay column (and vice-versa). valKey is keyed by the
+    // position within the spec-filtered list plus compound so per-batch values
+    // align regardless of how each COA orders its assay rows.
+    const refSpecAssays = (refFd.assayResults as any[] || []).filter((a: any) => assayInSpec532(a, spec));
+    refSpecAssays.forEach((assay: any, i: number) => {
       const assayLim = assay.specification
         || (assay.limitMin && assay.limitMax ? `${assay.limitMin} to ${assay.limitMax}` : '');
-      quantCols.push({ name: 'Assay (%)', subHeader: assay.compound || '', limitText: assayLim, valKey: `Assay (%)::${i}` });
+      quantCols.push({
+        name: 'Assay (%)',
+        subHeader: assay.compound || '',
+        limitText: assayLim,
+        valKey: `Assay (%)::${i}::${(assay.compound || '').toUpperCase()}`,
+      });
     });
 
     const allCols = [...qualCols, ...quantCols];
@@ -558,30 +634,36 @@ function buildFinish532Tables(finishCoas: any[], batchOrder: string[]): any[] {
       const key = `${coa.batchNumber}__${fd.arNumber || ''}`;
       if (batchValMap.has(key)) continue;
 
-      const crit: any[] = fd.criticalParameters || [];
+      // Mirror the column filtering: only this pharmacopoeia's tagged rows.
+      const crit: any[] = ((fd.criticalParameters as any[]) || []).filter((p: any) => assayInSpec532(p, spec));
       const getCrit = (pat: RegExp): string =>
         crit.find((p: any) => pat.test((p.name || '').toUpperCase()))?.result || '';
 
       const vals: Record<string, string> = {};
-      vals['Description'] = fd.description || getCrit(/^DESCRIPTION$/);
+      vals['Description'] = getCrit(/^DESCRIPTION$/) || fd.description || '';
 
-      for (const id of (fd.identificationTests as any[] || [])) {
+      for (const id of ((fd.identificationTests as any[]) || []).filter((x: any) => assayInSpec532(x, spec))) {
         vals[`Identification::${id.compound}`] = id.result || '';
       }
 
       const hplcBatch: any[] = ((fd.relatedSubstances as any[]) || []).filter(
-        (rs: any) => /RELATED SUBSTANCE BY HPLC/i.test(rs.group || ''),
+        (rs: any) => /RELATED SUBSTANCE BY HPLC/i.test(rs.group || '') && assayInSpec532(rs, spec),
       );
       vals['Related Substance'] = hplcBatch.map((rs: any) => rs.result || 'ND').join('\n');
 
       vals['pH'] = getCrit(/\bPH\b/);
-      vals['Uniformity of Volume'] = fd.uniformityOfVolume?.result || getCrit(/UNIFORMITY/);
-      vals['Capping'] = fd.capping?.result || getCrit(/CAPPING/);
+      vals['Uniformity of Volume'] = getCrit(/UNIFORMITY/) || fd.uniformityOfVolume?.result || '';
+      vals['Capping'] = getCrit(/CAPPING/) || fd.capping?.result || '';
+      vals['Osmolality'] = getCrit(/OSMOLALITY|OSMOLARITY/);
       // Sterility intentionally excluded — handled in Section 5.3.3
 
-      (fd.assayResults as any[] || []).forEach((assay: any, i: number) => {
-        vals[`Assay (%)::${i}`] = assay.result || '';
-      });
+      // Mirror the column filtering: each batch contributes only its assays for
+      // this pharmacopoeia, keyed identically to the columns above.
+      (fd.assayResults as any[] || [])
+        .filter((a: any) => assayInSpec532(a, spec))
+        .forEach((assay: any, i: number) => {
+          vals[`Assay (%)::${i}::${(assay.compound || '').toUpperCase()}`] = assay.result || '';
+        });
 
       batchValMap.set(key, {
         batchNumber: coa.batchNumber,
@@ -609,15 +691,13 @@ function buildFinish532Tables(finishCoas: any[], batchOrder: string[]): any[] {
       for (let start = 0; start < cols.length; start += 3) {
         const colGroup = cols.slice(start, start + 3);
 
-        // Identification columns in this group
-        const idCols = colGroup.filter(col => col.name === 'Identification' && col.subHeader);
-
+        // Every batch that belongs to this pharmacopoeia must appear (a COA whose
+        // spec contains "IP" shows in the IP table, etc.). Only drop a row when
+        // the entire column group is empty for that batch — i.e. a genuine
+        // phantom with no data — rather than gating on the Identification column.
         const dataRows = orderedRows
-          .filter((bv: BatchValues) => {
-            // Exclude batches where ALL Identification columns in this group are empty
-            if (idCols.length === 0) return true;
-            return idCols.some(col => (bv.vals[col.valKey] || '').trim() !== '');
-          })
+          .filter((bv: BatchValues) =>
+            colGroup.some(col => (bv.vals[col.valKey] || '').trim() !== ''))
           .map((bv: BatchValues) => ({
           batchNumber: bv.batchNumber,
           arNumber: bv.arNumber,
@@ -646,6 +726,10 @@ function buildFinish532Tables(finishCoas: any[], batchOrder: string[]): any[] {
 
   let earlyGroupLimit = '';
   let lateGroupLimit  = '';
+  // Pharmacopoeia these organic impurities belong to (early/late-eluting related
+  // compounds are USP). Captured from the entries so the table is labelled
+  // "AS PER USP:" rather than appearing to belong to the IP section.
+  let orgStandard = '';
   const orgImpRows: any[] = [];
 
   // Deduplicate by batchNumber+arNumber, preserve batch order
@@ -671,6 +755,10 @@ function buildFinish532Tables(finishCoas: any[], batchOrder: string[]): any[] {
 
       if (!earlyGroupLimit && earlyEntries[0]?.groupLimit) earlyGroupLimit = earlyEntries[0].groupLimit;
       if (!lateGroupLimit  && lateEntries[0]?.groupLimit)  lateGroupLimit  = lateEntries[0].groupLimit;
+      if (!orgStandard) {
+        const raw = (earlyEntries[0]?.standard || lateEntries[0]?.standard || '').toUpperCase();
+        if (raw === 'IP' || raw === 'USP') orgStandard = raw;
+      }
 
       orgImpRows.push({
         batchNumber: coa.batchNumber,
@@ -684,9 +772,10 @@ function buildFinish532Tables(finishCoas: any[], batchOrder: string[]): any[] {
   }
 
   if (orgImpRows.length > 0) {
+    const orgLabel = orgStandard === 'IP' || orgStandard === 'USP' ? orgStandard : '';
     tables.push({
-      specificationLabel: '',
-      critParamsTitle:    'Critical Parameters (Limit)',
+      specificationLabel: orgLabel ? `AS PER ${orgLabel}:` : '',
+      critParamsTitle:    orgLabel ? `Critical Parameters (Limit) (As per ${orgLabel})` : 'Critical Parameters (Limit)',
       hasGroupRow: true,
       groupLabel:  'Organic Impurities',
       columns: [
@@ -698,6 +787,1017 @@ function buildFinish532Tables(finishCoas: any[], batchOrder: string[]): any[] {
   }
 
   return tables;
+}
+
+// ============================================
+// Section 5.3.2 — Process Capability & Control Limits (per pharmacopoeia)
+// ============================================
+
+/** One numeric parameter column in a Section 5.3.2 capability/control-limit table. */
+export interface Finish532CapColumn {
+  headerLines: string[];        // header cell lines, e.g. ['pH'] or ['Assay (%)', 'Moxifloxacin…']
+  limitDisplay: string;         // spec-limit cell text, e.g. '(6.3 to 7.3)'
+  stats: ProcessCapabilityResults | null;
+  // Trend-chart support (Section 5.3.2 finished-product graphs):
+  kind: 'ph' | 'uniformity' | 'osmolality' | 'assay';
+  titleParam: string;           // chart title fragment, e.g. 'pH', '% Assay of Moxifloxacin Hydrochloride'
+  seriesName: string;           // actual-data series legend, e.g. 'Uniformity of Volume (ml)'
+  points: { label: string; value: number }[];   // per-batch data points (Uniformity repeats a label)
+}
+
+/** Capability data for one pharmacopoeia (IP, USP, …). */
+export interface Finish532SpecCapability {
+  specLabel: string;            // 'AS PER IP:'
+  spec: string;                 // 'IP'
+  columns: Finish532CapColumn[];
+}
+
+/** Quantitative 5.3.2 columns that get a Cp/Cpk/UCL analysis (numeric only). */
+const FINISH532_NUMERIC_COLS = new Set(['pH', 'Uniformity of Volume', 'Osmolality', 'Assay (%)']);
+
+/** First signed decimal number in a string ("5.12 ml (102.4 %)" → 5.12). */
+function firstNumber(s: string): number | null {
+  const m = (s || '').match(/-?\d+(?:\.\d+)?/);
+  return m ? parseFloat(m[0]) : null;
+}
+
+/**
+ * Labelled/nominal fill volume in ml, parsed from a Uniformity LIMITS1 sentence
+ * ("…not less than the labelled amount (5.0 ml)…" / "…nominal amount (10.0 ml)…").
+ */
+function nominalFillMl(limitText: string): number | null {
+  const m = (limitText || '').match(/(?:labell?ed|nominal)\s*amount\s*\(\s*(\d+(?:\.\d+)?)/i);
+  if (m) return parseFloat(m[1]);
+  return null;
+}
+
+/** Spec-limit display text for the UCL/LCL "Specification Limit" row. */
+function capLimitDisplay(colName: string, limitText: string): string {
+  const nums = (limitText || '').match(/\d+(?:\.\d+)?/g) || [];
+  const a = nums[0], b = nums[1];
+  if (colName === 'pH') return a && b ? `(${a} to ${b})` : '';
+  if (colName === 'Osmolality') return a && b ? `(${a} to ${b} mOsmol/kg)` : '';
+  if (colName === 'Assay (%)') return a && b ? `(${a}% to ${b}%)` : '';
+  return '';
+}
+
+/**
+ * Collect a column's data points across the batch rows, mirroring the table's
+ * vertical-merge logic: within one batch, identical (merged) cell values count
+ * once; differing values (e.g. the two Uniformity readings of a shared batch)
+ * each count. This makes the capability inputs match exactly the cells shown.
+ */
+function gatherCapPoints(dataRows: any[], colIdx: number): { label: string; value: number }[] {
+  const pts: { label: string; value: number }[] = [];
+  let i = 0;
+  while (i < dataRows.length) {
+    let j = i + 1;
+    while (j < dataRows.length && (dataRows[j].batchNumber || '') === (dataRows[i].batchNumber || '')) j++;
+    const seen = new Set<string>();
+    for (const r of dataRows.slice(i, j)) {
+      const raw = String(r.values?.[colIdx] ?? '');
+      if (seen.has(raw)) continue;
+      seen.add(raw);
+      const n = firstNumber(raw);
+      if (n != null && !isNaN(n)) pts.push({ label: r.batchNumber || '', value: n });
+    }
+    i = j;
+  }
+  return pts;
+}
+
+/**
+ * Build per-pharmacopoeia Process Capability & Control-Limit inputs from the
+ * Section 5.3.2 tables. Only the numeric quantitative columns (pH, Uniformity of
+ * Volume, Osmolality, Assay) are analysed; the Uniformity spec limit is derived
+ * as nominal fill → nominal × 1.08 (the COA only carries the 91–109 % sentence).
+ */
+export function buildFinish532Capability(tables: any[]): Finish532SpecCapability[] {
+  const order: string[] = [];
+  const bySpec = new Map<string, any[]>();
+  for (const t of tables) {
+    const label: string = t.specificationLabel || '';
+    if (!/^AS PER/i.test(label)) continue;     // skip the unlabelled organic-impurities table
+    if (!bySpec.has(label)) { bySpec.set(label, []); order.push(label); }
+    bySpec.get(label)!.push(t);
+  }
+
+  const result: Finish532SpecCapability[] = [];
+  for (const specLabel of order) {
+    const spec = specLabel.replace(/^AS PER\s+/i, '').replace(/:$/, '').trim();
+    const columns: Finish532CapColumn[] = [];
+
+    for (const t of bySpec.get(specLabel)!) {
+      (t.columns || []).forEach((col: any, ci: number) => {
+        if (!FINISH532_NUMERIC_COLS.has(col.name)) return;
+        const points = gatherCapPoints(t.dataRows || [], ci);
+        if (points.length === 0) return;
+        const values = points.map(p => p.value);
+
+        let limitStr = col.limitText || '';
+        let limitDisplay = capLimitDisplay(col.name, col.limitText || '');
+        let headerLines: string[] = [col.name];
+        let kind: Finish532CapColumn['kind'] = 'ph';
+        let titleParam = 'pH';
+        let seriesName = 'pH';
+
+        if (col.name === 'pH') {
+          kind = 'ph'; titleParam = 'pH'; seriesName = 'pH';
+        } else if (col.name === 'Uniformity of Volume') {
+          const nominal = nominalFillMl(col.limitText || '');
+          if (nominal != null) {
+            const usl = Math.round(nominal * 1.08 * 100) / 100;
+            limitStr = `${nominal} to ${usl}`;
+            limitDisplay = `(${nominal.toFixed(1)} to ${usl.toFixed(1)} ml)`;
+          }
+          headerLines = ['Uniformity of Volume (ml)'];
+          kind = 'uniformity'; titleParam = 'Uniformity of Filled Volume'; seriesName = 'Uniformity of Volume (ml)';
+        } else if (col.name === 'Osmolality') {
+          kind = 'osmolality'; titleParam = 'Osmolality'; seriesName = 'Osmolality (mOsmol/kg)';
+        } else if (col.name === 'Assay (%)') {
+          headerLines = ['Assay (%)', col.subHeader || ''];
+          const compound = (col.subHeader || '').split(/E\.?\s*Q\.?/i)[0].trim() || (col.subHeader || '');
+          kind = 'assay'; titleParam = `% Assay of ${compound}`; seriesName = `Assay of ${compound}`;
+        }
+
+        columns.push({
+          headerLines, limitDisplay, stats: calculateProcessCapability(values, limitStr),
+          kind, titleParam, seriesName, points,
+        });
+      });
+    }
+
+    if (columns.length > 0) result.push({ specLabel, spec, columns });
+  }
+  return result;
+}
+
+/** One analysed parameter column (matches APQR capability table columns). */
+export interface MfcCapabilityColumn {
+  label: string;
+  cpk: number | null;
+  ppk: number | null;
+}
+
+export interface MfcBulkCapability {
+  columns: MfcCapabilityColumn[];
+}
+
+/** Finish capability for one pharmacopoeia block (AS PER IP, AS PER USP, …). */
+export interface MfcFinishSpecCapability {
+  specLabel: string;
+  spec: string;
+  columns: MfcCapabilityColumn[];
+}
+
+export interface MfcProcessCapabilitySummary {
+  bulk: MfcBulkCapability;
+  finish: MfcFinishSpecCapability[];
+}
+
+/** Short display label for a 5.3.2 capability column header. */
+export function capabilityColumnLabel(headerLines: string[], fallback = 'Parameter'): string {
+  if (!headerLines?.length) return fallback;
+  const primary = (headerLines[0] || '').trim();
+  if (primary === 'Assay (%)' && headerLines[1]) {
+    const compound = (headerLines[1] || '').split(/E\.?\s*Q\.?/i)[0].trim();
+    return compound.length > 28 ? `${compound.slice(0, 26)}…` : (compound || 'Assay (%)');
+  }
+  if (primary === 'Uniformity of Volume (ml)') return 'Uniformity';
+  return primary || fallback;
+}
+
+/** Short label for bulk assay compound names. */
+function bulkAssayColumnLabel(compound: string): string {
+  const name = (compound || '').trim();
+  if (!name) return 'Assay (%)';
+  const short = name.split(/E\.?\s*Q\.?/i)[0].trim();
+  return short.length > 28 ? `${short.slice(0, 26)}…` : (short || 'Assay (%)');
+}
+
+/** Per-column Cpk/Ppk for bulk in-process (pH + each assay column — Section 5.3.1). */
+export function computeBulkCapabilityColumns(
+  bulkInProcessData: BulkInProcessRow[],
+  header: {
+    phLimit?: string;
+    assayColumns?: { compound: string; limit: string }[];
+    assayLimit?: string;
+  },
+): MfcCapabilityColumn[] {
+  const columns: MfcCapabilityColumn[] = [];
+
+  const phValues = bulkInProcessData
+    .map(r => parseFloat(r.ph))
+    .filter(n => !isNaN(n));
+  const phStats = calculateProcessCapability(phValues, header.phLimit || '');
+  if (phStats) {
+    columns.push({ label: 'pH', cpk: phStats.cpk, ppk: phStats.ppk });
+  }
+
+  const assayCols = header.assayColumns || [];
+  for (let ci = 0; ci < assayCols.length; ci++) {
+    const vals = bulkInProcessData
+      .map(r => {
+        if (r.assays?.[ci]) return parseFloat(r.assays[ci].value);
+        if (ci === 0) return parseFloat(r.assay);
+        return NaN;
+      })
+      .filter(n => !isNaN(n));
+    const stats = calculateProcessCapability(vals, assayCols[ci].limit || '');
+    if (stats) {
+      columns.push({
+        label: bulkAssayColumnLabel(assayCols[ci].compound),
+        cpk: stats.cpk,
+        ppk: stats.ppk,
+      });
+    }
+  }
+
+  return columns;
+}
+
+/** Per-column Cpk/Ppk per pharmacopoeia for finish 5.3.2 tables. */
+export function computeFinishCapabilityBySpec(finish532Tables: any[]): MfcFinishSpecCapability[] {
+  const capability = buildFinish532Capability(finish532Tables);
+  const result: MfcFinishSpecCapability[] = [];
+
+  for (const spec of capability) {
+    const columns: MfcCapabilityColumn[] = [];
+    for (const col of spec.columns) {
+      if (!col.stats) continue;
+      columns.push({
+        label: capabilityColumnLabel(col.headerLines, col.headerLines[0] || 'Parameter'),
+        cpk: col.stats.cpk,
+        ppk: col.stats.ppk,
+      });
+    }
+    if (columns.length > 0) {
+      result.push({
+        specLabel: spec.specLabel,
+        spec: spec.spec,
+        columns,
+      });
+    }
+  }
+
+  return result;
+}
+
+function collectFormulaProductCodes(formula: any): Set<string> {
+  const codes = new Set<string>();
+  const mainCode = (formula.masterFormulaDetails?.productCode || '').trim();
+  if (mainCode && mainCode !== 'N/A') codes.add(mainCode);
+  if (formula.fillingDetails && Array.isArray(formula.fillingDetails)) {
+    formula.fillingDetails.forEach((fd: any) => {
+      const code = (fd.productCode || '').trim();
+      if (code && code !== 'N/A') codes.add(code);
+    });
+  }
+  if (formula.processes && Array.isArray(formula.processes)) {
+    formula.processes.forEach((p: any) => {
+      (p.fillingProducts || []).forEach((fp: any) => {
+        const code = (fp.productCode || '').trim();
+        if (code) codes.add(code);
+      });
+    });
+  }
+  return codes;
+}
+
+/** Year-filtered unique batches for a set of product codes (same rules as getApqrData). Pass null year for all years. */
+function gatherFinalBatchesForCodes(
+  batchDocs: any[],
+  productCodesSet: Set<string>,
+  yearNum: number | null,
+): any[] {
+  const uniqueBatches = new Map<string, any>();
+
+  for (const doc of batchDocs) {
+    if (!doc.batches || !Array.isArray(doc.batches)) continue;
+    for (const batch of doc.batches) {
+      if (!productCodesSet.has(batch.itemCode)) continue;
+
+      let mfgDate = parseBatchDate(batch.mfgDate);
+      if (!mfgDate && batch.batchCompletionDate) {
+        mfgDate = parseBatchDate(batch.batchCompletionDate);
+      }
+      if (!mfgDate) continue;
+      if (yearNum !== null && mfgDate.getFullYear() !== yearNum) continue;
+
+      const key = batch.batchNumber;
+      if (uniqueBatches.has(key)) {
+        const existing = uniqueBatches.get(key);
+        const parseQtyUnit = (s: string): { qty: number; unit: string } => {
+          const clean = (s || '').toUpperCase().trim();
+          const m = clean.match(/^([\d.,]+)\s*([A-Z]+)?$/);
+          if (m) return { qty: parseFloat(m[1].replace(/,/g, '')) || 0, unit: (m[2] || '').trim() };
+          return { qty: 0, unit: '' };
+        };
+        const existingParts = (existing.batchSize || '')
+          .split(',')
+          .map((p: string) => p.trim())
+          .filter(Boolean);
+        const newPartStr = formatBatchCreationSize(batch);
+        const allParts: Array<{ qty: number; unit: string }> = [
+          ...existingParts.map(parseQtyUnit),
+          parseQtyUnit(newPartStr),
+        ].filter(p => p.qty > 0);
+        const hasVolume = allParts.some(p => BATCH_VOLUME_UOMS.has(p.unit));
+        if (hasVolume) {
+          const volumeParts = allParts.filter(p => BATCH_VOLUME_UOMS.has(p.unit));
+          const byUnit = new Map<string, number>();
+          for (const p of volumeParts) {
+            byUnit.set(p.unit, (byUnit.get(p.unit) || 0) + p.qty);
+          }
+          existing.batchSize = Array.from(byUnit.entries()).map(([u, q]) => {
+            const fq = Number.isInteger(q) ? q.toString() : q.toFixed(2).replace(/\.?0+$/, '');
+            return `${fq} ${u}`;
+          }).join(', ');
+        } else {
+          const byUnit = new Map<string, number>();
+          for (const p of allParts) {
+            const u = p.unit || 'UNITS';
+            byUnit.set(u, (byUnit.get(u) || 0) + p.qty);
+          }
+          existing.batchSize = Array.from(byUnit.entries()).map(([u, q]) => {
+            const fq = Number.isInteger(q) ? q.toString() : q.toFixed(2).replace(/\.?0+$/, '');
+            return u === 'UNITS' ? fq : `${fq} ${u}`;
+          }).join(', ');
+        }
+      } else {
+        uniqueBatches.set(key, {
+          ...batch,
+          batchSize: formatBatchCreationSize(batch),
+          parsedMfgDate: mfgDate,
+        });
+      }
+    }
+  }
+
+  const finalBatches = Array.from(uniqueBatches.values());
+  finalBatches.sort((a, b) => a.parsedMfgDate.getTime() - b.parsedMfgDate.getTime());
+  return finalBatches;
+}
+
+/** Build bulk in-process rows + header from pre-fetched BULK COAs (Section 5.3.1 logic). */
+function buildBulkInProcessFromCoas(
+  finalBatches: any[],
+  bulkCoas: any[],
+): {
+  bulkInProcessData: BulkInProcessRow[];
+  bulkInProcessHeader: {
+    descriptionLimit: string;
+    phLimit: string;
+    assayCompound: string;
+    assayLimit: string;
+    assayColumns: { compound: string; limit: string }[];
+  };
+} {
+  const bulkInProcessData: BulkInProcessRow[] = [];
+  let bulkDescriptionLimit = '';
+  let bulkPhLimit = '';
+  let bulkAssayCompound = '';
+  let bulkAssayLimit = '';
+  let bulkAssayColumns: { compound: string; limit: string }[] = [];
+
+  if (finalBatches.length === 0) {
+    return {
+      bulkInProcessData,
+      bulkInProcessHeader: {
+        descriptionLimit: bulkDescriptionLimit,
+        phLimit: bulkPhLimit,
+        assayCompound: bulkAssayCompound,
+        assayLimit: bulkAssayLimit,
+        assayColumns: bulkAssayColumns,
+      },
+    };
+  }
+
+  const coaByBatch = new Map<string, any>();
+  for (const coa of bulkCoas) {
+    if (!coaByBatch.has(coa.batchNumber)) coaByBatch.set(coa.batchNumber, coa);
+  }
+
+  const firstCoa = coaByBatch.values().next().value;
+  const firstBd = firstCoa?.bulkData;
+  if (firstBd) {
+    bulkDescriptionLimit = firstBd.description || '';
+    const phHeaderParam = (firstBd.testParameters || []).find((p: any) =>
+      (p.name || '').toUpperCase().trim() === 'PH',
+    );
+    bulkPhLimit = (phHeaderParam?.limits || '').replace(/^Between\s*/i, '').trim();
+
+    const SKIP_NAMES = ['PH', 'ASSAY', 'DESCRIPTION'];
+    const compoundParams = (firstBd.testParameters || []).filter((p: any) => {
+      const n = (p.name || '').toUpperCase().trim();
+      return n && !SKIP_NAMES.includes(n);
+    });
+
+    if (compoundParams.length > 0) {
+      for (const param of compoundParams) {
+        let limit = (param.limits || '');
+        if (limit.includes('\n') || limit.includes('\r')) limit = limit.split(/[\r\n]/)[0].trim();
+        bulkAssayColumns.push({ compound: param.name || '', limit });
+      }
+      bulkAssayCompound = bulkAssayColumns[0].compound;
+      bulkAssayLimit = bulkAssayColumns[0].limit;
+    } else {
+      const assayResultsArr = (firstBd.assayResults || []).filter((a: any) => a.compound);
+      for (const a of assayResultsArr) {
+        let limit = a.specification || '';
+        if (limit.includes('\n')) limit = limit.split('\n')[0].trim();
+        bulkAssayColumns.push({ compound: a.compound || '', limit });
+      }
+      if (bulkAssayColumns.length > 0) {
+        bulkAssayCompound = bulkAssayColumns[0].compound;
+        bulkAssayLimit = bulkAssayColumns[0].limit;
+      }
+    }
+  }
+
+  for (const batch of finalBatches) {
+    const coa = coaByBatch.get(batch.batchNumber);
+    if (!coa?.bulkData) continue;
+    const bd = coa.bulkData;
+    const arNumber = coa.arNumber || bd.arNumber || '';
+    const description = bd.description || '';
+    const phParam = (bd.testParameters || []).find((p: any) =>
+      (p.name || '').toUpperCase().trim() === 'PH',
+    );
+    const ph = phParam?.result || '';
+    const assays: { compound: string; value: string }[] = [];
+    for (const col of bulkAssayColumns) {
+      let result = '';
+      const assayParam = (bd.testParameters || []).find((p: any) =>
+        (p.name || '').toUpperCase().trim() === col.compound.toUpperCase().trim(),
+      );
+      result = assayParam?.result || '';
+      if (!result) {
+        const assayEntry = (bd.assayResults || []).find((a: any) =>
+          (a.compound || '').toUpperCase().trim() === col.compound.toUpperCase().trim(),
+        );
+        result = assayEntry?.result || '';
+      }
+      if (result.includes('\n') || result.includes('\r')) {
+        result = result.split(/[\r\n]/)[0].trim();
+      }
+      assays.push({ compound: col.compound, value: result });
+    }
+    const assay = assays.length > 0 ? assays[0].value : '';
+    bulkInProcessData.push({
+      batchNumber: batch.batchNumber,
+      batchSize: batch.batchSize || 'N/A',
+      arNumber,
+      description,
+      ph,
+      assay,
+      assays,
+    });
+  }
+
+  return {
+    bulkInProcessData,
+    bulkInProcessHeader: {
+      descriptionLimit: bulkDescriptionLimit,
+      phLimit: bulkPhLimit,
+      assayCompound: bulkAssayCompound,
+      assayLimit: bulkAssayLimit,
+      assayColumns: bulkAssayColumns,
+    },
+  };
+}
+
+/**
+ * Build capability summary from getApqrData payload (identical to APQR / bulk-calculation tables).
+ */
+export function processCapabilitySummaryFromApqrData(data: {
+  bulkInProcessData?: BulkInProcessRow[];
+  bulkInProcessHeader?: {
+    phLimit?: string;
+    assayColumns?: { compound: string; limit: string }[];
+    assayLimit?: string;
+  };
+  finish532Tables?: any[];
+}): MfcProcessCapabilitySummary {
+  return {
+    bulk: {
+      columns: computeBulkCapabilityColumns(
+        data.bulkInProcessData ?? [],
+        data.bulkInProcessHeader ?? {},
+      ),
+    },
+    finish: computeFinishCapabilityBySpec(data.finish532Tables ?? []),
+  };
+}
+
+/**
+ * Batch Cpk/Ppk per product code for MFC headers.
+ * Uses getApqrData so batches, COA rows, limits, and formulas match APQR exactly.
+ */
+export async function getProcessCapabilitySummariesForProducts(
+  productCodes: string[],
+  year: number | null,
+): Promise<Record<string, MfcProcessCapabilitySummary>> {
+  const yearNum = year === null || year === undefined || (typeof year === 'number' && isNaN(year))
+    ? new Date().getFullYear()
+    : (typeof year === 'string' ? parseInt(year, 10) : year);
+
+  const uniqueCodes = [...new Set(productCodes.map(c => (c || '').trim()).filter(Boolean))];
+  const emptySummary: MfcProcessCapabilitySummary = { bulk: { columns: [] }, finish: [] };
+  if (uniqueCodes.length === 0) return {};
+
+  const result: Record<string, MfcProcessCapabilitySummary> = {};
+  const CONCURRENCY = 4;
+  let nextIndex = 0;
+
+  async function worker() {
+    while (nextIndex < uniqueCodes.length) {
+      const code = uniqueCodes[nextIndex++];
+      try {
+        const data = await getApqrData(code, yearNum);
+        result[code] = processCapabilitySummaryFromApqrData(data);
+      } catch {
+        result[code] = { ...emptySummary };
+      }
+    }
+  }
+
+  await Promise.all(
+    Array.from({ length: Math.min(CONCURRENCY, uniqueCodes.length) }, () => worker()),
+  );
+
+  return result;
+}
+
+/**
+ * Render the Section 5.3.2 Process Capability + Control-Limit block as DOCX XML:
+ *   • one "Process Capability & Performance parameters (Cp, Cpk, Pp, Ppk)" table
+ *     per pharmacopoeia (under an "AS PER IP:" / "AS PER USP:" heading),
+ *   • the static Cp/Cpk/Pp/Ppk interpretation ("Limit …") table,
+ *   • one "Upper/Lower Control Limit" table per pharmacopoeia (UCL/LCL = mean ± 3S).
+ * Returns '' when there is no capability data.
+ */
+export function buildFinish532CapabilityBlockXml(
+  capability: Finish532SpecCapability[],
+  esc: (s: string) => string,
+): string {
+  if (!capability || capability.length === 0) return '';
+
+  // Widths are in fiftieths-of-a-percent (w:type="pct", 5000 = 100%) so every
+  // table fills the full page width regardless of column count — otherwise a
+  // 3-column (IP) table renders narrow and its headers wrap badly.
+  const TOTAL = 5000;
+  const fmt5 = (n?: number) => (n !== undefined && n !== null && !isNaN(n)) ? n.toFixed(5) : 'N/A';
+  const fmt2 = (n?: number) => (n !== undefined && n !== null && !isNaN(n)) ? n.toFixed(2) : 'N/A';
+
+  const border = '<w:tblBorders>'
+    + ['top', 'left', 'bottom', 'right', 'insideH', 'insideV']
+        .map(s => `<w:${s} w:val="single" w:sz="4" w:space="0" w:color="auto"/>`).join('')
+    + '</w:tblBorders>';
+  const tblPr = () =>
+    `<w:tblPr><w:tblW w:w="${TOTAL}" w:type="pct"/><w:jc w:val="center"/>${border}</w:tblPr>`;
+  // Proportional grid (twips act as ratios; pct tblW scales the table to 100%).
+  const grid = (widths: number[]) =>
+    '<w:tblGrid>' + widths.map(w => `<w:gridCol w:w="${w}"/>`).join('') + '</w:tblGrid>';
+
+  // One cell. lines → one <w:p> each (centered). Supports span / shade / vMerge.
+  const cell = (
+    lines: string[],
+    o: { w: number; bold?: boolean; shaded?: boolean; gridSpan?: number; vMerge?: 'restart' | 'continue' },
+  ) => {
+    let tcPr = `<w:tcW w:w="${o.w}" w:type="pct"/>`;
+    if (o.vMerge === 'restart') tcPr += '<w:vMerge w:val="restart"/>';
+    else if (o.vMerge === 'continue') tcPr += '<w:vMerge/>';
+    if (o.gridSpan) tcPr += `<w:gridSpan w:val="${o.gridSpan}"/>`;
+    if (o.shaded) tcPr += '<w:shd w:val="clear" w:color="auto" w:fill="D9D9D9"/>';
+    tcPr += '<w:vAlign w:val="center"/>';
+    const rPr = `<w:rPr>${o.bold ? '<w:b/>' : ''}<w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr>`;
+    const body = (lines.length ? lines : ['']).map(ln =>
+      `<w:p><w:pPr><w:spacing w:before="0" w:after="0"/><w:jc w:val="center"/>${rPr}</w:pPr>`
+      + (ln ? `<w:r>${rPr}<w:t xml:space="preserve">${esc(ln)}</w:t></w:r>` : '')
+      + '</w:p>').join('');
+    return `<w:tc><w:tcPr>${tcPr}</w:tcPr>${body}</w:tc>`;
+  };
+
+  const headingPara = (text: string) =>
+    '<w:p><w:pPr><w:spacing w:before="160" w:after="60"/>'
+    + '<w:rPr><w:b/><w:sz w:val="22"/><w:szCs w:val="22"/></w:rPr></w:pPr>'
+    + `<w:r><w:rPr><w:b/><w:sz w:val="22"/><w:szCs w:val="22"/></w:rPr><w:t xml:space="preserve">${esc(text)}</w:t></w:r></w:p>`;
+  const specHead = (text: string) =>
+    '<w:p><w:pPr><w:spacing w:before="120" w:after="40"/>'
+    + '<w:rPr><w:b/><w:u w:val="single"/><w:sz w:val="22"/><w:szCs w:val="22"/></w:rPr></w:pPr>'
+    + `<w:r><w:rPr><w:b/><w:u w:val="single"/><w:sz w:val="22"/><w:szCs w:val="22"/></w:rPr><w:t xml:space="preserve">${esc(text)}</w:t></w:r></w:p>`;
+  const spacer = '<w:p><w:pPr><w:spacing w:before="40" w:after="40"/></w:pPr></w:p>';
+
+  // ── Process Capability table for one pharmacopoeia ──
+  const cpkTable = (sc: Finish532SpecCapability): string => {
+    const cols = sc.columns;
+    const N = cols.length;
+    // vMerge col (narrow) + label col + N data cols, summing to 100%.
+    const Wv = 300;
+    const Wl = 1400;
+    const Wd = Math.floor((TOTAL - Wv - Wl) / N);
+    const Wlast = TOTAL - Wv - Wl - Wd * (N - 1);   // last col absorbs rounding
+    const dw = (i: number) => (i === N - 1 ? Wlast : Wd);
+    const v5 = (g: (s: ProcessCapabilityResults) => number) => cols.map(c => fmt5(c.stats ? g(c.stats) : undefined));
+    const v2 = (g: (s: ProcessCapabilityResults) => number) => cols.map(c => fmt2(c.stats ? g(c.stats) : undefined));
+
+    const dataCells = (vals: string[], shaded?: boolean) =>
+      vals.map((v, i) => cell([v], { w: dw(i), shaded })).join('');
+
+    // label spanning the two left columns (vMerge + label)
+    const simpleRow = (label: string, vals: string[]) =>
+      '<w:tr>' + cell([label], { w: Wv + Wl, gridSpan: 2, bold: true }) + dataCells(vals) + '</w:tr>';
+    // row inside a stat block: continue the block's vMerge cell, then label + data
+    const blockRow = (label: string, vals: string[], shaded?: boolean) =>
+      '<w:tr>' + cell([''], { w: Wv, vMerge: 'continue' }) + cell([label], { w: Wl, bold: true, shaded })
+      + dataCells(vals, shaded) + '</w:tr>';
+    // first row of a stat block: open the vMerge cell holding the block title
+    const blockHead = (title: string, label: string, vals: string[]) =>
+      '<w:tr>' + cell([title], { w: Wv, vMerge: 'restart', bold: true }) + cell([label], { w: Wl, bold: true })
+      + dataCells(vals) + '</w:tr>';
+
+    const gridXml = grid([Wv, Wl, ...cols.map((_, i) => dw(i))]);
+
+    let rows = '';
+    // Title (spans everything)
+    rows += '<w:tr>' + cell(['Process Capability & Performance parameters (Cp, Cpk, and Pp, Ppk)'],
+      { w: TOTAL, gridSpan: 2 + N, bold: true, shaded: true }) + '</w:tr>';
+    // Column headers
+    rows += '<w:tr>' + cell([''], { w: Wv + Wl, gridSpan: 2, shaded: true })
+      + cols.map((c, i) => cell(c.headerLines, { w: dw(i), bold: true, shaded: true })).join('') + '</w:tr>';
+    // Basic statistics
+    rows += simpleRow('Average', v5(s => s.average));
+    rows += simpleRow('Maximum', v5(s => s.max));
+    rows += simpleRow('Minimum', v5(s => s.min));
+    rows += simpleRow('Upper Specification Limit – Lower Specification Limit (USL – LSL)', v5(s => s.usl - s.lsl));
+    rows += simpleRow('Upper Specification Limit (USL) – Average', v5(s => s.usl - s.average));
+    rows += simpleRow('Average – Lower Specification Limit (LSL)', v5(s => s.average - s.lsl));
+    // Short-term (Cp, Cpk)
+    rows += blockHead('Process Capability parameters Short-Term Statistics', 'Estimated Std Deviation (σ)', v5(s => s.sigmaEstimated));
+    rows += blockRow('3σ = (3 X σ)', v2(s => s.sigmaEstimated * 3));
+    rows += blockRow('6σ = (6 X σ)', v2(s => s.sigmaEstimated * 6));
+    rows += blockRow('Cpku = (USL – Average) / 3σ', v2(s => s.cpku));
+    rows += blockRow('Cpkl = (Average – LSL) / 3σ', v2(s => s.cpkl));
+    rows += blockRow('Cpk Value = Min (Cpkl & Cpku)', v2(s => s.cpk), true);
+    rows += blockRow('Cp Value = (USL – LSL) / 6σ', v2(s => s.cp), true);
+    // Long-term (Pp, Ppk)
+    rows += blockHead('Process Performance parameters (Long-Term Statistics)', 'Std Deviation (S)', v5(s => s.sigmaSample));
+    rows += blockRow('3S = (3 X Std deviation)', v2(s => s.sigmaSample * 3));
+    rows += blockRow('6S = (6 X Std deviation)', v2(s => s.sigmaSample * 6));
+    rows += blockRow('Ppku = (USL – Average) / 3S', v2(s => s.ppku));
+    rows += blockRow('Ppkl = (Average – LSL) / 3S', v2(s => s.ppkl));
+    rows += blockRow('Ppk Value = Min(Ppkl & Ppku)', v2(s => s.ppk));
+    rows += blockRow('Pp Value = (USL – LSL) / 6S', v2(s => s.pp));
+
+    return `<w:tbl>${tblPr()}${gridXml}${rows}</w:tbl>`;
+  };
+
+  // ── Static Cp/Cpk interpretation table ──
+  const limitTable = (): string => {
+    const Wlab = 1400, Wc = Math.floor((TOTAL - Wlab) / 3);
+    const Wc3 = TOTAL - Wlab - Wc * 2;
+    const gridXml = grid([Wlab, Wc, Wc, Wc3]);
+    let rows = '';
+    rows += '<w:tr>' + cell([''], { w: Wlab }) + cell(['Cp, Cpk, and Pp, Ppk'], { w: TOTAL - Wlab, gridSpan: 3, bold: true, shaded: true }) + '</w:tr>';
+    rows += '<w:tr>' + cell([''], { w: Wlab })
+      + cell(['< 1'], { w: Wc, bold: true }) + cell(['Between 1 to 1.33'], { w: Wc, bold: true }) + cell(['> 1.33'], { w: Wc3, bold: true }) + '</w:tr>';
+    rows += '<w:tr>' + cell(['Conclusion'], { w: Wlab, bold: true })
+      + cell(['Process is not capable'], { w: Wc }) + cell(['Process is capable'], { w: Wc }) + cell(['very excellent / very capable'], { w: Wc3 }) + '</w:tr>';
+    return `<w:tbl>${tblPr()}${gridXml}${rows}</w:tbl>`;
+  };
+
+  // ── Control-limit table for one pharmacopoeia (UCL/LCL = mean ± 3S) ──
+  const uclTable = (sc: Finish532SpecCapability): string => {
+    const cols = sc.columns;
+    const N = cols.length;
+    const Wlab = 1500;
+    const Wd = Math.floor((TOTAL - Wlab) / N);
+    const Wlast = TOTAL - Wlab - Wd * (N - 1);
+    const dw = (i: number) => (i === N - 1 ? Wlast : Wd);
+    const gridXml = grid([Wlab, ...cols.map((_, i) => dw(i))]);
+    const row = (label: string, vals: string[], shaded?: boolean) =>
+      '<w:tr>' + cell([label], { w: Wlab, bold: true, shaded }) + vals.map((v, i) => cell([v], { w: dw(i), shaded })).join('') + '</w:tr>';
+
+    let rows = '';
+    rows += '<w:tr>' + cell([''], { w: Wlab, shaded: true })
+      + cols.map((c, i) => cell(c.headerLines, { w: dw(i), bold: true, shaded: true })).join('') + '</w:tr>';
+    rows += row('Specification Limit', cols.map(c => c.limitDisplay), true);
+    rows += row('Average', cols.map(c => fmt2(c.stats?.average)));
+    rows += row('Std. Dev.', cols.map(c => fmt2(c.stats?.sigmaSample)));
+    // Control limits = mean ± 3S, clamped to the specification limits (a control
+    // limit never extends beyond spec — matches the reference APQR tables).
+    rows += row('Upper Control Limit (UCL)', cols.map(c =>
+      fmt2(c.stats ? Math.min(c.stats.average + 3 * c.stats.sigmaSample, c.stats.usl) : undefined)));
+    rows += row('Lower Control Limit (LCL)', cols.map(c =>
+      fmt2(c.stats ? Math.max(c.stats.average - 3 * c.stats.sigmaSample, c.stats.lsl) : undefined)));
+    return `<w:tbl>${tblPr()}${gridXml}${rows}</w:tbl>`;
+  };
+
+  // ── Assemble the whole block ──
+  let xml = spacer;
+  for (const sc of capability) {
+    xml += specHead(sc.specLabel);
+    xml += cpkTable(sc);
+    xml += spacer;
+  }
+  xml += headingPara('Limit for Process Capability & Performance parameters (Cp, Cpk, and Pp, Ppk)');
+  xml += limitTable();
+  xml += spacer;
+  xml += headingPara('Upper Control Limits (UCL) & Lower Control Limits (LCL):-');
+  for (const sc of capability) {
+    xml += specHead(sc.specLabel);
+    xml += uclTable(sc);
+    xml += spacer;
+  }
+
+  // Give every row a minimum height so the rows aren't vertically compressed
+  // (hRule="atLeast" lets multi-line header rows still grow as needed).
+  xml = xml.replace(/<w:tr>/g, '<w:tr><w:trPr><w:trHeight w:val="400" w:hRule="atLeast"/></w:trPr>');
+  return xml;
+}
+
+// ============================================
+// Section 5.3.2 — Finished-product Trend Charts (per pharmacopoeia)
+// ============================================
+
+/**
+ * Rewrite a chart's series with the given data. The first <c:ser> is replaced
+ * with ALL `series`, and the remaining template series removed — so a prototype
+ * with fewer series than needed (e.g. the Uniformity chart, which lacks UCL/LCL)
+ * is extended by cloning, and one with more is trimmed. Cloned extra series
+ * reuse the last template series' styling (line still renders; legend names
+ * disambiguate).
+ */
+function updateFinishChartSeries(
+  chartXml: string,
+  series: { name: string; values: number[] }[],
+  categories: string[],
+  esc: (s: string) => string,
+): string {
+  const strCache = (vals: string[]) =>
+    `<c:strCache><c:ptCount val="${vals.length}"/>`
+    + vals.map((v, i) => `<c:pt idx="${i}"><c:v>${esc(v)}</c:v></c:pt>`).join('') + '</c:strCache>';
+  const numCache = (vals: number[]) =>
+    `<c:numCache><c:formatCode>General</c:formatCode><c:ptCount val="${vals.length}"/>`
+    + vals.map((v, i) => `<c:pt idx="${i}"><c:v>${v}</c:v></c:pt>`).join('') + '</c:numCache>';
+  const nameCache = (name: string) =>
+    `<c:strCache><c:ptCount val="1"/><c:pt idx="0"><c:v>${esc(name)}</c:v></c:pt></c:strCache>`;
+
+  const templates = (chartXml.match(/<c:ser>[\s\S]*?<\/c:ser>/g) || []);
+  if (templates.length === 0) return chartXml;
+
+  const buildSer = (i: number): string => {
+    const sd = series[i];
+    let u = templates[Math.min(i, templates.length - 1)];
+    u = u.replace(/<c:idx val="\d+"\/>/, `<c:idx val="${i}"/>`)
+         .replace(/<c:order val="\d+"\/>/, `<c:order val="${i}"/>`);
+    u = u.replace(/(<c:tx>[\s\S]*?<c:strRef>[\s\S]*?)<c:strCache>[\s\S]*?<\/c:strCache>([\s\S]*?<\/c:strRef>[\s\S]*?<\/c:tx>)/,
+      `$1${nameCache(sd.name)}$2`);
+    u = u.replace(/(<c:cat>[\s\S]*?<c:strRef>[\s\S]*?)<c:strCache>[\s\S]*?<\/c:strCache>([\s\S]*?<\/c:strRef>[\s\S]*?<\/c:cat>)/,
+      `$1${strCache(categories)}$2`);
+    u = u.replace(/(<c:val>[\s\S]*?<c:numRef>[\s\S]*?)<c:numCache>[\s\S]*?<\/c:numCache>([\s\S]*?<\/c:numRef>[\s\S]*?<\/c:val>)/,
+      `$1${numCache(sd.values)}$2`);
+    return u;
+  };
+
+  const allSers = series.map((_, i) => buildSer(i)).join('');
+  // Replace the first <c:ser> with the full rebuilt set; drop the rest.
+  let done = false;
+  return chartXml.replace(/<c:ser>[\s\S]*?<\/c:ser>/g, () => {
+    if (done) return '';
+    done = true;
+    return allSers;
+  });
+}
+
+/**
+ * Build the per-pharmacopoeia finished-product trend charts and splice them into
+ * the document, replacing the 5 stale single-spec template charts (chart6–10).
+ *
+ * Each numeric capability column → one native Word line chart (cloned from the
+ * matching template prototype: pH→chart6, Uniformity→chart7, Osmolality→chart9,
+ * Assay→chart10) with 5 series (actual + NLT/NMT/UCL/LCL), plus a title
+ * paragraph and a Remark table. New chart parts are registered in
+ * [Content_Types].xml and document.xml.rels.
+ *
+ * Returns the rewritten `document.xml` (mutating `zip` with the new parts), or
+ * the input unchanged when the template's finished charts can't be located.
+ */
+export async function generateFinish532Charts(
+  zip: JSZip,
+  docXml: string,
+  capability: Finish532SpecCapability[],
+  productName: string,
+  dataTableStart: number,
+  dataTableEnd: number,
+  tablesReplacement: string,
+  esc: (s: string) => string,
+): Promise<string> {
+  if (!capability.length) return docXml;
+
+  // ── Locate template prototype parts (by their _FINISH sheet formulas) ──
+  const protoByKind: Record<string, string> = { ph: '', uniformity: '', osmolality: '', assay: '' };
+  const finishParts: string[] = [];
+  for (const f of Object.keys(zip.files)) {
+    const m = f.match(/^word\/charts\/(chart\d+\.xml)$/);
+    if (!m) continue;
+    const cx = await zip.file(f)!.async('string');
+    const firstF = cx.match(/<c:f>([^<]*)<\/c:f>/)?.[1] || '';
+    if (!/FINISH/i.test(firstF) || /YIELD/i.test(firstF)) continue;
+    finishParts.push(m[1]);
+    if (/PH/i.test(firstF) && !protoByKind.ph) protoByKind.ph = m[1];
+    else if (/UNIFORMITY.*5\s*ml/i.test(firstF) && !protoByKind.uniformity) protoByKind.uniformity = m[1];
+    else if (/OSMOLAL/i.test(firstF) && !protoByKind.osmolality) protoByKind.osmolality = m[1];
+    else if (/ASSAY/i.test(firstF) && !protoByKind.assay) protoByKind.assay = m[1];
+  }
+  // Fallback: any uniformity finish chart if no explicit 5ml one was found.
+  if (!protoByKind.uniformity) {
+    for (const f of finishParts) {
+      const cx = await zip.file('word/charts/' + f)!.async('string');
+      if (/UNIFORMITY/i.test(cx.match(/<c:f>([^<]*)<\/c:f>/)?.[1] || '')) { protoByKind.uniformity = f; break; }
+    }
+  }
+
+  // Need a prototype for every kind we must render.
+  const neededKinds = new Set<string>();
+  capability.forEach(sc => sc.columns.forEach(c => neededKinds.add(c.kind)));
+  for (const k of neededKinds) {
+    if (!protoByKind[k]) { console.warn(`⚠️ Section 5.3.2 charts: no template prototype for "${k}" — charts skipped`); return docXml; }
+  }
+
+  // ── Map finished chart parts → their document r:id and position ──
+  const relsPath = 'word/_rels/document.xml.rels';
+  let relsXml = await zip.file(relsPath)!.async('string');
+  const partToRid = new Map<string, string>();
+  for (const m of relsXml.matchAll(/Id="([^"]+)"[^>]*Target="charts\/(chart\d+\.xml)"/g)) partToRid.set(m[2], m[1]);
+
+  const finishPositions = finishParts
+    .map(p => ({ part: p, rid: partToRid.get(p) || '', pos: partToRid.get(p) ? docXml.indexOf(`r:id="${partToRid.get(p)}"`) : -1 }))
+    .filter(x => x.pos !== -1)
+    .sort((a, b) => a.pos - b.pos);
+  if (finishPositions.length === 0) { console.warn('⚠️ Section 5.3.2 charts: finished chart refs not found in document'); return docXml; }
+
+  // Region end = end of the Remark table following the LAST finished chart.
+  const lastPos = finishPositions[finishPositions.length - 1].pos;
+  let regionEnd = docXml.indexOf('</w:p>', lastPos);
+  regionEnd = regionEnd === -1 ? dataTableEnd : regionEnd + '</w:p>'.length;
+  const nextTbl = docXml.indexOf('<w:tbl', regionEnd);
+  if (nextTbl !== -1 && nextTbl - regionEnd < 2000) {
+    // consume the remark table (depth-aware)
+    let depth = 0, end = -1; const rx = /<\/?w:tbl\b[^>]*>/g; rx.lastIndex = nextTbl; let mm;
+    while ((mm = rx.exec(docXml)) !== null) {
+      if (mm[0].startsWith('<w:tbl')) depth++;
+      else if (--depth === 0) { end = mm.index + mm[0].length; break; }
+    }
+    if (end !== -1) regionEnd = end;
+  }
+
+  // ── Allocate fresh chart indices, rIds and drawing ids ──
+  let chartIdx = Math.max(0, ...Object.keys(zip.files)
+    .map(f => +(f.match(/word\/charts\/chart(\d+)\.xml$/)?.[1] || 0)));
+  let ridNum = Math.max(0, ...[...relsXml.matchAll(/Id="rId(\d+)"/g)].map(m => +m[1]));
+  let docPrId = Math.max(9000, ...[...docXml.matchAll(/<wp:docPr id="(\d+)"/g)].map(m => +m[1]) ) + 1;
+
+  const NS_A = 'http://schemas.openxmlformats.org/drawingml/2006/main';
+  const NS_C = 'http://schemas.openxmlformats.org/drawingml/2006/chart';
+  const NS_R = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
+
+  const protoCache = new Map<string, string>();
+  const getProto = async (part: string) => {
+    if (!protoCache.has(part)) protoCache.set(part, await zip.file('word/charts/' + part)!.async('string'));
+    return protoCache.get(part)!;
+  };
+
+  const fmtLim = (kind: string, v: number) =>
+    kind === 'osmolality' ? v.toFixed(0) : v.toFixed(1);
+
+  const titlePara = (text: string) =>
+    '<w:p><w:pPr><w:spacing w:before="160" w:after="40"/><w:rPr><w:b/><w:i/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:pPr>'
+    + `<w:r><w:rPr><w:b/><w:i/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr><w:t xml:space="preserve">${esc(text)}</w:t></w:r></w:p>`;
+
+  const drawingPara = (rid: string, did: number) =>
+    '<w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:drawing>'
+    + '<wp:inline distT="0" distB="0" distL="0" distR="0">'
+    + '<wp:extent cx="6152515" cy="3771900"/><wp:effectExtent l="0" t="0" r="635" b="0"/>'
+    + `<wp:docPr id="${did}" name="Chart ${did}"/><wp:cNvGraphicFramePr/>`
+    + `<a:graphic xmlns:a="${NS_A}"><a:graphicData uri="${NS_C}">`
+    + `<c:chart xmlns:c="${NS_C}" xmlns:r="${NS_R}" r:id="${rid}"/></a:graphicData></a:graphic>`
+    + '</wp:inline></w:drawing></w:r></w:p>';
+
+  const remarkTable = (param: string) => {
+    const body = `${param} result at Finished product stage for ${productName} found (Satisfactory) within the limit as per finished product specification of ${productName} and no adverse trend observed during the review period.`;
+    const bd = ['top', 'left', 'bottom', 'right', 'insideH', 'insideV']
+      .map(s => `<w:${s} w:val="single" w:sz="4" w:space="0" w:color="auto"/>`).join('');
+    const pBold24 = (t: string) =>
+      '<w:p><w:pPr><w:spacing w:before="0" w:after="0"/>'
+      + '<w:rPr><w:b/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:pPr>'
+      + '<w:r><w:rPr><w:b/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr>'
+      + `<w:t xml:space="preserve">${esc(t)}</w:t></w:r></w:p>`;
+    const pNormal24 = (t: string) =>
+      '<w:p><w:pPr><w:spacing w:before="0" w:after="0"/><w:jc w:val="both"/>'
+      + '<w:rPr><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:pPr>'
+      + '<w:r><w:rPr><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr>'
+      + `<w:t xml:space="preserve">${esc(t)}</w:t></w:r></w:p>`;
+    const sigCell = (label: string, widthPct: string) =>
+      `<w:tc><w:tcPr><w:tcW w:w="${widthPct}" w:type="pct"/>`
+      + '<w:shd w:val="clear" w:color="auto" w:fill="auto"/></w:tcPr>'
+      + pBold24(`${label}:`)
+      + '<w:p><w:pPr><w:spacing w:before="0" w:after="0"/>'
+      + '<w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:pPr>'
+      + '<w:r><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>'
+      + '<w:t xml:space="preserve">(Sign/Date)</w:t></w:r></w:p>'
+      + '<w:p><w:pPr><w:spacing w:before="0" w:after="0"/>'
+      + '<w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:pPr></w:p>'
+      + '</w:tc>';
+    return '<w:tbl><w:tblPr><w:tblW w:w="5000" w:type="pct"/><w:jc w:val="center"/>'
+      + `<w:tblBorders>${bd}</w:tblBorders>`
+      + '<w:tblLook w:val="04A0" w:firstRow="1" w:lastRow="0" w:firstColumn="1" w:lastColumn="0" w:noHBand="0" w:noVBand="1"/>'
+      + '</w:tblPr>'
+      + '<w:tblGrid><w:gridCol w:w="4800"/><w:gridCol w:w="5105"/></w:tblGrid>'
+      + '<w:tr><w:trPr><w:trHeight w:val="432"/><w:jc w:val="center"/></w:trPr>'
+      + '<w:tc><w:tcPr><w:tcW w:w="5000" w:type="pct"/><w:gridSpan w:val="2"/>'
+      + '<w:shd w:val="clear" w:color="auto" w:fill="D9D9D9"/></w:tcPr>'
+      + pBold24('Remark:')
+      + pNormal24(body)
+      + '</w:tc></w:tr>'
+      + '<w:tr><w:trPr><w:trHeight w:val="864"/><w:jc w:val="center"/></w:trPr>'
+      + sigCell('Prepared By QA', '2423')
+      + sigCell('Reviewed By QA', '2577')
+      + '</w:tr></w:tbl>';
+  };
+
+  let chartsXml = '';
+  const ctOverrides: string[] = [];
+  const newRels: string[] = [];
+
+  for (const sc of capability) {
+    for (const col of sc.columns) {
+      const s = col.stats;
+      if (!s || col.points.length === 0) continue;
+      const n = col.points.length;
+      const fill = (v: number) => Array(n).fill(v);
+      const ucl = Math.min(s.average + 3 * s.sigmaSample, s.usl);
+      const lcl = Math.max(s.average - 3 * s.sigmaSample, s.lsl);
+      const pct = col.kind === 'assay' ? '%' : '';
+      const series = [
+        { name: col.seriesName, values: col.points.map(p => p.value) },
+        { name: `${col.kind === 'assay' ? 'Limit: ' : ''}NLT ${fmtLim(col.kind, s.lsl)}${pct}`, values: fill(s.lsl) },
+        { name: `${col.kind === 'assay' ? 'Limit: ' : ''}NMT ${fmtLim(col.kind, s.usl)}${pct}`, values: fill(s.usl) },
+        { name: `UCL (NMT ${ucl.toFixed(2)})`, values: fill(ucl) },
+        { name: `LCL (NLT ${lcl.toFixed(2)})`, values: fill(lcl) },
+      ];
+      const categories = col.points.map(p => p.label);
+
+      let cx = await getProto(protoByKind[col.kind]);
+      cx = updateFinishChartSeries(cx, series, categories, esc);
+      // Self-contain the clone: drop the external workbook link and overlay shapes.
+      cx = cx.replace(/<c:externalData[\s\S]*?<\/c:externalData>/g, '').replace(/<c:userShapes[^>]*\/>/g, '');
+
+      // Fit the value axis to this chart's own data + limit lines. The prototype
+      // carries a fixed min/max (e.g. pH's 4.5) that leaves the data squashed
+      // into a corner with a large empty band; replace it with a snug range.
+      {
+        const allVals = [...col.points.map(p => p.value), s.lsl, s.usl, ucl, lcl].filter(v => !isNaN(v));
+        const vmin = Math.min(...allVals), vmax = Math.max(...allVals);
+        const pad = Math.max((vmax - vmin) * 0.12, Math.abs(vmax) * 0.002, 0.05);
+        const step = vmax >= 20 ? 5 : 0.1;
+        const axMin = Math.floor((vmin - pad) / step) * step;
+        const axMax = Math.ceil((vmax + pad) / step) * step;
+        const fix = (n: number) => String(Math.round(n * 1000) / 1000);
+        cx = cx.replace(
+          /(<c:valAx>[\s\S]*?<c:scaling>(?:<c:logBase[^>]*\/>)?<c:orientation val="minMax"\/>)[\s\S]*?(<\/c:scaling>)/,
+          `$1<c:max val="${fix(axMax)}"/><c:min val="${fix(axMin)}"/>$2`,
+        );
+      }
+
+      chartIdx += 1; ridNum += 1; docPrId += 1;
+      const partName = `chart${chartIdx}.xml`;
+      const rid = `rId${ridNum}`;
+      zip.file(`word/charts/${partName}`, cx);
+      ctOverrides.push(`<Override PartName="/word/charts/${partName}" ContentType="application/vnd.openxmlformats-officedocument.drawingml.chart+xml"/>`);
+      newRels.push(`<Relationship Id="${rid}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart" Target="charts/${partName}"/>`);
+
+      chartsXml += titlePara(`Trend Analysis of ${col.titleParam} at Finished Stage: (As per ${sc.spec}):`);
+      chartsXml += drawingPara(rid, docPrId);
+      chartsXml += remarkTable(col.titleParam);
+      chartsXml += '<w:p><w:pPr><w:spacing w:before="40" w:after="40"/></w:pPr></w:p>';
+    }
+  }
+
+  if (!chartsXml) return docXml;
+
+  // ── Register new parts in content types + document rels ──
+  const ctPath = '[Content_Types].xml';
+  let ctXml = await zip.file(ctPath)!.async('string');
+  ctXml = ctXml.replace('</Types>', ctOverrides.join('') + '</Types>');
+  zip.file(ctPath, ctXml);
+  relsXml = relsXml.replace('</Relationships>', newRels.join('') + '</Relationships>');
+  zip.file(relsPath, relsXml);
+
+  // ── Splice: data tables + capability block + new charts replace the
+  //    old data table AND the stale finished-chart region in one shot ──
+  return docXml.substring(0, dataTableStart) + tablesReplacement + chartsXml + docXml.substring(regionEnd);
 }
 
 /**
@@ -791,12 +1891,10 @@ export async function getApqrData(productCode: string, year: number) {
           // into 140 bottles is still a 30 LTR batch for APQR purposes.
           const existing = uniqueBatches.get(key);
 
-          const VOLUME_UNITS = new Set(['LTR', 'L', 'ML', 'KG', 'G', 'GM', 'GMS']);
-
           const parseQtyUnit = (s: string): { qty: number; unit: string } => {
             const clean = (s || '').toUpperCase().trim();
-            const m = clean.match(/^([\d.]+)\s*([A-Z]*)$/);
-            if (m) return { qty: parseFloat(m[1]) || 0, unit: m[2].trim() };
+            const m = clean.match(/^([\d.,]+)\s*([A-Z]+)?$/);
+            if (m) return { qty: parseFloat(m[1].replace(/,/g, '')) || 0, unit: (m[2] || '').trim() };
             return { qty: 0, unit: '' };
           };
 
@@ -805,18 +1903,18 @@ export async function getApqrData(productCode: string, year: number) {
             .split(',')
             .map((p: string) => p.trim())
             .filter(Boolean);
-          const newPartStr = `${batch.batchSize || ''} ${batch.unit || ''}`.trim();
+          const newPartStr = formatBatchCreationSize(batch);
 
           const allParts: Array<{ qty: number; unit: string }> = [
             ...existingParts.map(parseQtyUnit),
             parseQtyUnit(newPartStr),
           ].filter(p => p.qty > 0);
 
-          const hasVolume = allParts.some(p => VOLUME_UNITS.has(p.unit));
+          const hasVolume = allParts.some(p => BATCH_VOLUME_UOMS.has(p.unit));
 
           if (hasVolume) {
             // Sum only volume-unit parts; discard count-unit parts (BOT, NOS, etc.)
-            const volumeParts = allParts.filter(p => VOLUME_UNITS.has(p.unit));
+            const volumeParts = allParts.filter(p => BATCH_VOLUME_UOMS.has(p.unit));
             const byUnit = new Map<string, number>();
             for (const p of volumeParts) {
               byUnit.set(p.unit, (byUnit.get(p.unit) || 0) + p.qty);
@@ -844,22 +1942,9 @@ export async function getApqrData(productCode: string, year: number) {
           // (split batches share the same mfgDate)
 
         } else {
-          // ── New batch: format initial size cleanly ──
-          const batchSizeRaw = (batch.batchSize || '').toString().trim();
-          const batchUnitRaw = (batch.unit || '').toString().trim().toUpperCase();
-          const batchSizeNum = parseFloat(batchSizeRaw);
-          const formattedBatchNum = !isNaN(batchSizeNum)
-            ? (Number.isInteger(batchSizeNum)
-              ? batchSizeNum.toString()
-              : batchSizeNum.toFixed(2).replace(/\.?0+$/, ''))
-            : batchSizeRaw;
-          const initialFormattedSize = batchUnitRaw
-            ? `${formattedBatchNum} ${batchUnitRaw}`
-            : formattedBatchNum;
-
           uniqueBatches.set(key, {
             ...batch,
-            batchSize: initialFormattedSize,
+            batchSize: formatBatchCreationSize(batch),
             parsedMfgDate: mfgDate,
             dateSource,
             formattedMfgDate: formatMonthYear(mfgDate),
@@ -876,8 +1961,32 @@ export async function getApqrData(productCode: string, year: number) {
   const finalBatches = Array.from(uniqueBatches.values());
   finalBatches.sort((a, b) => a.parsedMfgDate.getTime() - b.parsedMfgDate.getTime());
 
+  const batchItemCodeMap = new Map<string, string>();
+  for (const doc of batchDocs) {
+    for (const b of doc.batches || []) {
+      if (!allProductCodesSet.has(b.itemCode)) continue;
+      const bn = (b.batchNumber || '').trim();
+      if (!bn || batchItemCodeMap.has(bn)) continue;
+      let mfgDate = parseBatchDate(b.mfgDate);
+      if (!mfgDate && b.batchCompletionDate) {
+        mfgDate = parseBatchDate(b.batchCompletionDate);
+      }
+      if (mfgDate?.getFullYear() === yearNum) {
+        batchItemCodeMap.set(bn, b.itemCode || '');
+      }
+    }
+  }
+
   // Set of batch numbers confirmed in the review period — used to filter AR entries
   const finalBatchNumbersSet = new Set<string>(finalBatches.map((b: any) => b.batchNumber));
+
+  // ── Section 6: Batch Release / Reject Status ──
+  const rejectedBatchSet = await loadRejectedBatchNumbersFromExcel();
+  const batchReleaseStatus = computeBatchReleaseStatus(finalBatches, rejectedBatchSet);
+  console.log(
+    `✅ Section 6 Batch Release/Reject: manufactured=${batchReleaseStatus.manufactured}, `
+    + `released=${batchReleaseStatus.released}, rejected=${batchReleaseStatus.rejected}`
+  );
 
   // ── Compute largest batch size from actual batches in review year ──
   const parseBatchSizeNumeric = (s: string): number => {
@@ -1093,29 +2202,11 @@ export async function getApqrData(productCode: string, year: number) {
 
   const totalBatchesCount = finalBatches.length;
 
-  // Volume units are meaningful for batch size display; count units (BOT/NOS) are not.
-  // If a batch only has a count unit, fall back to the formula's batch size (LTR).
-  const VOLUME_UNITS_DISPLAY = new Set(['LTR', 'L', 'ML', 'KG', 'G', 'GM', 'GMS']);
-  const COUNT_UNITS_DISPLAY = new Set(['BOT', 'NOS', 'PCS', 'UNIT', 'UNITS', 'NO', 'EA']);
-
-  const normalizeBatchSizeDisplay = (rawSize: string): string => {
-    if (!rawSize || rawSize === 'N/A') return rawSize;
-    // Parse unit from size string e.g. "4820 BOT" → unit="BOT"
-    const m = rawSize.toUpperCase().trim().match(/^([\d.,]+)\s*([A-Z]*)$/);
-    if (!m) return rawSize;
-    const unit = m[2].trim();
-    // If it's a count unit and we have a formula batch size, use formula batch size instead
-    if (COUNT_UNITS_DISPLAY.has(unit) && formulaBatchSizeNumeric > 0) {
-      return `${formulaBatchSizeNumeric} LTR`;
-    }
-    return rawSize;
-  };
-
-  // Prepare batch table data
+  // Prepare batch table data (batch sizes from Batch Creation: batchSize + batchUom)
   const batchTable = finalBatches.map(b => ({
     b_month: FULL_MONTHS[b.parsedMfgDate.getMonth()],
     b_num: b.batchNumber || 'N/A',
-    b_size: normalizeBatchSizeDisplay(b.batchSize || 'N/A'),
+    b_size: b.batchSize || 'N/A',
     b_mfg: b.formattedMfgDate,
     b_exp: b.formattedExpDate,
   }));
@@ -1987,6 +3078,8 @@ export async function getApqrData(productCode: string, year: number) {
   // Finish532Table[] used for generating multiple DOCX tables.
   const finishSpecNumbers: string[] = [];
   let finish532Tables: any[] = [];
+  let sterilityTestingData: SterilityTestingRow[] = [];
+  let sterilityTestingLimit = DEFAULT_STERILITY_LIMIT;
 
   if (finalBatches.length > 0) {
     const batchNumbers532 = finalBatches.map((b: any) => b.batchNumber);
@@ -2009,25 +3102,33 @@ export async function getApqrData(productCode: string, year: number) {
     const batchOrder532 = finalBatches.map((b: any) => b.batchNumber as string);
     finish532Tables = buildFinish532Tables(finishCoas532, batchOrder532);
 
+    const sterilityBuilt = buildSterilityTestingData(finalBatches, finishCoas532);
+    sterilityTestingData = sterilityBuilt.rows;
+    sterilityTestingLimit = sterilityBuilt.limit;
+
     console.log(`✅ Section 5.3.2: ${finish532Tables.length} tables, spec numbers: ${finishSpecNumbers.join(', ') || '(none)'}`);
+    console.log(`✅ Section 5.3.3: ${sterilityTestingData.length} sterility rows`);
   }
 
-  // ── Section 5.4.2 — At Finished Stage: Yield Data ──
-  interface YieldRow542 {
-    batchNo: string;
-    yieldLines: string[];  // proportional yield per item code e.g. "19.16% (23553)"
-    avgYield: number;      // actualYield from DB
-  }
-  const yieldRows542: YieldRow542[] = [];
+  // ── Section 5.4.1 / 5.4.2 — Yield Data (Bulk + Finished stages) ──
+  const yieldRows541: YieldRow[] = [];
+  const yieldRows542: YieldRow[] = [];
 
   if (finalBatches.length > 0) {
-    const batchNumbers542 = finalBatches.map((b: any) => b.batchNumber);
-    console.log(`\n📋 Section 5.4.2: Fetching Yield data for ${batchNumbers542.length} batches`);
+    const batchNumbersYield = finalBatches.map((b: any) => b.batchNumber);
+    console.log(`\n📋 Section 5.4: Fetching Yield data for ${batchNumbersYield.length} batches`);
 
-    const yieldDocs = await Yield.find({ batchNo: { $in: batchNumbers542 } }).lean();
+    const yieldDocs = await Yield.find({
+      batchNo: { $in: batchNumbersYield },
+      productCode: { $in: allCodes },
+    }).lean();
+
     const yieldByBatch = new Map<string, any>();
     for (const yd of yieldDocs) {
-      if (!yieldByBatch.has(yd.batchNo)) {
+      const existing = yieldByBatch.get(yd.batchNo);
+      if (!existing) {
+        yieldByBatch.set(yd.batchNo, yd);
+      } else if (yd.productCode === mainCode && existing.productCode !== mainCode) {
         yieldByBatch.set(yd.batchNo, yd);
       }
     }
@@ -2039,25 +3140,22 @@ export async function getApqrData(productCode: string, year: number) {
         continue;
       }
 
-      const totalBatchSize = parseFloat(yd.batchSizeLtrOrKg) || 0;
       const actualYield: number = typeof yd.actualYield === 'number' ? yd.actualYield : 0;
-      const packingDetails: any[] = Array.isArray(yd.packingDetails) ? yd.packingDetails : [];
 
-      let yieldLines: string[];
-      if (packingDetails.length === 0 || totalBatchSize === 0) {
-        yieldLines = [`${actualYield.toFixed(2)}%`];
-      } else {
-        yieldLines = packingDetails.map((pd: any) => {
-          const itemBatchSize = parseFloat(pd.batchSize) || 0;
-          const itemYield = totalBatchSize > 0 ? (itemBatchSize / totalBatchSize) * actualYield : 0;
-          return `${itemYield.toFixed(2)}% (${pd.itemCode})`;
-        });
-      }
-
-      yieldRows542.push({ batchNo: yd.batchNo, yieldLines, avgYield: actualYield });
+      yieldRows541.push({ batchNo: yd.batchNo, yieldPct: actualYield });
+      // Finished stage: same actual yield in both %YIELD and %AVERAGE YIELD columns (per APQR format).
+      yieldRows542.push({ batchNo: yd.batchNo, yieldPct: actualYield });
     }
-    console.log(`✅ Section 5.4.2: ${yieldRows542.length} yield rows`);
+    console.log(`✅ Section 5.4.1: ${yieldRows541.length} bulk yield rows`);
+    console.log(`✅ Section 5.4.2: ${yieldRows542.length} finished yield rows`);
   }
+
+  const mfcNoForControl = formula.masterFormulaDetails?.masterCardNo || '';
+  const controlSampleData = await loadControlSampleDataForApqr(
+    finalBatches,
+    batchItemCodeMap,
+    mfcNoForControl,
+  );
 
   return {
     company_name: formula.companyInfo?.companyName || 'INDIANA OPHTHALMICS LLP',
@@ -2067,8 +3165,9 @@ export async function getApqrData(productCode: string, year: number) {
     product_name: cleanProductName(productMaster?.productName || ''),
     product_code: productCode,
     generic_name: productMaster?.genericName || '',
+    department: productMaster?.department || '',
     therapeutic_category: productMaster?.therapeuticCategory || '',
-    storage_condition: productMaster?.storageCondition || '',
+    storage_condition: normalizeStorageCondition(productMaster?.storageCondition) || '',
 
     // From Formula Master — support 1 or more label claims (IP, USP, etc.)
     label_claims: buildLabelClaimsText(formula.batchInfo),
@@ -2076,7 +3175,8 @@ export async function getApqrData(productCode: string, year: number) {
     shelf_life: formula.masterFormulaDetails?.shelfLife || '',
     mfg_lic_no: formula.masterFormulaDetails?.manufacturingLicenseNo || '',
 
-    dosage_form: '',
+    // We display Department (Eye Drops, etc.) in "Dosage Form" for the APQR brief description.
+    dosage_form: productMaster?.department || '',
     pack_style: computePackStyle(formula.fillingDetails),
 
     batch_size: formula.batchInfo?.batchSize || '',
@@ -2110,7 +3210,12 @@ export async function getApqrData(productCode: string, year: number) {
     },
     finishSpecNumbers,             // Section 5.3.2 - Unique spec doc numbers (ITMSPEC) from FINISH COAs
     finish532Tables,               // Section 5.3.2 - Structured tables (spec + organic impurities)
+    sterilityTestingData,          // Section 5.3.3 - Sterility Testing (one row per batch)
+    sterilityTestingLimit,         // Section 5.3.3 - Sterility limit / sub-header text
+    yieldData541: yieldRows541,    // Section 5.4.1 - At Bulk Stage yield data
     yieldData542: yieldRows542,    // Section 5.4.2 - At Finished Stage yield data
+    batchReleaseStatus,            // Section 6 - Batch Release / Reject Status
+    controlSampleData,             // Section 7 - Review of Control Sample
 
     // Individual month counts
     ...monthlyData.reduce((acc, m) => {
@@ -2132,6 +3237,492 @@ function xmlEscape(str: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&apos;');
+}
+
+/** Min / max / mean / sample SD / RSD for yield statistic rows in section 5.4 tables. */
+function computeYieldStatistics(values: number[]) {
+  if (values.length === 0) {
+    return { min: 0, max: 0, mean: 0, stdDev: 0, rsd: 0 };
+  }
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const mean = values.reduce((s, v) => s + v, 0) / values.length;
+  const variance = values.length > 1
+    ? values.reduce((s, v) => s + Math.pow(v - mean, 2), 0) / (values.length - 1)
+    : 0;
+  const stdDev = Math.sqrt(variance);
+  const rsd = mean !== 0 ? (stdDev / mean) * 100 : 0;
+  return { min, max, mean, stdDev, rsd };
+}
+
+interface YieldChartSeries {
+  name: string;
+  values: number[];
+}
+
+interface YieldRow {
+  batchNo: string;
+  yieldPct: number;
+}
+
+interface BatchReleaseStatus {
+  manufactured: number;
+  released: number;
+  rejected: number;
+}
+
+/** Section 7 stability intervals (0 = Initial / COA). */
+const CONTROL_SAMPLE_INTERVALS = [0, 6, 12, 18, 24, 30] as const;
+type ControlSampleInterval = (typeof CONTROL_SAMPLE_INTERVALS)[number];
+
+interface ControlSamplePhParam {
+  label: string;
+  limit: string;
+}
+
+interface ControlSampleIntervalValues {
+  description: string;
+  ph: string;
+}
+
+interface ControlSampleBatchRow {
+  batchNumber: string;
+  intervals: Record<ControlSampleInterval, ControlSampleIntervalValues>;
+}
+
+interface ControlSampleData {
+  descriptionSpec: string;
+  phParams: ControlSamplePhParam[];
+  batches: ControlSampleBatchRow[];
+}
+
+/** Normalize batch numbers from review Excel (MFR prefix → MFC). */
+function normalizeReviewBatchNo(batchStr: string): string {
+  return batchStr.replace(/^MFR\b/i, 'MFC').trim().toUpperCase();
+}
+
+/** Format batch counts for section 6 table; rejected row uses "Nil" when zero. */
+function formatBatchCountForApqr(count: number, nilWhenZero = false): string {
+  if (nilWhenZero && count === 0) return 'Nil';
+  return count.toString().padStart(2, '0');
+}
+
+/**
+ * Load all rejected batch numbers from Review of Batch Rejection.xlsx
+ * (same source as /api/reviews batchRejection).
+ */
+async function loadRejectedBatchNumbersFromExcel(): Promise<Set<string>> {
+  const rejected = new Set<string>();
+  const filePath = path.join(process.cwd(), 'excel', 'Review of Batch Rejection.xlsx');
+
+  try {
+    await fs.promises.access(filePath);
+  } catch {
+    console.warn('  ⚠️ Review of Batch Rejection.xlsx not found — rejected batch count will be 0');
+    return rejected;
+  }
+
+  try {
+    const buf = await fs.promises.readFile(filePath);
+    const wb = XLSX.read(buf, { type: 'buffer' });
+    const sheetName = wb.SheetNames?.[0];
+    if (!sheetName) return rejected;
+
+    const aoa = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], {
+      header: 1,
+      defval: '',
+      blankrows: false,
+      raw: false,
+    }) as unknown[][];
+
+    if (aoa.length < 2) return rejected;
+
+    const normalizedHeaders = (aoa[0] as unknown[]).map((h) =>
+      String(h ?? '').trim().toLowerCase().replace(/[^a-z0-9]/g, '')
+    );
+    const batchColIdx = normalizedHeaders.reduce<number>((last, h, i) =>
+      (h.includes('batchno') || h.includes('batchnumber') || h === 'batch') ? i : last,
+      -1
+    );
+
+    if (batchColIdx === -1) {
+      console.warn('  ⚠️ Batch Rejection Excel: no batch number column found');
+      return rejected;
+    }
+
+    for (let i = 1; i < aoa.length; i++) {
+      const row = aoa[i] as unknown[];
+      const batchRaw = row[batchColIdx];
+      if (!batchRaw) continue;
+
+      String(batchRaw)
+        .split(/[\r\n,]+/)
+        .map((t) => normalizeReviewBatchNo(t.trim()))
+        .filter((t) => t && !['N/A', 'NA', 'NIL', '-'].includes(t))
+        .forEach((bn) => rejected.add(bn));
+    }
+
+    console.log(`  📋 Batch Rejection Excel: ${rejected.size} rejected batch number(s) loaded`);
+  } catch (err) {
+    console.warn('  ⚠️ Failed to read Review of Batch Rejection.xlsx:', err);
+  }
+
+  return rejected;
+}
+
+function computeBatchReleaseStatus(
+  finalBatches: Array<{ batchNumber: string }>,
+  rejectedBatchSet: Set<string>,
+): BatchReleaseStatus {
+  const manufactured = finalBatches.length;
+  let rejected = 0;
+
+  for (const batch of finalBatches) {
+    const bn = normalizeReviewBatchNo(batch.batchNumber);
+    if (rejectedBatchSet.has(bn)) rejected++;
+  }
+
+  return {
+    manufactured,
+    rejected,
+    released: manufactured - rejected,
+  };
+}
+
+/** Format COA pH limit text for section 7 header lines. */
+function formatControlSamplePhLimit(limit: string): string {
+  const s = (limit || '').trim();
+  if (!s) return '';
+  const between = s.match(/^between\s+(.+)$/i);
+  if (between) return between[1].trim();
+  return s;
+}
+
+/** Build pH table title cell lines (e.g. pH + per-pharmacopoeia limits). */
+function buildControlSamplePhHeaderLines(phParams: ControlSamplePhParam[]): string[] {
+  if (phParams.length === 0) return ['pH'];
+  if (phParams.length === 1 && !phParams[0].label) {
+    const lim = formatControlSamplePhLimit(phParams[0].limit);
+    return [lim ? `pH (${lim})` : 'pH'];
+  }
+  const lines = ['pH'];
+  for (const p of phParams) {
+    const lim = formatControlSamplePhLimit(p.limit);
+    if (p.label) {
+      lines.push(lim ? `(As per ${p.label} - ${lim})` : `(As per ${p.label})`);
+    } else if (lim) {
+      lines.push(`(${lim})`);
+    }
+  }
+  return lines;
+}
+
+function formatControlSampleDescriptionCell(raw: string): string {
+  return (raw || '').trim() ? 'Complies' : '--';
+}
+
+function formatControlSamplePhCell(raw: string): string {
+  const v = (raw || '').trim();
+  return v || '--';
+}
+
+/** Extract pH parameters and description from a FINISH COA (same rules as retained-sample API). */
+function extractFinishCoaControlSample(coa: {
+  finishData?: {
+    description?: string;
+    criticalParameters?: Array<{ name?: string; result?: string; limit?: string }>;
+    identificationTests?: Array<{ name?: string; result?: string }>;
+  };
+}): { phParams: ControlSamplePhParam[]; description: string } {
+  const params = coa.finishData?.criticalParameters || [];
+  const phRaw = params.filter(
+    (p) => /^ph(\s|$)/i.test((p.name || '').trim()) || /^ph$/i.test((p.name || '').trim()),
+  );
+  const usedLabels = new Map<string, number>();
+  const phParams: ControlSamplePhParam[] = phRaw.map((p) => {
+    const suffix = (p.name || '').trim().replace(/^ph\s*/i, '').trim();
+    let label = suffix;
+    const count = usedLabels.get(label) ?? 0;
+    if (count > 0) label = label ? `${label} ${count + 1}` : `${count + 1}`;
+    usedLabels.set(suffix, count + 1);
+    return { label, limit: p.limit || '' };
+  });
+
+  const allParams: Array<{ name?: string; result?: string }> = [
+    ...params,
+    ...(coa.finishData?.identificationTests || []),
+  ];
+  const descParam = allParams.find((p) => /^description$/i.test((p.name || '').trim()));
+  const description =
+    coa.finishData?.description ||
+    descParam?.result ||
+    '';
+
+  return { phParams, description };
+}
+
+type MappedStabilityEntry = {
+  month: number;
+  pH: string;
+  phValues: Array<{ label: string; value: string }>;
+  description: string;
+};
+
+async function loadControlSampleDataForApqr(
+  finalBatches: Array<{ batchNumber: string }>,
+  batchItemCodeMap: Map<string, string>,
+  mfcNo: string,
+): Promise<ControlSampleData | null> {
+  if (finalBatches.length === 0) return null;
+
+  const batchNumbers = finalBatches.map((b) => b.batchNumber);
+  const coaMap = new Map<string, { phParams: ControlSamplePhParam[]; description: string }>();
+
+  const coas = await COA.find(
+    { batchNumber: { $in: batchNumbers }, stage: 'FINISH' },
+    {
+      batchNumber: 1,
+      'finishData.description': 1,
+      'finishData.criticalParameters': 1,
+      'finishData.identificationTests': 1,
+    },
+  ).lean();
+
+  for (const coa of coas) {
+    coaMap.set(coa.batchNumber, extractFinishCoaControlSample(coa));
+  }
+
+  const stabilityMap = new Map<string, MappedStabilityEntry[]>();
+  if (mfcNo) {
+    const retainedDocs = await RetainedSample.find({
+      mfcNo,
+      batchNumber: { $in: batchNumbers },
+    }).lean();
+
+    for (const r of retainedDocs) {
+      const mapped: MappedStabilityEntry[] = (r.stabilityEntries || []).map((e: {
+        month: number;
+        pH?: string;
+        phValues?: Array<{ label?: string; value?: string }>;
+        description?: string;
+      }) => ({
+        month: e.month,
+        pH: e.pH || '',
+        phValues: (e.phValues || []).map((pv: { label?: string; value?: string }) => ({
+          label: pv.label || '',
+          value: pv.value || '',
+        })),
+        description: e.description || '',
+      }));
+      const itemCode = (r as { itemCode?: string }).itemCode || '';
+      if (itemCode) {
+        stabilityMap.set(`${r.batchNumber}|${itemCode}`, mapped);
+      } else {
+        stabilityMap.set(r.batchNumber, mapped);
+      }
+    }
+  }
+
+  const phParamsHeader: ControlSamplePhParam[] = [];
+  const descriptionSpecs: string[] = [];
+  const batches: ControlSampleBatchRow[] = [];
+
+  for (const batch of finalBatches) {
+    const bn = batch.batchNumber;
+    const itemCode = batchItemCodeMap.get(bn) || '';
+    const coa = coaMap.get(bn);
+    const phParams = coa?.phParams || [];
+    const zeroDesc = coa?.description || '';
+
+    if (zeroDesc) descriptionSpecs.push(zeroDesc);
+    for (const p of phParams) {
+      if (!phParamsHeader.some((x) => x.label === p.label && x.limit === p.limit)) {
+        phParamsHeader.push({ label: p.label, limit: p.limit });
+      }
+    }
+
+    const stability =
+      (itemCode ? stabilityMap.get(`${bn}|${itemCode}`) : undefined) ||
+      stabilityMap.get(bn) ||
+      [];
+
+    const getEntry = (month: 6 | 12 | 18 | 24 | 30) =>
+      stability.find((e) => e.month === month);
+
+    const getPh = (month: ControlSampleInterval): string => {
+      if (month === 0) {
+        const coaEntry = coas.find((c) => c.batchNumber === bn);
+        const phRaw = (coaEntry?.finishData?.criticalParameters || []).filter(
+          (p: { name?: string }) =>
+            /^ph(\s|$)/i.test((p.name || '').trim()) || /^ph$/i.test((p.name || '').trim()),
+        );
+        return phRaw[0]?.result || '';
+      }
+      const entry = getEntry(month as 6 | 12 | 18 | 24 | 30);
+      if (!entry) return '';
+      const primaryLabel = phParams[0]?.label ?? '';
+      if (entry.phValues.length > 0) {
+        const match = entry.phValues.find((pv) => pv.label === primaryLabel);
+        return (match || entry.phValues[0])?.value || '';
+      }
+      return entry.pH || '';
+    };
+
+    const getDesc = (month: ControlSampleInterval): string => {
+      if (month === 0) return zeroDesc;
+      return getEntry(month as 6 | 12 | 18 | 24 | 30)?.description || '';
+    };
+
+    const intervals = {} as ControlSampleBatchRow['intervals'];
+    for (const m of CONTROL_SAMPLE_INTERVALS) {
+      intervals[m] = { description: getDesc(m), ph: getPh(m) };
+    }
+    batches.push({ batchNumber: bn, intervals });
+  }
+
+  console.log(
+    `✅ Section 7 Control Sample: ${batches.length} batch(es), `
+    + `${phParamsHeader.length} pH param(s), COA specs=${descriptionSpecs.length}`,
+  );
+
+  return {
+    descriptionSpec: descriptionSpecs[0] || '',
+    phParams: phParamsHeader,
+    batches,
+  };
+}
+
+/** Locate the Nth table after an anchor in document XML (0-based). */
+function extractDocxTableAfterAnchor(
+  docXml: string,
+  anchorText: string,
+  tableIndex: number,
+  searchFrom = 500000,
+): { start: number; end: number; tableXml: string } | null {
+  const anchor = docXml.indexOf(anchorText, searchFrom);
+  if (anchor === -1) return null;
+
+  let pos = anchor;
+  for (let ti = 0; ti <= tableIndex; ti++) {
+    const tblStart = docXml.indexOf('<w:tbl>', pos);
+    if (tblStart === -1) return null;
+
+    let depth = 0;
+    let tblEnd = -1;
+    for (let i = tblStart; i < docXml.length; i++) {
+      if (docXml.startsWith('<w:tbl>', i)) depth++;
+      if (docXml.startsWith('</w:tbl>', i)) {
+        depth--;
+        if (depth === 0) {
+          tblEnd = i + 8;
+          break;
+        }
+      }
+    }
+    if (tblEnd === -1) return null;
+
+    if (ti === tableIndex) {
+      return { start: tblStart, end: tblEnd, tableXml: docXml.substring(tblStart, tblEnd) };
+    }
+    pos = tblEnd;
+  }
+  return null;
+}
+
+/**
+ * Update section 5.4 yield trend charts (chart11 bulk / chart12 finished).
+ * Replaces embedded caches with table data, removes external Excel OLE binding,
+ * and clears fixed Y-axis limits so the plot auto-scales to the batch values.
+ */
+function updateYieldTrendChartXml(
+  chartXml: string,
+  categories: string[],
+  series: YieldChartSeries[],
+): string {
+  const buildStrCache = (vals: string[]) => {
+    const pts = vals.map((v, i) => `<c:pt idx="${i}"><c:v>${xmlEscape(v)}</c:v></c:pt>`).join('');
+    return `<c:strCache><c:ptCount val="${vals.length}"/>${pts}</c:strCache>`;
+  };
+  const buildNumCache = (vals: number[]) => {
+    const pts = vals.map((v, i) => `<c:pt idx="${i}"><c:v>${v}</c:v></c:pt>`).join('');
+    return `<c:numCache><c:formatCode>General</c:formatCode><c:ptCount val="${vals.length}"/>${pts}</c:numCache>`;
+  };
+  const buildSerName = (name: string) =>
+    `<c:strCache><c:ptCount val="1"/><c:pt idx="0"><c:v>${xmlEscape(name)}</c:v></c:pt></c:strCache>`;
+
+  const nCat = categories.length;
+  const catFormula = nCat > 0 ? `Sheet1!$A$2:$A$${nCat + 1}` : 'Sheet1!$A$2';
+
+  let serIdx = 0;
+  let res = chartXml.replace(/<c:ser>([\s\S]*?)<\/c:ser>/g, (match, content) => {
+    if (serIdx >= series.length) return match;
+    const sd = series[serIdx];
+    const valCol = String.fromCharCode(66 + serIdx);
+    const nVal = sd.values.length;
+    const valFormula = nVal > 0 ? `Sheet1!$${valCol}$2:$${valCol}$${nVal + 1}` : `Sheet1!$${valCol}$2`;
+    serIdx++;
+
+    let updated = content;
+    updated = updated.replace(
+      /(<c:tx>[\s\S]*?<c:strRef>[\s\S]*?)<c:strCache>[\s\S]*?<\/c:strCache>([\s\S]*?<\/c:strRef>[\s\S]*?<\/c:tx>)/,
+      `$1${buildSerName(sd.name)}$2`
+    );
+    updated = updated.replace(
+      /(<c:cat>[\s\S]*?<c:strRef>[\s\S]*?)<c:f>[^<]*<\/c:f>/,
+      `$1<c:f>${catFormula}</c:f>`
+    );
+    updated = updated.replace(
+      /(<c:cat>[\s\S]*?<c:strRef>[\s\S]*?)<c:strCache>[\s\S]*?<\/c:strCache>([\s\S]*?<\/c:strRef>[\s\S]*?<\/c:cat>)/,
+      `$1${buildStrCache(categories)}$2`
+    );
+    updated = updated.replace(
+      /(<c:val>[\s\S]*?<c:numRef>[\s\S]*?)<c:f>[^<]*<\/c:f>/,
+      `$1<c:f>${valFormula}</c:f>`
+    );
+    updated = updated.replace(
+      /(<c:val>[\s\S]*?<c:numRef>[\s\S]*?)<c:numCache>[\s\S]*?<\/c:numCache>([\s\S]*?<\/c:numRef>[\s\S]*?<\/c:val>)/,
+      `$1${buildNumCache(sd.values)}$2`
+    );
+    return `<c:ser>${updated}</c:ser>`;
+  });
+
+  res = res.replace(/<c:externalData\b[^>]*>[\s\S]*?<\/c:externalData>/g, '');
+  res = res.replace(/<c:scaling>([\s\S]*?)<\/c:scaling>/g, (_match, content) => {
+    const stripped = content
+      .replace(/<c:min\b[^>]*\/?>/g, '')
+      .replace(/<c:max\b[^>]*\/?>/g, '');
+    return `<c:scaling>${stripped}</c:scaling>`;
+  });
+
+  return res;
+}
+
+/** Remove external Excel OLE links from chart rels so Word uses embedded caches. */
+function stripChartExternalOleLink(chartRelsXml: string): string {
+  return chartRelsXml.replace(
+    /<Relationship\b[^>]*Type="[^"]*oleObject"[^>]*\/>/g,
+    ''
+  );
+}
+
+async function applyYieldTrendChartUpdate(
+  zip: JSZip,
+  chartFileName: string,
+  categories: string[],
+  series: YieldChartSeries[],
+): Promise<boolean> {
+  const chartPath = `word/charts/${chartFileName}`;
+  const chartXmlRaw = await zip.file(chartPath)?.async('string');
+  if (!chartXmlRaw) return false;
+
+  zip.file(chartPath, updateYieldTrendChartXml(chartXmlRaw, categories, series));
+
+  const relsPath = `word/charts/_rels/${chartFileName}.rels`;
+  const relsXml = await zip.file(relsPath)?.async('string');
+  if (relsXml) {
+    zip.file(relsPath, stripChartExternalOleLink(relsXml));
+  }
+  return true;
 }
 
 /**
@@ -2832,15 +4423,27 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
   // ── 2a. Targeted field replacements in Brief Description table ─────
   // These replace only the VALUE cell next to the label, not globally.
   // This prevents label claim data from bleeding into Product Name / Generic Name.
+  const formatShelfLife = (raw: any): string => {
+    const v = (raw ?? '').toString().trim();
+    if (!v) return '';
+    if (/\bmonth(s)?\b/i.test(v)) return v;
+    // If it looks numeric (e.g. "24"), render as "24 months"
+    if (/^\d+(\.\d+)?$/.test(v)) return `${v} months`;
+    return v;
+  };
+
   const fieldReplacements: [string, string][] = [
-    ['Product Name:', data.product_name],
-    ['Generic Name:', data.generic_name],
+    // BRIEF DESCRIPTION OF PRODUCT requirement:
+    // Product Name and Generic Name must be the same (show Generic in Product Name).
+    ['Product Name:', (data as any).generic_name || ''],
+    ['Generic Name:', (data as any).generic_name || ''],
     ['Product Code:', data.product_code],
-    ['Dosage Form:', data.dosage_form],
+    // Show Department (Eye Drops, etc.) in Dosage Form
+    ['Dosage Form:', (data as any).department || data.dosage_form || ''],
     ['Label Claim:', data.label_claim],
     ['Therapeutic Category:', data.therapeutic_category],
     ['Storage Condition:', data.storage_condition],
-    ['Shelf Life:', data.shelf_life],
+    ['Shelf Life:', formatShelfLife(data.shelf_life)],
     ['Mfg. Lic. No.:', data.mfg_lic_no],
     ['Packing Style:', data.pack_style],
   ];
@@ -5246,14 +6849,12 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
 
   // ── 11c. Dynamic Section 5.3.3 – Sterility Testing ──
   {
-    // Find the sterility column from finishInProcessColumns
-    const sterilityCol = ((data as any).finishInProcessColumns || []).find((c: any) =>
-      c.name.toLowerCase().includes('sterility') || c.name.toLowerCase().includes('sterile')
-    );
-    const sterilityKey = sterilityCol?.key || null;
-    const sterilityLimit = sterilityCol?.limit || 'Growth or turbidity should not present in the original clear media.';
+    const sterilityLimit = (data as any).sterilityTestingLimit || DEFAULT_STERILITY_LIMIT;
+    const rows533: SterilityTestingRow[] = (data as any).sterilityTestingData || [];
+    const productDisplayName =
+      ((data as any).generic_name || data.product_name || '').toString().trim();
 
-    console.log(`\n📋 Section 5.3.3 Sterility: key=${sterilityKey}, limit=${sterilityLimit}`);
+    console.log(`\n📋 Section 5.3.3 Sterility: ${rows533.length} batches, limit=${sterilityLimit}`);
 
     // Find the 5.3.3 section heading (skip TOC region at top ~30% of doc)
     const searchFrom533 = Math.floor(docXml.length * 0.3);
@@ -5324,8 +6925,7 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
         rowsXml += hCell533(sterilityLimit);
         rowsXml += '</w:tr>';
 
-        // Data rows – one per batch; split multi-line results into separate rows with vMerge
-        const rows533 = (data as any).finishInProcessData || [];
+        // Data rows – one per batch from FINISH COA sterility results
         if (rows533.length === 0) {
           rowsXml += '<w:tr><w:trPr><w:jc w:val="center"/></w:trPr>'
             + '<w:tc><w:tcPr><w:gridSpan w:val="2"/><w:vAlign w:val="center"/></w:tcPr>'
@@ -5336,57 +6936,79 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
             + '</w:r></w:p></w:tc></w:tr>';
         } else {
           for (const row of rows533) {
-            const batchNo = row.batchNumber || (row as any).batchNo || '--';
-            const rawResult = sterilityKey
-              ? (row.results[`${sterilityKey}|||result`] || '--')
-              : '--';
-            // Split on newlines to support multi-line sterility results (e.g. two media)
-            const resultLines = rawResult.split(/\n|\\n/).map((s: string) => s.trim()).filter(Boolean);
-            if (resultLines.length <= 1) {
-              rowsXml += '<w:tr><w:trPr><w:jc w:val="center"/></w:trPr>';
-              rowsXml += dCell533(batchNo);
-              rowsXml += dCell533(rawResult);
-              rowsXml += '</w:tr>';
-            } else {
-              // Multiple lines: vMerge the batch number cell
-              for (let li = 0; li < resultLines.length; li++) {
-                rowsXml += '<w:tr><w:trPr><w:jc w:val="center"/></w:trPr>';
-                rowsXml += dCell533(li === 0 ? batchNo : '', { vMerge: li === 0 ? 'restart' : 'continue' });
-                rowsXml += dCell533(resultLines[li]);
-                rowsXml += '</w:tr>';
-              }
-            }
+            rowsXml += '<w:tr><w:trPr><w:jc w:val="center"/></w:trPr>';
+            rowsXml += dCell533(row.batchNumber || '--');
+            rowsXml += dCell533(row.result || '--');
+            rowsXml += '</w:tr>';
           }
         }
 
         const newTable533 = `<w:tbl>${origTblPr533}${tblGrid533}${rowsXml}</w:tbl>`;
         docXml = docXml.substring(0, tblStart533) + newTable533 + docXml.substring(tblEnd533);
         console.log(`  ✅ Section 5.3.3 Sterility table replaced with ${rows533.length} batch rows`);
+
+        // Remark table after sterility data table
+        const remarkSearchStart533 = tblEnd533;
+        const remarkAnchorIdx533 = docXml.indexOf('Remark:', remarkSearchStart533);
+        if (remarkAnchorIdx533 !== -1 && (remarkAnchorIdx533 - remarkSearchStart533) < 8000) {
+          const remarkTblStart533 = docXml.lastIndexOf('<w:tbl>', remarkAnchorIdx533);
+          const remarkTblEnd533 = docXml.indexOf('</w:tbl>', remarkAnchorIdx533);
+          if (remarkTblStart533 !== -1 && remarkTblEnd533 !== -1 && remarkTblStart533 > tblStart533) {
+            const remarkTblEndFull533 = remarkTblEnd533 + 8;
+            const origRemarkTable533 = docXml.substring(remarkTblStart533, remarkTblEndFull533);
+            const remarkTblPr533 = origRemarkTable533.match(/<w:tblPr>[\s\S]*?<\/w:tblPr>/)?.[0]
+              || '<w:tblPr><w:tblW w:w="5000" w:type="pct"/></w:tblPr>';
+            const remarkTblGrid533 = origRemarkTable533.match(/<w:tblGrid>[\s\S]*?<\/w:tblGrid>/)?.[0]
+              || '<w:tblGrid><w:gridCol w:w="10000"/></w:tblGrid>';
+            const remarkOrigRows533 = [...origRemarkTable533.matchAll(/<w:tr\b[\s\S]*?<\/w:tr>/g)];
+            const signatureRow533 = remarkOrigRows533.length > 1
+              ? remarkOrigRows533[remarkOrigRows533.length - 1][0]
+              : '';
+
+            const remarkText533 =
+              `All the batches of ${productDisplayName} manufactured during the review period found (Satisfactory) within the limit for Sterility Testing as per finished product specification of ${productDisplayName}.`;
+
+            const remarkContentRow533 = `<w:tr><w:tc><w:tcPr><w:gridSpan w:val="2"/>`
+              + '<w:shd w:val="clear" w:color="auto" w:fill="D9D9D9"/>'
+              + '</w:tcPr>'
+              + '<w:p><w:pPr><w:rPr><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:pPr>'
+              + '<w:r><w:rPr><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>'
+              + '<w:t xml:space="preserve">Remark:</w:t></w:r></w:p>'
+              + '<w:p><w:pPr><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:pPr>'
+              + '<w:r><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>'
+              + `<w:t xml:space="preserve">${xmlEscape(remarkText533)}</w:t></w:r></w:p>`
+              + '</w:tc></w:tr>';
+
+            const replacementRemark533 = '<w:tbl>' + remarkTblPr533 + remarkTblGrid533
+              + remarkContentRow533 + signatureRow533 + '</w:tbl>';
+            docXml = docXml.substring(0, remarkTblStart533) + replacementRemark533
+              + docXml.substring(remarkTblEndFull533);
+            console.log('  ✅ Section 5.3.3 Remark updated');
+          }
+        }
       }
     }
   }
 
-  // ── 12a. Dynamic Section 5.4.2 – At Finished Stage Yield ──
+  // ── 12. Dynamic Section 5.4.1 – At Bulk Stage Yield ──
   {
-    const yieldRows = (data as any).yieldData542 as Array<{ batchNo: string; yieldLines: string[]; avgYield: number }> || [];
-    console.log(`\n📋 Section 5.4.2 Yield: ${yieldRows.length} rows`);
+    const bulkYieldRows = (data as any).yieldData541 as Array<{ batchNo: string; yieldPct: number }> || [];
+    console.log(`\n📋 Section 5.4.1 Bulk Yield: ${bulkYieldRows.length} rows`);
 
-    // Find "At Finished Stage:" in the document body (second occurrence, not TOC)
-    const anchorText = 'At Finished Stage:';
-    let searchFrom = Math.floor(docXml.length * 0.4); // skip first half (TOC region)
-    const anchorIdx = docXml.indexOf(anchorText, searchFrom);
+    // "At Bulk Stage:" is split across <w:t> runs in the body; anchor on section heading instead.
+    const bulkSectionHeading = 'REVIEW OF YIELD AT VARIOUS';
+    const bulkSearchFrom = Math.floor(docXml.length * 0.4);
+    const bulkAnchorIdx = docXml.indexOf(bulkSectionHeading, bulkSearchFrom);
 
-    if (anchorIdx !== -1) {
-      // Find the next <w:tbl> after the anchor
-      const nextTblIdx = docXml.indexOf('<w:tbl>', anchorIdx);
-      if (nextTblIdx !== -1 && (nextTblIdx - anchorIdx) < 5000) {
-        const tblEndIdx = docXml.indexOf('</w:tbl>', nextTblIdx);
-        if (tblEndIdx !== -1) {
-          const tblEndFull = tblEndIdx + 8;
-          const origTable542 = docXml.substring(nextTblIdx, tblEndFull);
+    if (bulkAnchorIdx !== -1) {
+      const bulkTblIdx = docXml.indexOf('<w:tbl>', bulkAnchorIdx);
+      if (bulkTblIdx !== -1 && (bulkTblIdx - bulkAnchorIdx) < 5000) {
+        const bulkTblEndIdx = docXml.indexOf('</w:tbl>', bulkTblIdx);
+        if (bulkTblEndIdx !== -1) {
+          const bulkTblEndFull = bulkTblEndIdx + 8;
+          const origTable541 = docXml.substring(bulkTblIdx, bulkTblEndFull);
 
-          // Extract table properties from original template table
-          const origTblPr = origTable542.match(/<w:tblPr>[\s\S]*?<\/w:tblPr>/)?.[0]
+          const origTblPr541 = origTable541.match(/<w:tblPr>[\s\S]*?<\/w:tblPr>/)?.[0]
             || '<w:tblPr><w:tblW w:w="5000" w:type="pct"/><w:jc w:val="center"/><w:tblBorders>'
             + '<w:top w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
             + '<w:left w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
@@ -5396,10 +7018,148 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
             + '<w:insideV w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
             + '</w:tblBorders></w:tblPr>';
 
-          // Fixed 3-column grid matching template: Batch No | Yield | Avg Yield
+          const tblGrid541 = '<w:tblGrid><w:gridCol w:w="5000"/><w:gridCol w:w="5000"/></w:tblGrid>';
+
+          const hCell541 = (text: string) =>
+            '<w:tc><w:tcPr><w:shd w:val="clear" w:color="auto" w:fill="D9D9D9"/><w:vAlign w:val="center"/></w:tcPr>'
+            + '<w:p><w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/>'
+            + '<w:rPr><w:b/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:pPr>'
+            + '<w:r><w:rPr><w:b/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr>'
+            + `<w:t xml:space="preserve">${xmlEscape(text)}</w:t></w:r></w:p></w:tc>`;
+
+          const dCell541 = (text: string, shaded = false) => {
+            const shd = shaded
+              ? '<w:shd w:val="clear" w:color="auto" w:fill="D9D9D9"/>'
+              : '';
+            const bold = shaded ? '<w:b/>' : '';
+            return '<w:tc><w:tcPr>' + shd + '<w:vAlign w:val="center"/></w:tcPr>'
+              + '<w:p><w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/>'
+              + `<w:rPr>${bold}<w:sz w:val="22"/><w:szCs w:val="22"/></w:rPr></w:pPr>`
+              + `<w:r><w:rPr>${bold}<w:sz w:val="22"/><w:szCs w:val="22"/></w:rPr>`
+              + `<w:t xml:space="preserve">${xmlEscape(text)}</w:t></w:r></w:p></w:tc>`;
+          };
+
+          const statRow541 = (label: string, value: string) =>
+            '<w:tr><w:trPr><w:jc w:val="center"/></w:trPr>'
+            + dCell541(label, true)
+            + dCell541(value)
+            + '</w:tr>';
+
+          let rowsXml541 = '';
+
+          const origRows541 = [...origTable541.matchAll(/<w:tr\b[\s\S]*?<\/w:tr>/g)];
+          const headerRow541 = origRows541.length > 0 ? origRows541[0][0] : (
+            '<w:tr><w:trPr><w:trHeight w:val="432"/><w:jc w:val="center"/></w:trPr>'
+            + hCell541('BATCH NO.')
+            + hCell541('%YIELD (STAGE-BULK)\n(LIMIT: 97-100%)')
+            + '</w:tr>'
+          );
+          rowsXml541 += headerRow541;
+
+          if (bulkYieldRows.length === 0) {
+            rowsXml541 += '<w:tr><w:trPr><w:jc w:val="center"/></w:trPr>'
+              + '<w:tc><w:tcPr><w:gridSpan w:val="2"/><w:vAlign w:val="center"/></w:tcPr>'
+              + '<w:p><w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/>'
+              + '<w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:pPr>'
+              + '<w:r><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>'
+              + '<w:t>No yield data found for the selected product and year.</w:t>'
+              + '</w:r></w:p></w:tc></w:tr>';
+          } else {
+            for (const row of bulkYieldRows) {
+              rowsXml541 += '<w:tr><w:trPr><w:jc w:val="center"/></w:trPr>'
+                + dCell541(row.batchNo)
+                + dCell541(row.yieldPct.toFixed(2))
+                + '</w:tr>';
+            }
+
+            const stats541 = computeYieldStatistics(bulkYieldRows.map(r => r.yieldPct));
+            rowsXml541 += statRow541('Minimum', stats541.min.toFixed(2));
+            rowsXml541 += statRow541('Maximum', stats541.max.toFixed(2));
+            rowsXml541 += statRow541('Average', stats541.mean.toFixed(2));
+            rowsXml541 += statRow541('Standard Deviation', stats541.stdDev.toFixed(2));
+            rowsXml541 += statRow541('RSD (%)', stats541.rsd.toFixed(2));
+          }
+
+          const replacementTable541 = '<w:tbl>' + origTblPr541 + tblGrid541 + rowsXml541 + '</w:tbl>';
+          docXml = docXml.substring(0, bulkTblIdx) + replacementTable541 + docXml.substring(bulkTblEndFull);
+          console.log(`  ✅ Section 5.4.1 bulk yield table replaced (${bulkYieldRows.length} batch rows)`);
+        }
+      } else {
+        console.warn('Section 5.4.1: Could not find bulk yield table after section heading');
+      }
+    } else {
+      console.warn('Section 5.4.1: "REVIEW OF YIELD AT VARIOUS" heading not found in template body');
+    }
+
+    const yieldProductLabel541 = xmlEscape(
+      ((data as any).generic_name || data.product_name || '').toString().trim()
+    );
+    if (yieldProductLabel541) {
+      const bulkRemarkIdx = docXml.indexOf('at bulk stage', 500000);
+      if (bulkRemarkIdx !== -1) {
+        const bulkParaStart = docXml.lastIndexOf('<w:p ', bulkRemarkIdx);
+        const bulkParaEnd = docXml.indexOf('</w:p>', bulkRemarkIdx) + 6;
+        if (bulkParaStart !== -1 && bulkParaEnd > bulkParaStart) {
+          const remarkText541 =
+            `% yield of ${yieldProductLabel541} at bulk stage found within the limit and no adverse trend observed during the review period.`;
+          const remarkPara541 = '<w:p><w:pPr><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:pPr>'
+            + '<w:r><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>'
+            + `<w:t xml:space="preserve">${remarkText541}</w:t></w:r></w:p>`;
+          docXml = docXml.substring(0, bulkParaStart) + remarkPara541 + docXml.substring(bulkParaEnd);
+          console.log('  ✅ Section 5.4.1 bulk yield remark updated');
+        }
+      }
+    }
+
+    // ── 12b. Trend Analysis of Bulk Stage Yield Chart (chart11.xml) ──
+    if (bulkYieldRows.length > 0) {
+      const batchNos541 = bulkYieldRows.map(r => r.batchNo);
+      const nBulkYield = bulkYieldRows.length;
+      const bulkYieldSeries: YieldChartSeries[] = [
+        { name: '% YIELD AT BULK STAGE', values: bulkYieldRows.map(r => r.yieldPct) },
+        { name: 'NLT 97%', values: Array(nBulkYield).fill(97) },
+        { name: 'NMT 100%', values: Array(nBulkYield).fill(100) },
+      ];
+      const bulkChartOk = await applyYieldTrendChartUpdate(zip, 'chart11.xml', batchNos541, bulkYieldSeries);
+      if (bulkChartOk) {
+        console.log(`  ✅ chart11.xml (Bulk Stage Yield) updated: ${nBulkYield} batches`);
+      } else {
+        console.warn('  ⚠️ chart11.xml not found — bulk yield chart not updated');
+      }
+    }
+  }
+
+  // ── 12c. Dynamic Section 5.4.2 – At Finished Stage Yield ──
+  {
+    const finishedYieldRows = (data as any).yieldData542 as YieldRow[] || [];
+    console.log(`\n📋 Section 5.4.2 Finished Yield: ${finishedYieldRows.length} rows`);
+
+    const yieldProductLabel542 = xmlEscape(
+      ((data as any).generic_name || data.product_name || '').toString().trim()
+    );
+
+    const finishedAnchorIdx = docXml.indexOf('At Finished Stage:', 500000);
+    if (finishedAnchorIdx !== -1) {
+      // Yield data lives in a nested table immediately after the "At Finished Stage:" row.
+      const finishedTblIdx = docXml.indexOf('<w:tbl>', finishedAnchorIdx + 1);
+      if (finishedTblIdx !== -1 && (finishedTblIdx - finishedAnchorIdx) < 5000) {
+        const finishedTblEndIdx = docXml.indexOf('</w:tbl>', finishedTblIdx);
+        if (finishedTblEndIdx !== -1) {
+          const finishedTblEndFull = finishedTblEndIdx + 8;
+          const origTable542 = docXml.substring(finishedTblIdx, finishedTblEndFull);
+
+          const origTblPr542 = origTable542.match(/<w:tblPr>[\s\S]*?<\/w:tblPr>/)?.[0]
+            || '<w:tblPr><w:tblW w:w="5000" w:type="pct"/><w:jc w:val="center"/><w:tblBorders>'
+            + '<w:top w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
+            + '<w:left w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
+            + '<w:bottom w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
+            + '<w:right w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
+            + '<w:insideH w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
+            + '<w:insideV w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
+            + '</w:tblBorders></w:tblPr>';
+
           const tblGrid542 = '<w:tblGrid><w:gridCol w:w="1859"/><w:gridCol w:w="4023"/><w:gridCol w:w="4023"/></w:tblGrid>';
 
-          // Cell helpers
           const hCell542 = (text: string) =>
             '<w:tc><w:tcPr><w:shd w:val="clear" w:color="auto" w:fill="D9D9D9"/><w:vAlign w:val="center"/></w:tcPr>'
             + '<w:p><w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/>'
@@ -5407,25 +7167,16 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
             + '<w:r><w:rPr><w:b/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr>'
             + `<w:t xml:space="preserve">${xmlEscape(text)}</w:t></w:r></w:p></w:tc>`;
 
-          const dCell542 = (text: string) =>
-            '<w:tc><w:tcPr><w:vAlign w:val="center"/></w:tcPr>'
-            + '<w:p><w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/>'
-            + '<w:rPr><w:sz w:val="22"/><w:szCs w:val="22"/></w:rPr></w:pPr>'
-            + '<w:r><w:rPr><w:sz w:val="22"/><w:szCs w:val="22"/></w:rPr>'
-            + `<w:t xml:space="preserve">${xmlEscape(text)}</w:t></w:r></w:p></w:tc>`;
-
-          // Multi-line cell using <w:br/> for line breaks between yield lines
-          const multiLineCell542 = (lines: string[]) => {
-            let runs = '';
-            for (let i = 0; i < lines.length; i++) {
-              if (i > 0) runs += '<w:r><w:rPr><w:sz w:val="22"/><w:szCs w:val="22"/></w:rPr><w:br/></w:r>';
-              runs += '<w:r><w:rPr><w:sz w:val="22"/><w:szCs w:val="22"/></w:rPr>'
-                + `<w:t xml:space="preserve">${xmlEscape(lines[i])}</w:t></w:r>`;
-            }
-            return '<w:tc><w:tcPr><w:vAlign w:val="center"/></w:tcPr>'
+          const dCell542 = (text: string, shaded = false) => {
+            const shd = shaded
+              ? '<w:shd w:val="clear" w:color="auto" w:fill="D9D9D9"/>'
+              : '';
+            const bold = shaded ? '<w:b/>' : '';
+            return '<w:tc><w:tcPr>' + shd + '<w:vAlign w:val="center"/></w:tcPr>'
               + '<w:p><w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/>'
-              + '<w:rPr><w:sz w:val="22"/><w:szCs w:val="22"/></w:rPr></w:pPr>'
-              + runs + '</w:p></w:tc>';
+              + `<w:rPr>${bold}<w:sz w:val="22"/><w:szCs w:val="22"/></w:rPr></w:pPr>`
+              + `<w:r><w:rPr>${bold}<w:sz w:val="22"/><w:szCs w:val="22"/></w:rPr>`
+              + `<w:t xml:space="preserve">${xmlEscape(text)}</w:t></w:r></w:p></w:tc>`;
           };
 
           const statRow542 = (label: string, value: string) =>
@@ -5439,21 +7190,20 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
             + dCell542(value)
             + '</w:tr>';
 
-          let rowsXml = '';
+          let rowsXml542 = '';
 
-          // Header row (extract from original to preserve formatting if possible)
-          const origRows = [...origTable542.matchAll(/<w:tr\b[\s\S]*?<\/w:tr>/g)];
-          const headerRow = origRows.length > 0 ? origRows[0][0] : (
+          const origRows542 = [...origTable542.matchAll(/<w:tr\b[\s\S]*?<\/w:tr>/g)];
+          const headerRow542 = origRows542.length > 0 ? origRows542[0][0] : (
             '<w:tr><w:trPr><w:trHeight w:val="432"/><w:jc w:val="center"/></w:trPr>'
             + hCell542('BATCH NO.')
             + hCell542('%YIELD (STAGE-FINISHED)\n(LIMIT: 95-100%)')
             + hCell542('%AVERAGE YIELD\n(STAGE-FINISHED)\n(LIMIT: 95-100%)')
             + '</w:tr>'
           );
-          rowsXml += headerRow;
+          rowsXml542 += headerRow542;
 
-          if (yieldRows.length === 0) {
-            rowsXml += '<w:tr><w:trPr><w:jc w:val="center"/></w:trPr>'
+          if (finishedYieldRows.length === 0) {
+            rowsXml542 += '<w:tr><w:trPr><w:jc w:val="center"/></w:trPr>'
               + '<w:tc><w:tcPr><w:gridSpan w:val="3"/><w:vAlign w:val="center"/></w:tcPr>'
               + '<w:p><w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/>'
               + '<w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:pPr>'
@@ -5461,111 +7211,318 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
               + '<w:t>No yield data found for the selected product and year.</w:t>'
               + '</w:r></w:p></w:tc></w:tr>';
           } else {
-            // Data rows
-            for (const row of yieldRows) {
-              rowsXml += '<w:tr><w:trPr><w:jc w:val="center"/></w:trPr>'
+            for (const row of finishedYieldRows) {
+              const y = row.yieldPct.toFixed(2);
+              rowsXml542 += '<w:tr><w:trPr><w:jc w:val="center"/></w:trPr>'
                 + dCell542(row.batchNo)
-                + multiLineCell542(row.yieldLines)
-                + dCell542(row.avgYield.toFixed(2))
+                + dCell542(y)
+                + dCell542(y)
                 + '</w:tr>';
             }
 
-            // Statistics — computed from avgYield values
-            const avgYields = yieldRows.map(r => r.avgYield);
-            const minVal = Math.min(...avgYields);
-            const maxVal = Math.max(...avgYields);
-            const mean = avgYields.reduce((s, v) => s + v, 0) / avgYields.length;
-            const variance = avgYields.length > 1 ? avgYields.reduce((s, v) => s + Math.pow(v - mean, 2), 0) / (avgYields.length - 1) : 0;
-            const stdDev = Math.sqrt(variance);
-            const rsd = mean !== 0 ? (stdDev / mean) * 100 : 0;
-
-            rowsXml += statRow542('Minimum', minVal.toFixed(2));
-            rowsXml += statRow542('Maximum', maxVal.toFixed(2));
-            rowsXml += statRow542('Average', mean.toFixed(2));
-            rowsXml += statRow542('Standard Deviation', stdDev.toFixed(2));
-            rowsXml += statRow542('RSD (%)', rsd.toFixed(2));
+            const stats542 = computeYieldStatistics(finishedYieldRows.map(r => r.yieldPct));
+            rowsXml542 += statRow542('Minimum', stats542.min.toFixed(2));
+            rowsXml542 += statRow542('Maximum', stats542.max.toFixed(2));
+            rowsXml542 += statRow542('Average', stats542.mean.toFixed(2));
+            rowsXml542 += statRow542('Standard Deviation', stats542.stdDev.toFixed(2));
+            rowsXml542 += statRow542('RSD (%)', stats542.rsd.toFixed(2));
           }
 
-          const replacementTable542 = '<w:tbl>' + origTblPr + tblGrid542 + rowsXml + '</w:tbl>';
-          docXml = docXml.substring(0, nextTblIdx) + replacementTable542 + docXml.substring(tblEndFull);
-          console.log(`  ✅ Section 5.4.2 yield table replaced (${yieldRows.length} batch rows)`);
+          const replacementTable542 = '<w:tbl>' + origTblPr542 + tblGrid542 + rowsXml542 + '</w:tbl>';
+          docXml = docXml.substring(0, finishedTblIdx) + replacementTable542 + docXml.substring(finishedTblEndFull);
+          console.log(`  ✅ Section 5.4.2 finished yield table replaced (${finishedYieldRows.length} batch rows)`);
         }
       } else {
-        console.warn('Section 5.4.2: Could not find table after "At Finished Stage:" anchor');
+        console.warn('Section 5.4.2: Could not find nested yield table after "At Finished Stage:"');
       }
     } else {
       console.warn('Section 5.4.2: "At Finished Stage:" anchor not found in template body');
     }
 
-    // ── 12b. Trend Analysis of Finished Stage Yield Chart (chart12.xml) ──
-    // Uses same rId-based approach as the 5.3.2 FP charts.
-    // Chart has 3 series: % YIELD AT FINISHED STAGE, NLT 95%, NMT 100%
-    if (yieldRows.length > 0) {
-      const yieldRelsXml = await zip.file('word/_rels/document.xml.rels')?.async('string') ?? '';
-      const yieldRelRx = /Id="([^"]+)"[^>]*Target="charts\/chart12\.xml"/;
-      const yieldRelM = yieldRelsXml.match(yieldRelRx);
+    // Remark below finished-stage trend chart (text is split across <w:t> runs in template).
+    if (yieldProductLabel542) {
+      const finishRemarkIdx = docXml.indexOf('at Finished stage', 500000);
+      if (finishRemarkIdx !== -1) {
+        const paraStart = docXml.lastIndexOf('<w:p ', finishRemarkIdx);
+        const paraEnd = docXml.indexOf('</w:p>', finishRemarkIdx) + 6;
+        if (paraStart !== -1 && paraEnd > paraStart) {
+          const remarkText542 =
+            `% yield of ${yieldProductLabel542} at Finished stage found within the limit and no adverse trend observed during the review period.`;
+          const remarkPara542 = '<w:p><w:pPr><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:pPr>'
+            + '<w:r><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>'
+            + `<w:t xml:space="preserve">${remarkText542}</w:t></w:r></w:p>`;
+          docXml = docXml.substring(0, paraStart) + remarkPara542 + docXml.substring(paraEnd);
+          console.log('  ✅ Section 5.4.2 finished yield remark updated');
+        }
+      }
+    }
 
-      if (yieldRelM) {
-        const yieldRId = yieldRelM[1];
-        const yieldRIdRef = `"${yieldRId}"`;
-        const yieldRIdIdx = docXml.indexOf(yieldRIdRef);
+    // ── 12d. Trend Analysis of Finished Stage Yield Chart (chart12.xml) ──
+    if (finishedYieldRows.length > 0) {
+      const batchNos542 = finishedYieldRows.map(r => r.batchNo);
+      const nYield = finishedYieldRows.length;
+      const finishedYieldSeries: YieldChartSeries[] = [
+        { name: '% YIELD AT FINISHED STAGE', values: finishedYieldRows.map(r => r.yieldPct) },
+        { name: 'NLT 95%', values: Array(nYield).fill(95) },
+        { name: 'NMT 100%', values: Array(nYield).fill(100) },
+      ];
+      const finishChartOk = await applyYieldTrendChartUpdate(zip, 'chart12.xml', batchNos542, finishedYieldSeries);
+      if (finishChartOk) {
+        console.log(`  ✅ chart12.xml (Finished Stage Yield) updated: ${nYield} batches`);
+      } else {
+        console.warn('  ⚠️ chart12.xml not found — finished yield chart not updated');
+      }
+    }
+  }
 
-        if (yieldRIdIdx !== -1) {
-          const yieldCXmlRaw = await zip.file('word/charts/chart12.xml')?.async('string');
-          if (yieldCXmlRaw) {
-            const batchNos = yieldRows.map(r => r.batchNo);
-            const yieldVals = yieldRows.map(r => r.avgYield);
-            const nYield = yieldRows.length;
-            const nltVal = 95;
-            const nmtVal = 100;
+  // ── 13. Dynamic Section 6 – Batch Release / Reject Status ──
+  {
+    const releaseStatus = (data as { batchReleaseStatus?: BatchReleaseStatus }).batchReleaseStatus;
+    if (releaseStatus) {
+      const section6Anchor = docXml.indexOf('BATCH RELEASE', 500000);
+      if (section6Anchor !== -1) {
+        const section6TblIdx = docXml.indexOf('<w:tbl>', section6Anchor);
+        if (section6TblIdx !== -1 && (section6TblIdx - section6Anchor) < 5000) {
+          const section6TblEndIdx = docXml.indexOf('</w:tbl>', section6TblIdx);
+          if (section6TblEndIdx !== -1) {
+            const section6TblEndFull = section6TblEndIdx + 8;
+            const origTable6 = docXml.substring(section6TblIdx, section6TblEndFull);
 
-            const yBuildStrCache = (vals: string[]) => {
-              const pts = vals.map((v, i) => `<c:pt idx="${i}"><c:v>${xmlEscape(v)}</c:v></c:pt>`).join('');
-              return `<c:strCache><c:ptCount val="${vals.length}"/>${pts}</c:strCache>`;
+            const origTblPr6 = origTable6.match(/<w:tblPr>[\s\S]*?<\/w:tblPr>/)?.[0]
+              || '<w:tblPr><w:tblW w:w="5000" w:type="pct"/><w:jc w:val="center"/><w:tblBorders>'
+              + '<w:top w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
+              + '<w:left w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
+              + '<w:bottom w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
+              + '<w:right w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
+              + '<w:insideH w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
+              + '<w:insideV w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
+              + '</w:tblBorders></w:tblPr>';
+
+            const tblGrid6 = origTable6.match(/<w:tblGrid>[\s\S]*?<\/w:tblGrid>/)?.[0]
+              || '<w:tblGrid><w:gridCol w:w="720"/><w:gridCol w:w="5040"/><w:gridCol w:w="1440"/></w:tblGrid>';
+
+            const dCell6 = (text: string, shaded = false) => {
+              const shd = shaded
+                ? '<w:shd w:val="clear" w:color="auto" w:fill="D9D9D9"/>'
+                : '';
+              const bold = shaded ? '<w:b/>' : '';
+              return '<w:tc><w:tcPr>' + shd + '<w:vAlign w:val="center"/></w:tcPr>'
+                + '<w:p><w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/>'
+                + `<w:rPr>${bold}<w:sz w:val="22"/><w:szCs w:val="22"/></w:rPr></w:pPr>`
+                + `<w:r><w:rPr>${bold}<w:sz w:val="22"/><w:szCs w:val="22"/></w:rPr>`
+                + `<w:t xml:space="preserve">${xmlEscape(text)}</w:t></w:r></w:p></w:tc>`;
             };
-            const yBuildNumCache = (vals: number[]) => {
-              const pts = vals.map((v, i) => `<c:pt idx="${i}"><c:v>${v}</c:v></c:pt>`).join('');
-              return `<c:numCache><c:formatCode>General</c:formatCode><c:ptCount val="${vals.length}"/>${pts}</c:numCache>`;
-            };
-            const yBuildSerName = (name: string) =>
-              `<c:strCache><c:ptCount val="1"/><c:pt idx="0"><c:v>${xmlEscape(name)}</c:v></c:pt></c:strCache>`;
-            const yFlat = (val: number, n: number) => Array(n).fill(val);
 
-            const yieldSeries = [
-              { name: '% YIELD AT FINISHED STAGE', values: yieldVals },
-              { name: `NLT ${nltVal}%`, values: yFlat(nltVal, nYield) },
-              { name: `NMT ${nmtVal}%`, values: yFlat(nmtVal, nYield) },
-            ];
+            const origRows6 = [...origTable6.matchAll(/<w:tr\b[\s\S]*?<\/w:tr>/g)];
+            const headerRow6 = origRows6.length > 0 ? origRows6[0][0] : (
+              '<w:tr><w:trPr><w:jc w:val="center"/></w:trPr>'
+              + dCell6('Sr. No.', true)
+              + dCell6('Description', true)
+              + dCell6('Number of Batches', true)
+              + '</w:tr>'
+            );
 
-            let yieldIdx = 0;
-            const updatedYieldChart = yieldCXmlRaw.replace(/<c:ser>([\s\S]*?)<\/c:ser>/g, (match, content) => {
-              if (yieldIdx >= yieldSeries.length) return '';
-              const sd = yieldSeries[yieldIdx++];
-              let updated = content;
-              updated = updated.replace(
-                /(<c:tx>[\s\S]*?<c:strRef>[\s\S]*?)<c:strCache>[\s\S]*?<\/c:strCache>([\s\S]*?<\/c:strRef>[\s\S]*?<\/c:tx>)/,
-                `$1${yBuildSerName(sd.name)}$2`
-              );
-              updated = updated.replace(
-                /(<c:cat>[\s\S]*?<c:strRef>[\s\S]*?)<c:strCache>[\s\S]*?<\/c:strCache>([\s\S]*?<\/c:strRef>[\s\S]*?<\/c:cat>)/,
-                `$1${yBuildStrCache(batchNos)}$2`
-              );
-              updated = updated.replace(
-                /(<c:val>[\s\S]*?<c:numRef>[\s\S]*?)<c:numCache>[\s\S]*?<\/c:numCache>([\s\S]*?<\/c:numRef>[\s\S]*?<\/c:val>)/,
-                `$1${yBuildNumCache(sd.values)}$2`
-              );
-              return `<c:ser>${updated}</c:ser>`;
-            });
+            const mfgCount = formatBatchCountForApqr(releaseStatus.manufactured);
+            const releasedCount = formatBatchCountForApqr(releaseStatus.released);
+            const rejectedCount = formatBatchCountForApqr(releaseStatus.rejected, true);
 
-            zip.file('word/charts/chart12.xml', updatedYieldChart);
-            console.log(`  ✅ chart12.xml (Finished Stage Yield) updated: ${nYield} batches`);
+            const rowsXml6 = headerRow6
+              + '<w:tr><w:trPr><w:jc w:val="center"/></w:trPr>'
+              + dCell6('1.')
+              + dCell6('Total Number of Batches Manufactured')
+              + dCell6(mfgCount)
+              + '</w:tr>'
+              + '<w:tr><w:trPr><w:jc w:val="center"/></w:trPr>'
+              + dCell6('2.')
+              + dCell6('Total Number of Batches Released')
+              + dCell6(releasedCount)
+              + '</w:tr>'
+              + '<w:tr><w:trPr><w:jc w:val="center"/></w:trPr>'
+              + dCell6('3.')
+              + dCell6('Total Number of Batches Rejected')
+              + dCell6(rejectedCount)
+              + '</w:tr>';
+
+            const replacementTable6 = '<w:tbl>' + origTblPr6 + tblGrid6 + rowsXml6 + '</w:tbl>';
+            docXml = docXml.substring(0, section6TblIdx) + replacementTable6 + docXml.substring(section6TblEndFull);
+            console.log(
+              `  ✅ Section 6 batch release table replaced (Mfg=${mfgCount}, Released=${releasedCount}, Rejected=${rejectedCount})`
+            );
           }
         } else {
-          console.warn(`  ⚠️ rId ${yieldRelM[1]} for chart12.xml not found in document.xml`);
+          console.warn('Section 6: Could not find table after BATCH RELEASE heading');
         }
       } else {
-        console.warn('  ⚠️ chart12.xml not found in document rels — yield chart not updated');
+        console.warn('Section 6: BATCH RELEASE heading not found in template body');
       }
+    }
+  }
+
+  // ── 14. Dynamic Section 7 – Review of Control Sample ──
+  {
+    const controlData = (data as { controlSampleData?: ControlSampleData | null }).controlSampleData;
+    if (controlData && controlData.batches.length > 0) {
+      const csAnchor = 'REVIEW OF CONTROL SAMPLE';
+      const defaultCsTblPr =
+        '<w:tblPr><w:tblW w:w="5000" w:type="pct"/><w:jc w:val="center"/><w:tblBorders>'
+        + '<w:top w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
+        + '<w:left w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
+        + '<w:bottom w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
+        + '<w:right w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
+        + '<w:insideH w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
+        + '<w:insideV w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
+        + '</w:tblBorders></w:tblPr>';
+      const defaultCsGrid =
+        '<w:tblGrid><w:gridCol w:w="900"/><w:gridCol w:w="900"/>'
+        + '<w:gridCol w:w="900"/><w:gridCol w:w="900"/>'
+        + '<w:gridCol w:w="900"/><w:gridCol w:w="900"/><w:gridCol w:w="900"/></w:tblGrid>';
+
+      const csHdrRPr = '<w:rPr><w:b/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr>';
+      const csHdrPPr = '<w:pPr><w:spacing w:before="0" w:line="276" w:lineRule="auto"/><w:jc w:val="center"/>'
+        + csHdrRPr + '</w:pPr>';
+      const csColHdrRPr = '<w:rPr><w:b/><w:sz w:val="22"/><w:szCs w:val="22"/></w:rPr>';
+      const csDataRPr = '<w:rPr><w:sz w:val="22"/><w:szCs w:val="22"/></w:rPr>';
+
+      const csTitleCell = (lines: string[]) => {
+        let body = '';
+        lines.forEach((line, li) => {
+          const pPr = li === 0 ? csHdrPPr : '<w:pPr><w:spacing w:before="0" w:line="276" w:lineRule="auto"/>'
+            + '<w:jc w:val="center"/>' + csHdrRPr + '</w:pPr>';
+          body += `<w:p>${pPr}<w:r>${csHdrRPr}<w:t xml:space="preserve">${xmlEscape(line)}</w:t></w:r></w:p>`;
+        });
+        return '<w:tc><w:tcPr><w:gridSpan w:val="7"/>'
+          + '<w:shd w:val="clear" w:color="auto" w:fill="D9D9D9"/>'
+          + '<w:vAlign w:val="center"/></w:tcPr>' + body + '</w:tc>';
+      };
+
+      const csSpecTitleCell = (title: string, spec: string) => {
+        const specTrim = (spec || '').trim();
+        let body = `<w:p>${csHdrPPr}<w:r>${csHdrRPr}<w:t xml:space="preserve">${xmlEscape(title)}</w:t></w:r></w:p>`;
+        if (specTrim) {
+          body += `<w:p>${csHdrPPr}<w:r>${csHdrRPr}<w:t xml:space="preserve">(</w:t></w:r>`
+            + `<w:r>${csHdrRPr}<w:t xml:space="preserve">${xmlEscape(specTrim)}</w:t></w:r>`
+            + `<w:r>${csHdrRPr}<w:t>)</w:t></w:r></w:p>`;
+        }
+        return '<w:tc><w:tcPr><w:gridSpan w:val="7"/>'
+          + '<w:shd w:val="clear" w:color="auto" w:fill="D9D9D9"/>'
+          + '<w:vAlign w:val="center"/></w:tcPr>' + body + '</w:tc>';
+      };
+
+      const csHdrCell = (text: string, opts?: { gridSpan?: number; vMerge?: 'restart' | 'continue' }) => {
+        let tcPr = '<w:shd w:val="clear" w:color="auto" w:fill="D9D9D9"/><w:vAlign w:val="center"/>';
+        if (opts?.gridSpan) tcPr += `<w:gridSpan w:val="${opts.gridSpan}"/>`;
+        if (opts?.vMerge === 'restart') tcPr = '<w:vMerge w:val="restart"/>' + tcPr;
+        else if (opts?.vMerge === 'continue') tcPr = '<w:vMerge/>' + tcPr;
+        const pPr = '<w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/>' + csColHdrRPr + '</w:pPr>';
+        return '<w:tc><w:tcPr>' + tcPr + '</w:tcPr><w:p>' + pPr
+          + `<w:r>${csColHdrRPr}<w:t xml:space="preserve">${xmlEscape(text)}</w:t></w:r>`
+          + '</w:p></w:tc>';
+      };
+
+      const csDataCell = (text: string) => '<w:tc><w:tcPr><w:vAlign w:val="center"/></w:tcPr>'
+        + '<w:p><w:pPr><w:spacing w:before="0"/><w:jc w:val="center"/>' + csDataRPr + '</w:pPr>'
+        + `<w:r>${csDataRPr}<w:t xml:space="preserve">${xmlEscape(text)}</w:t></w:r>`
+        + '</w:p></w:tc>';
+
+      const csHeaderRows =
+        '<w:tr><w:trPr><w:trHeight w:val="283"/><w:jc w:val="center"/></w:trPr>'
+        + csHdrCell('BATCH NO.', { vMerge: 'restart' })
+        + csHdrCell('Month', { gridSpan: 6 })
+        + '</w:tr>'
+        + '<w:tr><w:trPr><w:trHeight w:val="283"/><w:jc w:val="center"/></w:trPr>'
+        + csHdrCell('', { vMerge: 'continue' })
+        + csHdrCell('Initial')
+        + csHdrCell('6 Month')
+        + csHdrCell('12 Month')
+        + csHdrCell('18 Month')
+        + csHdrCell('24 Month')
+        + csHdrCell('30 Month')
+        + '</w:tr>';
+
+      const buildCsTable = (
+        origTableXml: string,
+        titleCellXml: string,
+        valueForInterval: (row: ControlSampleBatchRow, month: ControlSampleInterval) => string,
+      ) => {
+        const origTblPr = origTableXml.match(/<w:tblPr>[\s\S]*?<\/w:tblPr>/)?.[0] || defaultCsTblPr;
+        const tblGrid = origTableXml.match(/<w:tblGrid>[\s\S]*?<\/w:tblGrid>/)?.[0] || defaultCsGrid;
+        let rowsXml = '<w:tr><w:trPr><w:trHeight w:val="283"/><w:jc w:val="center"/></w:trPr>' + titleCellXml + '</w:tr>';
+        rowsXml += csHeaderRows;
+        for (const row of controlData.batches) {
+          rowsXml += '<w:tr><w:trPr><w:jc w:val="center"/></w:trPr>';
+          rowsXml += csDataCell(row.batchNumber);
+          for (const month of CONTROL_SAMPLE_INTERVALS) {
+            rowsXml += csDataCell(valueForInterval(row, month));
+          }
+          rowsXml += '</w:tr>';
+        }
+        return '<w:tbl>' + origTblPr + tblGrid + rowsXml + '</w:tbl>';
+      };
+
+      const descTable = extractDocxTableAfterAnchor(docXml, csAnchor, 0);
+      const phTable = extractDocxTableAfterAnchor(docXml, csAnchor, 1);
+      if (!descTable || !phTable) {
+        console.warn('Section 7: Description or pH table not found after REVIEW OF CONTROL SAMPLE');
+      } else {
+        const descTitle = csSpecTitleCell('Description', controlData.descriptionSpec);
+        const descReplacement = buildCsTable(
+          descTable.tableXml,
+          descTitle,
+          (row, month) => formatControlSampleDescriptionCell(row.intervals[month].description),
+        );
+        docXml = docXml.substring(0, descTable.start) + descReplacement + docXml.substring(descTable.end);
+
+        const phTable2 = extractDocxTableAfterAnchor(docXml, csAnchor, 1);
+        if (phTable2) {
+          let phTitle: string;
+          if (controlData.phParams.length === 0) {
+            phTitle = csSpecTitleCell('pH', '');
+          } else if (controlData.phParams.length === 1 && !controlData.phParams[0].label) {
+            phTitle = csSpecTitleCell('pH', formatControlSamplePhLimit(controlData.phParams[0].limit));
+          } else {
+            phTitle = csTitleCell(buildControlSamplePhHeaderLines(controlData.phParams));
+          }
+          const phReplacement = buildCsTable(
+            phTable2.tableXml,
+            phTitle,
+            (row, month) => formatControlSamplePhCell(row.intervals[month].ph),
+          );
+          docXml = docXml.substring(0, phTable2.start) + phReplacement + docXml.substring(phTable2.end);
+          console.log(`  ✅ Section 7 control sample tables replaced (${controlData.batches.length} batches)`);
+        }
+
+        const remarkTable2 = extractDocxTableAfterAnchor(docXml, csAnchor, 2);
+        if (remarkTable2) {
+          const productLabel = (
+            ((data as { generic_name?: string }).generic_name || data.product_name || '') as string
+          ).trim().toUpperCase();
+          const remarkText =
+            `Review of control sample for ${productLabel} found Satisfactory as per periodic `
+            + 'review schedule and no discrepancy found during the review period.';
+          const remarkPara = '<w:p><w:pPr><w:spacing w:before="0"/>'
+            + '<w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:pPr>'
+            + '<w:r><w:rPr><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>'
+            + '<w:t xml:space="preserve">Remark:</w:t></w:r></w:p>'
+            + '<w:p><w:pPr><w:spacing w:before="0"/>'
+            + '<w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:pPr>'
+            + '<w:r><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>'
+            + `<w:t xml:space="preserve">${xmlEscape(remarkText)}</w:t></w:r></w:p>`;
+
+          let remarkTbl = remarkTable2.tableXml;
+          const remarkRowMatch = remarkTbl.match(/<w:tr\b[\s\S]*?Remark:[\s\S]*?<\/w:tr>/);
+          if (remarkRowMatch) {
+            const newRemarkRow = '<w:tr><w:trPr><w:jc w:val="center"/></w:trPr>'
+              + '<w:tc><w:tcPr><w:gridSpan w:val="2"/><w:vAlign w:val="top"/></w:tcPr>'
+              + remarkPara
+              + '</w:tc></w:tr>';
+            remarkTbl = remarkTbl.replace(remarkRowMatch[0], newRemarkRow);
+            docXml = docXml.substring(0, remarkTable2.start) + remarkTbl + docXml.substring(remarkTable2.end);
+            console.log('  ✅ Section 7 control sample remark updated');
+          }
+        }
+      }
+    } else if (controlData) {
+      console.warn('Section 7: No control sample batches — tables left unchanged');
     }
   }
 
@@ -5651,8 +7608,10 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
            * Multi-line values (containing '\n') produce multiple <w:p> paragraphs
            * so they render on separate lines inside the same cell.
            */
-          const fp532Data = (text: string, opts?: { gridSpan?: number; shaded?: boolean }) => {
+          const fp532Data = (text: string, opts?: { gridSpan?: number; shaded?: boolean; vMerge?: 'restart' | 'continue' }) => {
             let tcPr = '<w:vAlign w:val="center"/>';
+            if (opts?.vMerge === 'restart') tcPr = '<w:vMerge w:val="restart"/>' + tcPr;
+            else if (opts?.vMerge === 'continue') tcPr = '<w:vMerge/>' + tcPr;
             if (opts?.shaded) tcPr += '<w:shd w:val="clear" w:color="auto" w:fill="D9D9D9"/>';
             if (opts?.gridSpan) tcPr += `<w:gridSpan w:val="${opts.gridSpan}"/>`;
             const rPr = '<w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>';
@@ -5727,16 +7686,59 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
               + cols.map((col: any) => fp532Data(col.limitText || '')).join('')
               + '</w:tr>';
 
-            // Data rows
+            // Data rows.
+            //
+            // A single batch may have several finished-product COAs (distinct AR
+            // numbers, e.g. D25K11 → FIPAR250961 + FIPAR250962). Those rows are
+            // vertically merged: the Batch Number cell, and every parameter
+            // column whose value is identical across the group, span the rows;
+            // columns that differ (e.g. Uniformity of Volume) stay as separate
+            // stacked cells. AR Number is always per-row. (Mirrors the reference
+            // layout in the APQR template.)
             let dataRowsXml = '';
-            for (const row of (tbl.dataRows || [])) {
-              dataRowsXml += '<w:tr>';
-              dataRowsXml += fp532Data(row.batchNumber || '');
-              dataRowsXml += fp532Data(row.arNumber || '');
-              for (const val of (row.values || [])) {
-                dataRowsXml += fp532Data(val || '');
-              }
-              dataRowsXml += '</w:tr>';
+            const rows: any[] = tbl.dataRows || [];
+            let ri = 0;
+            while (ri < rows.length) {
+              // Rows for one batch are emitted consecutively (ordered by batch),
+              // so a forward scan collects the whole group.
+              let rj = ri + 1;
+              while (rj < rows.length && (rows[rj].batchNumber || '') === (rows[ri].batchNumber || '')) rj++;
+              const group = rows.slice(ri, rj);
+              const groupSize = group.length;
+
+              // Columns whose value is identical across the whole group are merged.
+              const colMergeable: boolean[] = (group[0].values || []).map((_: any, c: number) =>
+                groupSize > 1 && group.every((r: any) => (r.values?.[c] || '') === (group[0].values?.[c] || '')),
+              );
+
+              group.forEach((row: any, gi: number) => {
+                dataRowsXml += '<w:tr>';
+
+                // Batch Number — merged across the group.
+                if (groupSize > 1) {
+                  dataRowsXml += fp532Data(gi === 0 ? (row.batchNumber || '') : '',
+                    { vMerge: gi === 0 ? 'restart' : 'continue' });
+                } else {
+                  dataRowsXml += fp532Data(row.batchNumber || '');
+                }
+
+                // AR Number — always its own cell per COA.
+                dataRowsXml += fp532Data(row.arNumber || '');
+
+                // Parameter columns — merge only where the value is shared.
+                (row.values || []).forEach((val: string, c: number) => {
+                  if (colMergeable[c]) {
+                    dataRowsXml += fp532Data(gi === 0 ? (val || '') : '',
+                      { vMerge: gi === 0 ? 'restart' : 'continue' });
+                  } else {
+                    dataRowsXml += fp532Data(val || '');
+                  }
+                });
+
+                dataRowsXml += '</w:tr>';
+              });
+
+              ri = rj;
             }
 
             return '<w:tbl>'
@@ -5768,16 +7770,56 @@ export async function generateApqrDocx(productCode: string, year: number): Promi
             fp532Replacement += '<w:p><w:pPr><w:spacing w:before="60" w:after="60"/></w:pPr></w:p>';
           }
 
-          docXml = docXml.substring(0, fp532TplStart)
-            + fp532Replacement
-            + docXml.substring(fp532TplEnd);
+          // ── Per-pharmacopoeia Process Capability + Control Limit tables ──
+          // Computed from the numeric 5.3.2 columns (pH, Uniformity, Osmolality,
+          // Assay) and placed directly after the finished-product data tables.
+          const finish532Capability = buildFinish532Capability(fp532Tables);
+          fp532Replacement += buildFinish532CapabilityBlockXml(finish532Capability, xmlEscape);
 
-          console.log(`  ✅ Section 5.3.2: replaced template table with ${fp532Tables.length} table(s)`);
+          // ── Per-pharmacopoeia finished-product trend charts ──
+          // Replaces the stale single-spec template charts (chart6–10) with one
+          // native chart per numeric column per spec. Does the combined splice
+          // (data tables + capability block + charts) itself.
+          const prodNameForCharts = ((data as any).product_name || (data as any).product_code || '').toString();
+          const docXmlWithCharts = await generateFinish532Charts(
+            zip, docXml, finish532Capability, prodNameForCharts,
+            fp532TplStart, fp532TplEnd, fp532Replacement, xmlEscape,
+          );
+
+          if (docXmlWithCharts !== docXml) {
+            docXml = docXmlWithCharts;   // charts found & spliced (incl. tables)
+            console.log(`  ✅ Section 5.3.2: tables + ${finish532Capability.reduce((a, s) => a + s.columns.length, 0)} trend chart(s) generated`);
+          } else {
+            // Chart region not found — fall back to inserting just the tables.
+            docXml = docXml.substring(0, fp532TplStart) + fp532Replacement + docXml.substring(fp532TplEnd);
+            console.log(`  ✅ Section 5.3.2: replaced template table with ${fp532Tables.length} table(s) (charts not located)`);
+          }
         }
       }
     }
   } else {
     console.log('ℹ️  Section 5.3.2: no finish532Tables — template table left unchanged');
+  }
+
+  // ── 15. Sections 9–19 — Excel-backed quality reviews (NIL when no batch match) ──
+  {
+    const apqrBatchNumbers = (data.batches || []).map((b: { b_num?: string }) =>
+      String(b.b_num || '').trim(),
+    ).filter(Boolean);
+
+    if (apqrBatchNumbers.length > 0) {
+      const reviewCatalog = await loadReviewExcelCatalog();
+      const { docXml: updatedXml, results } = applyApqrExcelReviewSections(
+        docXml,
+        apqrBatchNumbers,
+        reviewCatalog,
+        xmlEscape,
+      );
+      docXml = updatedXml;
+      logApqrReviewSectionReport(results);
+    } else {
+      console.warn('  ⚠️ Sections 9–19: no APQR batches — review tables left unchanged');
+    }
   }
 
   // ── 12. Write modified XML back and generate output ─────────

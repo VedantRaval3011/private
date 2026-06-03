@@ -463,7 +463,7 @@ export default function ProcessingLogsPage() {
                                 opacity: isDeleting ? 0.7 : 1,
                             }}
                         >
-                            🗂️ Delete COA Logs
+                            🗂️ Delete Bulk & Finish COA Logs
                         </button>
                         <button
                             onClick={() => setShowConfirmModal('yield')}
